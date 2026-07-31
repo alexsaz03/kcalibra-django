@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+*.egg-info/
+
+# Django
+*.log
+db.sqlite3
+/staticfiles/
+/media/
+local_settings.py
+
+# Entorno y secretos — NUNCA en git
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Tailwind (binario suelto, sin Node)
+/tailwindcss
+/tailwindcss-*
+
+# Sistema
+.DS_Store
