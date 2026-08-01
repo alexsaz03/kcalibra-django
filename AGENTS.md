@@ -63,8 +63,11 @@ python -c "from django.core.management.utils import get_random_secret_key; print
 ```
 
 Pega el resultado del segundo comando como valor de `DJANGO_SECRET_KEY` dentro de `.env`. Los
-valores de `DB_*` que trae `.env.example` ya coinciden con la base creada en el paso 1.3; no
-hace falta tocarlos en local. El fichero `.env` **nunca** se sube a git.
+valores de `DB_*` que trae `.env.example` ya coinciden con la base creada en el paso 1.3 **en
+este portátil**: `DB_USER` es literalmente el usuario del sistema que ejecutó `createdb` (así
+funciona la autenticación `trust` local), no un valor fijo del proyecto. En otra máquina,
+comprueba con `whoami` y ajusta `DB_USER` si hace falta. El fichero `.env` **nunca** se sube a
+git.
 
 ### 1.5. Migraciones
 
