@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load partials %}
+
+{% block titulo %}Inicio{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-16 max-w-2xl px-6 text-center">
+  <h1 class="text-4xl font-bold text-emerald-700">KCalibra está viva</h1>
+  <p class="mt-4 text-lg text-slate-600">
+    Esto es el esqueleto de la unidad 002: Django, PostgreSQL, Tailwind, plantillas parciales,
+    HTMX y Alpine, todos en pie. Todavía no hace nada útil, y eso es a propósito &mdash; eso
+    llega con las próximas unidades.
+  </p>
+
+  {# ---------------------------------------------------------------------------------- #}
+  {# {% partialdef %} define un trozo de plantilla con nombre, reutilizable en dos sitios: #}
+  {# aquí, empotrado dentro de la página completa; y suelto, cuando la vista               #}
+  {# "hora_servidor" lo devuelve solo (ver paginas/views.py). Es la pieza que demuestra R4. #}
+  {# ---------------------------------------------------------------------------------- #}
+  {% partialdef hora_servidor %}
+  <p id="hora-servidor" class="mt-8 font-mono text-lg text-slate-800">
+    Hora del servidor: {{ hora|default:"aún no comprobada" }}
+  </p>
+  {% endpartialdef %}
+
+  {% partial hora_servidor %}
+
+  {# ---------------------------------------------------------------------------------- #}
+  {# El botón de HTMX (R5): al pulsarlo, pide la URL de "hora_servidor" y sustituye SOLO  #}
+  {# el <p id="hora-servidor"> de arriba por lo que devuelva. No recarga la página.       #}
+  {# ---------------------------------------------------------------------------------- #}
+  <button
+    type="button"
+    hx-get="{% url 'paginas:hora_servidor' %}"
+    hx-target="#hora-servidor"
+    hx-swap="outerHTML"
+    class="mt-6 rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white transition hover:bg-emerald-700"
+  >
+    Comprobar hora del servidor
+  </button>
+</div>
+{% endblock %}

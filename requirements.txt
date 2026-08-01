@@ -1,0 +1,6 @@
+# Dependencias del proyecto, versiones fijadas (unidad 002 · esqueleto).
+# Solo tres directas: Django, el conector de PostgreSQL (psycopg, con su rueda binaria) y
+# django-template-partials. El resto son dependencias transitivas suyas.
+Django==5.2.16
+psycopg[binary]==3.3.4
+django-template-partials==25.3
