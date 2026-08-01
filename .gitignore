@@ -26,3 +26,7 @@ local_settings.py
 
 # Sistema
 .DS_Store
+
+# Evidencia generada (capturas, logs...): el repo de código es solo código. El registro de
+# cada unidad, con su evidencia descrita, vive en el meta-repo (hallazgos.md), no aquí.
+/evidencia/

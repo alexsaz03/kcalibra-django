@@ -1,0 +1,15 @@
+/*
+Fichero de entrada de Tailwind 4. En la v4 ya no hace falta un tailwind.config.js: la
+configuración se hace aquí mismo, en CSS. Con una sola línea de import basta para tener
+todas las utilidades de Tailwind disponibles.
+*/
+@import "tailwindcss";
+
+/*
+Tailwind v4 detecta solo las plantillas por debajo de donde se ejecuta (heurística sobre el
+árbol de ficheros). Como este proyecto es un worktree de git con el .git señalando fuera del
+propio directorio, se declaran las rutas a mano para no depender de esa heurística y que el
+resultado sea el mismo lo ejecute quien lo ejecute.
+*/
+@source "../../templates";
+@source "../../paginas/templates";
