@@ -17,7 +17,15 @@
     <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Quién está dentro</h2>
     <ul class="mt-3 space-y-1">
       {% for miembro in miembros %}
-        <li class="text-slate-800">{{ miembro.email }}</li>
+        <li class="flex items-center justify-between text-slate-800">
+          <span>{{ miembro.email }}</span>
+          {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro, aunque #}
+          {# solo su dueña pueda cambiarlos — perfiles/views.py lo hace cumplir en el         #}
+          {# servidor, esto es solo el enlace para llegar. #}
+          <a href="{% url 'perfiles:ver' miembro.id %}" class="text-sm font-medium text-emerald-700 hover:underline">
+            Ver datos
+          </a>
+        </li>
       {% endfor %}
     </ul>
   </section>

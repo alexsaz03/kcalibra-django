@@ -106,6 +106,11 @@ INSTALLED_APPS = [
     # Unidad 003 — ver docs/05-trabajo/003-cuentas-y-hogares/especificacion.md del meta-repo.
     "cuentas",
     "hogares",
+    # perfiles: los datos físicos, el objetivo y las manías de cada persona, y las calorías
+    # y macros que salen de ellos. Unidad 004 — ver
+    # docs/05-trabajo/004-perfil-y-objetivo-del-dia/especificacion.md del meta-repo. La
+    # fórmula en sí NO vive aquí (R8): vive en `servicios/`, que esta unidad estrena.
+    "perfiles",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"

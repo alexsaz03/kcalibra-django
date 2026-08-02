@@ -7,6 +7,14 @@ así (ver la lección de docs/conocimiento/tests-que-no-fallan-cuando-deben.md d
 
 Este fichero NO empieza por "test": la suite de Django no lo recorre como si tuviera tests
 propios, solo lo importan los ficheros que sí lo son.
+
+Unidad 004: el formulario de alta creció (ahora pide también los datos físicos, la actividad,
+el objetivo y las manías, ver `cuentas/forms.py`). `registrar()` manda unos valores válidos
+de fábrica para esos campos nuevos —los de Euridice, el episodio de C-13— así que TODAS las
+llamadas ya existentes en `cuentas/tests.py` y `hogares/tests.py` (que solo pasan `email`,
+`codigo_hogar` y `password`) siguen funcionando sin tocar ni una línea de esos ficheros. Los
+tests de la unidad 004 que necesiten datos físicos concretos (Alejandro, R11...) los
+sobrescriben pasándolos como argumentos con nombre.
 """
 
 import re
@@ -18,6 +26,23 @@ from django.test import TestCase, override_settings
 CLAVE_VALIDA = "una-clave-de-verdad-2026"
 
 _RE_ENLACE = re.compile(r"(http\S+/cuentas/confirm-email/\S+/)")
+
+# Unidad 004 — datos físicos válidos de fábrica para `registrar()`: los de Euridice (C-13 de
+# crear-cuenta.md), que además sirven de segunda comprobación gratuita de R1 en cualquier
+# test que registre una cuenta sin pedir otra cosa.
+DATOS_FISICOS_POR_DEFECTO = {
+    "sexo": "mujer",
+    "fecha_nacimiento": "1997-06-29",
+    "altura_cm": "167",
+    "peso_kg": "62",
+    "actividad": "moderado",
+    "objetivo": "perder_grasa",
+    "ajuste_pct": "",
+    "dieta": "",
+    "alergias": "",
+    "intolerancias": "",
+    "no_le_gusta": "",
+}
 
 
 @override_settings(REGISTRO_ABIERTO=True)
@@ -36,8 +61,14 @@ class PruebaConRegistroAbierto(TestCase):
         # test falla por una razón que no tiene nada que ver con lo que dice probar.
         cache.clear()
 
-    def registrar(self, email, codigo_hogar="", password=CLAVE_VALIDA):
-        """Rellena el formulario de alta de verdad, vía HTTP. Devuelve la respuesta."""
+    def registrar(self, email, codigo_hogar="", password=CLAVE_VALIDA, **datos_fisicos):
+        """
+        Rellena el formulario de alta de verdad, vía HTTP. Devuelve la respuesta.
+
+        Los datos físicos (unidad 004) toman los de `DATOS_FISICOS_POR_DEFECTO` salvo que se
+        sobrescriban por nombre, p. ej. `self.registrar(email, sexo="hombre", peso_kg="93")`.
+        """
+        datos = {**DATOS_FISICOS_POR_DEFECTO, **datos_fisicos}
         return self.client.post(
             "/cuentas/signup/",
             {
@@ -45,6 +76,7 @@ class PruebaConRegistroAbierto(TestCase):
                 "password1": password,
                 "password2": password,
                 "codigo_hogar": codigo_hogar,
+                **datos,
             },
             follow=True,
         )
@@ -68,9 +100,9 @@ class PruebaConRegistroAbierto(TestCase):
         )
         return coincidencia.group(1)
 
-    def registrar_y_verificar(self, email, codigo_hogar="", password=CLAVE_VALIDA):
+    def registrar_y_verificar(self, email, codigo_hogar="", password=CLAVE_VALIDA, **datos_fisicos):
         """Alta completa: rellena el formulario Y pulsa el enlace del correo, con el MISMO
         cliente (para que allauth la deje entrar directa, R13)."""
-        self.registrar(email, codigo_hogar=codigo_hogar, password=password)
+        self.registrar(email, codigo_hogar=codigo_hogar, password=password, **datos_fisicos)
         enlace = self.ultimo_enlace_de_verificacion(para_correo=email)
         return self.client.get(enlace, follow=True)
