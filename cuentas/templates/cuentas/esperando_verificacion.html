@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block titulo %}Verifica tu correo{% endblock %}
+{% block content %}
+<div class="mx-auto mt-16 max-w-md px-6">
+  <h1 class="text-2xl font-bold text-slate-900">Revisa tu correo</h1>
+  <p class="mt-4 text-slate-700">
+    Te hemos mandado un enlace de verificación a
+    <strong class="text-slate-900">{{ correo }}</strong>.
+    Ese enlace vale <strong>24 horas</strong> y solo sirve una vez: en cuanto lo pulses,
+    entrarás directamente en KCalibra, sin tener que iniciar sesión aparte.
+  </p>
+  <p class="mt-2 text-sm text-slate-500">
+    Si no lo ves en tu bandeja de entrada, mira en spam. En este portátil, además, el correo
+    se imprime en la terminal donde corre <code>manage.py runserver</code> (no hay ningún
+    servicio de envío conectado todavía).
+  </p>
+
+  <div class="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <form method="post" action="{% url 'cuentas:reenviar_verificacion' %}">
+      {% csrf_token %}
+      <button type="submit" class="w-full rounded-lg border border-emerald-600 px-4 py-2 font-medium text-emerald-700 hover:bg-emerald-50">
+        Pedir otro correo
+      </button>
+    </form>
+    <button type="button" onclick="document.getElementById('form-corregir').classList.toggle('hidden')"
+      class="w-full rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700 hover:bg-slate-50">
+      Corregir la dirección
+    </button>
+  </div>
+
+  <form id="form-corregir" method="post" action="{% url 'cuentas:corregir_correo' %}" class="mt-4 hidden space-y-2">
+    {% csrf_token %}
+    <label for="nuevo_correo" class="block text-sm font-medium text-slate-700">
+      Nueva dirección de correo
+    </label>
+    <input type="email" name="nuevo_correo" id="nuevo_correo" required
+      value="{{ correo }}">
+    <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
+      Guardar y mandar el enlace ahí
+    </button>
+  </form>
+</div>
+{% endblock %}

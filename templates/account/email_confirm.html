@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Confirmar correo{% endblock %}
+{% block content %}
+<div class="mx-auto mt-16 max-w-sm px-6 text-center">
+  {% if confirmation %}
+    <h1 class="text-2xl font-bold text-slate-900">Confirmando tu correo&hellip;</h1>
+  {% else %}
+    <h1 class="text-2xl font-bold text-slate-900">Ese enlace ya no vale</h1>
+    <p class="mt-4 text-slate-600">
+      Ha caducado (los enlaces de verificación valen 24 horas) o ya se usó antes. Pide uno
+      nuevo desde
+      <a href="{% url 'cuentas:esperando_verificacion' %}" class="font-medium text-emerald-700 hover:underline">
+        la pantalla de espera
+      </a>, o
+      <a href="{% url 'account_signup' %}" class="font-medium text-emerald-700 hover:underline">
+        crea tu cuenta
+      </a> si aún no lo has hecho.
+    </p>
+  {% endif %}
+</div>
+{% endblock %}

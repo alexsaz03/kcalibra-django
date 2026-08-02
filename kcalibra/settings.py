@@ -89,12 +89,27 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # `django.contrib.sites` y las apps de allauth: la unidad 003 monta el alta, la entrada
+    # y la salida sobre `django-allauth` en vez de vistas hechas a mano (decisión del curso,
+    # ver docs/decisiones del meta-repo). `sites` es una dependencia dura de allauth aunque
+    # esta app solo tenga un sitio: allauth lo usa para construir enlaces absolutos en los
+    # correos (por eso hace falta SITE_ID más abajo).
+    "django.contrib.sites",
+    "allauth",
+    "allauth.account",
     # Terceros: da soporte a {% partialdef %} en las plantillas (ver R4). Django 5.2 no lo
     # trae de serie (llegará en la 6.0); sin él, las plantillas se enredan en cuanto entra
     # HTMX, que necesita devolver "trozos" de página sueltos.
     "template_partials",
     "paginas",
+    # cuentas: quién eres y cómo entras. hogares: con quién compartes y quién ve qué.
+    # Unidad 003 — ver docs/05-trabajo/003-cuentas-y-hogares/especificacion.md del meta-repo.
+    "cuentas",
+    "hogares",
 ]
+
+AUTH_USER_MODEL = "cuentas.Usuario"
+SITE_ID = 1
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -102,8 +117,22 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # La pide allauth (gestiona detalles de sesión propios, como el "recuérdame").
+    "allauth.account.middleware.AccountMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Propio de esta unidad (R7, Q-10): resuelve al vuelo la petición de entrada de quien
+    # sigue "sola" en cuanto se cumple su hora de plazo. Ver hogares/middleware.py.
+    "hogares.middleware.ResolverSolicitudesDelUsuarioMiddleware",
+]
+
+AUTHENTICATION_BACKENDS = [
+    # El de Django, para el admin y por si algún día hay otra forma de entrar que no pase
+    # por allauth.
+    "django.contrib.auth.backends.ModelBackend",
+    # El de allauth: soporta entrar con correo (en vez de username) y el resto de reglas de
+    # esta unidad (bloqueo de intentos, verificación obligatoria...).
+    "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
 ROOT_URLCONF = "kcalibra.urls"
@@ -143,6 +172,112 @@ DATABASES = {
 }
 
 
+# Cuentas y hogares (unidad 003)
+# https://docs.allauth.org/en/latest/account/configuration.html
+
+# R12: el registro cerrado/abierto es LA MISMA PALANCA, solo cambiada de posición (G-31). Por
+# defecto CERRADO (el valor seguro): hoy la app está en internet y, abierta, cualquiera que
+# diera con la dirección podría registrarse y gastar cupo real. Para abrirla de verdad:
+# DJANGO_REGISTRO_ABIERTO=True en el entorno.
+REGISTRO_ABIERTO = os.environ.get("DJANGO_REGISTRO_ABIERTO", "False") == "True"
+
+ACCOUNT_ADAPTER = "cuentas.adapters.AdaptadorDeCuentas"
+ACCOUNT_SIGNUP_FORM_CLASS = "cuentas.forms.FormularioAlta"
+
+# Entrar solo con correo (no hay username: ver cuentas.models.Usuario). El mensaje de error
+# no distingue si falla el correo o la contraseña (R4, Q-32) — eso ya lo trae allauth de
+# serie con LOGIN_METHODS = {"email"}, aquí solo se traduce el texto (ver AdaptadorDeCuentas).
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_UNIQUE_EMAIL = True
+# `Usuario` no tiene ningún campo `username` (ver cuentas/models.py): hay que decírselo a
+# allauth explícitamente, si no intenta mirar `Usuario._meta.get_field("username")" al
+# montar el formulario de alta y revienta con FieldDoesNotExist.
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+
+# R13/G-37: verificación de correo OBLIGATORIA. Hasta que se pulsa el enlace, la cuenta existe
+# pero no hay forma de entrar (R14): `perform_login` de allauth no llama a `adapter.login()`
+# mientras la verificación siga pendiente, así que `request.user` sigue anónimo — es lo que
+# hace que cualquier vista con @login_required ya la bloquee, sin código propio.
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+# El enlace vale 24 horas (R15, Q-14) y una sola vez: allauth usa una firma HMAC con el
+# instante de envío incrustado (ni guarda el enlace en la base de datos), y una vez que la
+# EmailAddress queda verified=True, ese MISMO enlace deja de resolver a nada — no hace falta
+# ningún código propio para el "una sola vez".
+ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 1
+# Un único clic confirma (R13: "al pulsarlo, entra"), sin un segundo botón de "confirmar"
+# en una página intermedia.
+ACCOUNT_CONFIRM_EMAIL_ON_GET = True
+# Por defecto allauth NO deja entrado a quien acaba de verificar (hay que pedírselo
+# explícitamente): sin esto, R13 ("al pulsarlo, entra... sin pedirle iniciar sesión aparte")
+# se rompería.
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
+
+# R2/R-14: aquí se decide, A PROPÓSITO, ir en contra del valor por defecto de allauth
+# (`PREVENT_ENUMERATION = True`, que oculta si un correo ya tiene cuenta para no dar pistas a
+# quien esté probando direcciones al azar). Los planos de esta app piden justo lo contrario:
+# avisar explícitamente de que ese correo ya tiene cuenta y llevar a quien lo intenta a la
+# pantalla de iniciar sesión (R2). Es una decisión de negocio ya tomada, no un descuido.
+ACCOUNT_PREVENT_ENUMERATION = False
+
+# R3/G-50: la sesión no caduca por el mero paso del tiempo (ver SESSION_COOKIE_AGE más abajo).
+# `SESSION_REMEMBER = True` quita el checkbox de "recuérdame": aquí SIEMPRE se recuerda, no
+# hay dos comportamientos distintos según una casilla.
+ACCOUNT_SESSION_REMEMBER = True
+
+# R4/Q-12: intentos de acceso fallidos. Se dejan los valores por defecto de allauth (5
+# fallos seguidos por correo en una ventana de 5 minutos, más un límite más laxo por IP): ya
+# cumplen el contrato ("cierra el acceso desde ahí durante un rato", sin decir cuántos
+# intentos ni cuánto rato exactos) y añadir un número propio sin que los planos lo pidan
+# sería inventar donde no hace falta.
+ACCOUNT_RATE_LIMITS = {
+    # H1 de la revisión (2ª ronda): "pedir otro correo" y "corregir la dirección"
+    # (cuentas/views.py) no tenían NINGÚN límite propio — allauth solo limita el envío
+    # cuando pasa por su propio flujo de login/alta, no cuando se llama a
+    # `EmailAddress.send_confirmation()` directamente, como hacen esas dos vistas. Sin este
+    # límite, la app sirve de relé para mandar enlaces a cualquier dirección que alguien
+    # teclee, una y otra vez. Mismo formato que el límite de accesos fallidos de arriba: por
+    # IP Y por correo a la vez.
+    "cuentas_correo_pendiente": "5/m/ip,10/h/key",
+}
+
+ACCOUNT_EMAIL_SUBJECT_PREFIX = "[KCalibra] "
+
+LOGIN_URL = "account_login"
+LOGIN_REDIRECT_URL = "hogares:mi_hogar"
+LOGOUT_REDIRECT_URL = "paginas:inicio"
+
+# R3/G-50: "la sesión no caduca por el mero paso del tiempo... sigue dentro después de un
+# tiempo largo sin tocar la app". Django expira las sesiones por antigüedad fija
+# (SESSION_COOKIE_AGE), no por inactividad, así que la única forma honesta de cumplir esto es
+# un plazo deliberadamente enorme (10 años) en vez de "sin límite" (que no existe como opción
+# real: siempre hay algún número). Termina solo por logout o cambio de contraseña (más abajo).
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 365 * 10
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+# Cada petición autenticada alarga la sesión desde "ahora": con esto, alguien que usa la app
+# a diario nunca se acerca al límite de arriba (belt-and-suspenders del mismo requisito).
+SESSION_SAVE_EVERY_REQUEST = True
+
+# R3/G-52: cambiar la contraseña cierra las DEMÁS sesiones (todas menos la que se está usando
+# en ese momento). Esto es Django puro, no allauth: cada sesión guarda un hash derivado de la
+# contraseña (`get_session_auth_hash`), y en cuanto la contraseña cambia, cualquier sesión con
+# el hash viejo deja de reconocerse como autenticada en su siguiente petición. La sesión ACTUAL
+# se mantiene porque el formulario de cambio de contraseña de allauth llama a
+# `update_session_auth_hash()` para ella (ver internal/flows/password_change.py). No hace
+# falta código propio para ninguna de las dos mitades.
+
+# El correo de verificación: por dónde sale (R13, "Cómo" de la especificación). En ESTE
+# portátil, por la consola (así se puede recorrer el alta entera sin montar nada). En
+# producción hace falta un servicio de envío de verdad: se deja el remitente detrás de
+# variables de entorno para que enchufarlo sea cambiar configuración, no código (deuda
+# documentada en hallazgos.md — sin ese servicio, el día del despliegue nadie podrá
+# registrarse).
+EMAIL_BACKEND = os.environ.get(
+    "DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@kcalibra.app")
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -165,7 +300,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = "en-us"
+# Español: la app y sus mensajes (incluidos los de validación de Django/allauth que no se
+# traducen a mano) hablan en español.
+LANGUAGE_CODE = "es"
 
 TIME_ZONE = "UTC"
 

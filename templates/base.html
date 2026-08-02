@@ -15,6 +15,48 @@
   <script src="{% static 'js/alpine.min.js' %}" defer></script>
 </head>
 <body class="h-full bg-slate-50 text-slate-900">
+  {# Barra de arriba: distingue si hay alguien dentro o no (parte del contrato de la unidad #}
+  {# 003 — "la portada... pasa a distinguir si hay alguien dentro o no" se aplica igual a     #}
+  {# toda la app, no solo a la portada). #}
+  <header class="border-b border-slate-200 bg-white">
+    <nav class="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
+      <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-emerald-700">KCalibra</a>
+      <div class="flex items-center gap-4 text-sm">
+        {% if user.is_authenticated %}
+          <span class="text-slate-600">{{ user.email }}</span>
+          <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">Mi hogar</a>
+          <form method="post" action="{% url 'account_logout' %}" class="inline">
+            {% csrf_token %}
+            <button type="submit" class="font-medium text-slate-600 hover:text-emerald-700 hover:underline">
+              Salir
+            </button>
+          </form>
+        {% else %}
+          <a href="{% url 'account_login' %}" class="font-medium text-slate-600 hover:text-emerald-700 hover:underline">
+            Entrar
+          </a>
+          <a href="{% url 'account_signup' %}" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700">
+            Crear cuenta
+          </a>
+        {% endif %}
+      </div>
+    </nav>
+  </header>
+
+  {% if messages %}
+    <div class="mx-auto mt-4 max-w-2xl space-y-2 px-6">
+      {% for message in messages %}
+        <p class="rounded-lg border px-4 py-2 text-sm
+          {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
+          {% elif message.tags == 'warning' %}border-amber-300 bg-amber-50 text-amber-800
+          {% elif message.tags == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-800
+          {% else %}border-slate-300 bg-slate-50 text-slate-800{% endif %}">
+          {{ message }}
+        </p>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% block content %}{% endblock %}
 </body>
 </html>
