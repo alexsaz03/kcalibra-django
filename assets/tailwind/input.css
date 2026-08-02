@@ -15,17 +15,24 @@ resultado sea el mismo lo ejecute quien lo ejecute.
 @source "../../paginas/templates";
 @source "../../cuentas/templates";
 @source "../../hogares/templates";
+@source "../../perfiles/templates";
 
 /*
-Estilo base de los formularios (unidad 003): allauth genera sus widgets sin clases propias,
-así que en vez de tocar cada campo uno a uno se les da un aspecto consistente aquí, por tipo
-de elemento. Así cualquier formulario nuevo (de esta unidad o de las que vengan) sale con el
-mismo estilo sin tener que acordarse de nada en la plantilla.
+Estilo base de los formularios (unidad 003, ampliado en la 004): allauth genera sus widgets
+sin clases propias, así que en vez de tocar cada campo uno a uno se les da un aspecto
+consistente aquí, por tipo de elemento. Así cualquier formulario nuevo (de esta unidad o de
+las que vengan) sale con el mismo estilo sin tener que acordarse de nada en la plantilla.
+Unidad 004: el formulario de "tus datos" añade `<select>`, `<textarea>` y campos numéricos y
+de fecha, que la unidad 003 no necesitaba — se cubren aquí, no plantilla a plantilla.
 */
 @layer base {
   input[type="email"],
   input[type="password"],
-  input[type="text"] {
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  select,
+  textarea {
     @apply mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900
       shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500;
   }

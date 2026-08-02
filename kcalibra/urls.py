@@ -53,6 +53,8 @@ urlpatterns = [
     path("cuentas/", include("cuentas.urls")),
     # El hogar: su código, quién está dentro, las peticiones pendientes.
     path("hogares/", include("hogares.urls")),
+    # Los datos físicos, el objetivo y las calorías del día de cada persona (unidad 004).
+    path("perfiles/", include("perfiles.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]

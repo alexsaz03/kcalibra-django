@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase, override_settings
 
-from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from cuentas.ayuda_pruebas import CLAVE_VALIDA, DATOS_FISICOS_POR_DEFECTO, PruebaConRegistroAbierto
 
 Usuario = get_user_model()
 
@@ -29,6 +29,11 @@ class RegistroCerradoTests(TestCase):
                 "password1": CLAVE_VALIDA,
                 "password2": CLAVE_VALIDA,
                 "codigo_hogar": "",
+                # Unidad 004: el formulario de alta creció y ahora pide también los datos
+                # físicos (cuentas/forms.py). Van aquí con valores válidos para que la ÚNICA
+                # razón de que esta cuenta no se cree sea el registro cerrado (lo que este
+                # test dice probar) y no un formulario incompleto por otro motivo.
+                **DATOS_FISICOS_POR_DEFECTO,
             },
             follow=True,
         )
@@ -48,6 +53,8 @@ class RegistroCerradoTests(TestCase):
                 "password1": CLAVE_VALIDA,
                 "password2": CLAVE_VALIDA,
                 "codigo_hogar": "",
+                # Unidad 004: ver el comentario del test de arriba.
+                **DATOS_FISICOS_POR_DEFECTO,
             },
             follow=True,
         )

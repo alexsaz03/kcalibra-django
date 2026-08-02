@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load partials %}
+
+{% block titulo %}
+  {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.usuario.email }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
+
+  {# ------------------------------------------------------------------------------------ #}
+  {# {% partialdef %} define la tarjeta entera (formulario + resultado) como un trozo con  #}
+  {# nombre: es lo que R3 pide ("se recalcula al momento... sin recargar la pantalla"). El  #}
+  {# formulario se envía por HTMX y el servidor devuelve SOLO este trozo (ver              #}
+  {# perfiles/views.py:actualizar_perfil), que sustituye al de arriba entero — así el       #}
+  {# `ajuste_pct` que se ve en pantalla también se pone al día cuando R5 lo reinicia al de  #}
+  {# fábrica, no solo las calorías. Mismo mecanismo que paginas/views.py:hora_servidor      #}
+  {# (unidad 002), aplicado aquí a algo con un formulario de verdad detrás.                 #}
+  {# ------------------------------------------------------------------------------------ #}
+  {% partialdef tarjeta_perfil %}
+  <div id="tarjeta-perfil">
+    <h1 class="text-2xl font-bold text-slate-900">
+      {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.usuario.email }}{% endif %}
+    </h1>
+
+    {% if es_propio %}
+      <form
+        hx-post="{% url 'perfiles:actualizar' perfil.usuario_id %}"
+        hx-target="#tarjeta-perfil"
+        hx-swap="outerHTML"
+        method="post"
+        class="mt-6 space-y-4"
+      >
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+            {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+          </div>
+        {% endif %}
+        {% for field in form.visible_fields %}
+          <div>
+            <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+              {{ field.label }}
+            </label>
+            {{ field }}
+            {% if field.help_text %}
+              <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
+            {% endif %}
+            {% if field.errors %}
+              <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
+          Guardar
+        </button>
+      </form>
+
+      {# R7/G-61: el peso NO se edita aquí — se apunta en Progreso (otra unidad). Se enseña #}
+      {# de dónde sale el número que usa el cálculo, para que no sorprenda. #}
+      <p class="mt-3 text-xs text-slate-500">
+        El peso no se cambia desde aquí: se calcula con la media de tus últimas mediciones
+        (se apuntará en Progreso, en una unidad futura). Ahora mismo tienes
+        {% if resultado %}{{ resultado.peso_kg }} kg{% else %}ninguna medición todavía{% endif %}.
+      </p>
+    {% else %}
+      {# Solo lectura (R9): el resto del hogar ve estos datos, pero no hay ningún formulario #}
+      {# ni botón — no se esconde con CSS, no existe la ruta desde aquí (ver acceso.py). #}
+      <dl class="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-200 bg-white p-6 text-sm">
+        <dt class="text-slate-500">Sexo</dt><dd class="text-slate-900">{{ perfil.get_sexo_display }}</dd>
+        <dt class="text-slate-500">Fecha de nacimiento</dt><dd class="text-slate-900">{{ perfil.fecha_nacimiento }}</dd>
+        <dt class="text-slate-500">Altura</dt><dd class="text-slate-900">{{ perfil.altura_cm }} cm</dd>
+        <dt class="text-slate-500">Actividad</dt><dd class="text-slate-900">{{ perfil.get_actividad_display }}</dd>
+        <dt class="text-slate-500">Objetivo</dt><dd class="text-slate-900">{{ perfil.get_objetivo_display }}</dd>
+        <dt class="text-slate-500">Ajuste</dt><dd class="text-slate-900">{{ perfil.ajuste_pct }}%</dd>
+      </dl>
+    {% endif %}
+
+    <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Calorías y macros del día</h2>
+      {% if resultado %}
+        <p id="calorias-del-dia" class="mt-2 text-3xl font-bold text-emerald-700">
+          {{ resultado.calorias }} kcal
+        </p>
+        <p class="mt-2 text-sm text-slate-600">
+          Proteína: <strong>{{ resultado.proteina_g }} g</strong> ·
+          Grasa: <strong>{{ resultado.grasa_g }} g</strong> ·
+          Carbohidratos: <strong>{{ resultado.carbos_g }} g</strong>
+        </p>
+      {% else %}
+        <p class="mt-2 text-sm text-slate-500">
+          Aún no hay datos suficientes para calcular las calorías del día.
+        </p>
+      {% endif %}
+    </section>
+  </div>
+  {% endpartialdef %}
+
+  {% partial tarjeta_perfil %}
+
+</div>
+{% endblock %}

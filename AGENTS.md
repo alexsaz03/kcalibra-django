@@ -138,7 +138,9 @@ rechaza cualquier alta a propósito, R12) y `python manage.py runserver` corrien
 ### 4.1. Una sola persona
 
 1. Entra en `http://127.0.0.1:8000/cuentas/signup/` y crea una cuenta con tu correo y una
-   contraseña (deja el campo "Código de hogar" en blanco).
+   contraseña (deja el campo "Código de hogar" en blanco). Desde la unidad 004 el formulario
+   pide TAMBIÉN tus datos físicos, tu actividad, tu objetivo y tus manías (ver el punto 4.4
+   más abajo si quieres usar unos valores concretos para comprobar las calorías a mano).
 2. La app te lleva a `/cuentas/esperando-verificacion/`, con el aviso de que te ha mandado un
    correo. **En este portátil el correo no sale a ningún sitio: se imprime en la terminal
    donde corre `manage.py runserver`.** Búscalo ahí: es un bloque de texto con
@@ -178,6 +180,34 @@ verdad, hazlo desde `manage.py shell` retrasando a mano el campo `creada_en` de 
 - Las contraseñas en la base de datos: `psql kcalibra_dev -c "SELECT email, password FROM
   cuentas_usuario;"` — deben salir como `pbkdf2_sha256$...`, nunca en claro (R10).
 
+### 4.4. Crear una cuenta con datos físicos y ver tus calorías (unidad 004)
+
+El paso 4.1 ya crea el perfil (es el mismo formulario de alta, que ahora también pide sexo,
+fecha de nacimiento, altura, peso, actividad, objetivo y manías). Para comprobar que las
+calorías salen bien con un caso conocido, usa los datos de uno de los dos episodios reales de
+los planos al rellenar el alta:
+
+| Campo | Euridice (R1) | Alejandro (R2) |
+|---|---|---|
+| Sexo | Mujer | Hombre |
+| Fecha de nacimiento | 29/06/1997 | 03/11/1998 |
+| Altura | 167 cm | 190 cm |
+| Peso | 62 kg | 93 kg |
+| Actividad | Actividad moderada | Actividad ligera |
+| Objetivo | Perder grasa | Recomposición corporal |
+| Ajuste manual | (en blanco: usa el −10 % de fábrica) | (en blanco: usa el +10 % de fábrica) |
+| Calorías que debe enseñar `/perfiles/` | **1.894 kcal** (136 g proteína, 59 g grasa, 205 g carbohidratos) | **3.006 kcal** (205 g proteína, 94 g grasa, 336 g carbohidratos) |
+
+Tras verificar el correo (paso 4.1.3), entra en `http://127.0.0.1:8000/perfiles/` ("Tus
+datos" en la barra de arriba): debe enseñar esas calorías y esos macros ya calculados. Cambia
+el "Objetivo" del formulario y pulsa "Guardar": los números de la tarjeta de abajo se
+actualizan al momento, sin recargar la página (HTMX) — y el "Ajuste manual" vuelve él solo al
+de fábrica del objetivo nuevo (R5).
+
+Para ver el perfil de otra persona de tu hogar (R9: se ve, pero no se puede cambiar), entra en
+`/hogares/mi-hogar/` y pulsa "Ver datos" junto a su correo, o ve directamente a
+`/perfiles/<su-id>/`.
+
 ## Cómo está organizado el código
 
 | dónde | qué hay | por qué |
@@ -188,7 +218,8 @@ verdad, hazlo desde `manage.py shell` retrasando a mano el campo `creada_en` de 
 | `hogares/` | `Hogar`, `SolicitudEntrada`, la base abstracta `ModeloDeHogar` (el aislamiento reutilizable) y la puerta única de acceso (`hogares/acceso.py`) | unidad 003 — "con quién compartes y quién ve qué"; toda unidad futura con datos del hogar (despensa, recetas, calendario) hereda de `ModeloDeHogar` en vez de reinventar el aislamiento |
 | `templates/` | plantillas compartidas entre apps (`base.html`, y las de `allauth` que se han sobrescrito bajo `templates/account/`) | la base con Tailwind, HTMX y Alpine ya cargados; cada app extiende esto |
 | `paginas/templates/paginas/`, `cuentas/templates/cuentas/`, `hogares/templates/hogares/` | plantillas propias de cada app | convención estándar de Django: cada app guarda las suyas bajo su propio nombre, para que no choquen nombres entre apps |
-| `servicios/` | la capa de servicios (cálculos, lógica de negocio) | **vacía a propósito**; la lógica de cuentas y hogares vive DENTRO de sus propias apps (`hogares/logica.py`), porque esta carpeta es la de los cálculos del dominio nutricional que llega en la unidad 004, no un cajón general |
+| `servicios/` | la capa de servicios: cálculos del dominio nutricional, en funciones puras | **estrenada en la unidad 004** (`servicios/metabolismo.py`): metabolismo basal, gasto diario, objetivo calórico y macros (fórmula Mifflin-St Jeor). Funciones puras — reciben datos y devuelven números, sin tocar la base de datos ni saber qué es una petición HTTP — para que se prueben solas y sirvan el día que haya una app nativa. La lógica de cuentas y hogares sigue viviendo DENTRO de sus propias apps (`hogares/logica.py`, `perfiles/logica.py`): esta carpeta es solo para cálculo puro, no un cajón general |
+| `perfiles/` | los datos físicos, la actividad, el objetivo, el ajuste y las manías de cada persona (`Perfil`), y sus mediciones de peso (`MedicionPeso`); la pantalla de "tus datos" con las calorías y macros del día | unidad 004 — "cuenta quién eres y la app te dice cuántas calorías y qué macros te tocan". El cálculo en sí NO vive aquí (R8): `perfiles/logica.py` reúne los datos (perfil + media de peso de 7 días) y llama a `servicios/metabolismo.py`; las vistas (`perfiles/views.py`) solo llaman a `perfiles/logica.py`. El peso NO es un campo editable de `Perfil` (R7/G-61): es el resultado de las `MedicionPeso`, y el perfil no hereda de `hogares.ModeloDeHogar` porque es un dato DE LA PERSONA, no del hogar (G-43) — `perfiles/acceso.py` es la puerta: todo el hogar VE cualquier perfil, solo su dueña lo CAMBIA |
 | `assets/tailwind/input.css` | el fichero de entrada de Tailwind | de aquí sale `static/css/tailwind.css` al compilar (paso 1.6). Incluye los estilos base de los formularios (`@layer base`) para que cualquier campo de `allauth` salga con aspecto consistente sin tocarlo campo a campo |
 | `static/` | CSS generado + HTMX y Alpine vendidos | todo lo que Tailwind necesita servir sin depender de Node ni de una CDN |
 
