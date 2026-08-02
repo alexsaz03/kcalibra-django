@@ -19,6 +19,7 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+from django.db import transaction
 from django.shortcuts import redirect, render
 
 Usuario = get_user_model()
@@ -164,14 +165,24 @@ def corregir_correo(request):
     # deja de existir) y se crea una NUEVA para la dirección corregida, con un PK distinto. El
     # enlace viejo, cuyo HMAC firma el PK que ya no existe, deja de resolver a nada — igual que
     # un enlace caducado (R15/Q-14: "caducado o ya usado, no vuelve a dar acceso").
-    primaria = direccion.primary
-    direccion.delete()
-    nueva_direccion = EmailAddress.objects.create(
-        user=usuario, email=nuevo_correo, verified=False, primary=primaria
-    )
-
-    usuario.email = nuevo_correo
-    usuario.save(update_fields=["email"])
+    #
+    # `transaction.atomic()` (3ª revisión): el peligro real no es que el proceso muera a medio
+    # camino, es que lleguen DOS peticiones a la vez (dos pestañas, un doble clic). Sin esto,
+    # si el `create()` fallara (por ejemplo, por una carrera con OTRA petición corrigiendo el
+    # mismo correo al mismo tiempo) DESPUÉS de que el `delete()` ya se hubiera confirmado en la
+    # base, la persona se quedaría sin ninguna `EmailAddress` pendiente: la pantalla de espera
+    # le diría "no hay ninguna verificación pendiente", no podría ni reenviar ni corregir, y R2
+    # le impediría registrarse otra vez con ese correo — fuera de su propia cuenta. Con las tres
+    # escrituras dentro del mismo bloque atómico, o se confirman las tres juntas, o no se
+    # confirma ninguna: nunca queda a medias.
+    with transaction.atomic():
+        primaria = direccion.primary
+        direccion.delete()
+        nueva_direccion = EmailAddress.objects.create(
+            user=usuario, email=nuevo_correo, verified=False, primary=primaria
+        )
+        usuario.email = nuevo_correo
+        usuario.save(update_fields=["email"])
 
     request.session[CLAVE_SESION_CORREO_PENDIENTE] = nuevo_correo
     nueva_direccion.send_confirmation(request, signup=False)

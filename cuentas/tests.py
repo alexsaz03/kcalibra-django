@@ -98,6 +98,27 @@ class CorreoDuplicadoTests(PruebaConRegistroAbierto):
         self.assertFalse(respuesta.redirect_chain[-1][0] == "/cuentas/login/")
         self.assertContains(respuesta, "Revisa tu correo")
 
+    def test_un_error_de_formulario_distinto_no_redirige_a_iniciar_sesion(self):
+        """
+        Segundo control, añadido en la 3ª revisión: el de arriba usa un correo NUEVO, que es
+        un formulario VÁLIDO — nunca llega a pasar por `form_invalid`, así que no demuestra
+        nada sobre ESE método (comprobado: con `form_invalid` redirigiendo SIEMPRE a
+        `account_login`, pasara lo que pasara, este archivo seguía entero en verde). Lo que sí
+        hace falta es un formulario INVÁLIDO por un motivo que NO sea el correo duplicado —
+        aquí, una contraseña completamente numérica, que Django rechaza de fábrica
+        (`NumericPasswordValidator`) — y comprobar que la persona se queda en el formulario de
+        alta corrigiendo su contraseña, no que la manden a iniciar sesión sin haber creado
+        nada.
+        """
+        respuesta = self.registrar("alguien-nuevo@example.com", password="12345678")
+
+        self.assertFalse(
+            respuesta.redirect_chain,
+            "un error de CONTRASEÑA no debe redirigir a ninguna parte: se queda en el alta",
+        )
+        self.assertContains(respuesta, "Crea tu cuenta")
+        self.assertFalse(Usuario.objects.filter(email="alguien-nuevo@example.com").exists())
+
 
 class SesionNoCaducaTests(PruebaConRegistroAbierto):
     """R3/G-50 — una sesión no caduca por el mero paso del tiempo."""
@@ -172,14 +193,22 @@ class SesionNoCaducaTests(PruebaConRegistroAbierto):
         )
 
         nueva_clave = "otra-clave-de-verdad-2026"
-        self.client.post(
+        # `follow=True` es lo que importa aquí (H4 de la 3ª revisión): tras cambiarla, allauth
+        # REDIRIGE de vuelta a `/cuentas/password/change/` (`get_password_change_redirect_url`
+        # apunta ahí por defecto) — sin seguir esa redirección, el test se queda en el 302 y
+        # jamás llega a RENDERIZAR esa plantilla. Fue justo eso lo que dejó pasar un `500` real
+        # (la plantilla de fábrica de allauth enlaza a una URL que H3 quitó a propósito): la
+        # ruta "existía" (302 sin sesión), pero renderizarla de verdad reventaba.
+        respuesta = self.client.post(
             "/cuentas/password/change/",
             {
                 "oldpassword": CLAVE_VALIDA,
                 "password1": nueva_clave,
                 "password2": nueva_clave,
             },
+            follow=True,
         )
+        self.assertEqual(respuesta.status_code, 200)
 
         # La sesión ACTUAL (la que cambió la contraseña) sigue dentro.
         self.assertTrue(
@@ -401,6 +430,47 @@ class VerificacionDeCorreoTests(PruebaConRegistroAbierto):
 
         self.assertContains(ultima_respuesta, "Demasiados intentos")
 
+    def test_corregir_no_deja_a_nadie_a_medias_si_falla_por_el_camino(self):
+        """
+        3ª revisión, "menor" 1: el disparador realista no es que el proceso muera, es que
+        lleguen DOS peticiones a la vez sobre el mismo correo (dos pestañas, un doble clic).
+        Sin `transaction.atomic()`, si el `create()` de la `EmailAddress` nueva fallara
+        DESPUÉS de que el `delete()` de la vieja ya se hubiera confirmado en la base, la
+        persona se quedaría sin NINGUNA fila `EmailAddress` — fuera de su propia cuenta: la
+        pantalla de espera le diría "no hay ninguna verificación pendiente", no podría ni
+        reenviar ni corregir, y R2 le impediría volver a registrarse con ese correo.
+
+        Se simula el fallo a mano (un `create()` que revienta) y se comprueba que la fila
+        ORIGINAL sigue intacta: con `transaction.atomic()`, o se confirman las tres escrituras
+        juntas, o no se confirma ninguna.
+        """
+        from unittest import mock
+
+        self.registrar("alejandro@example.com")
+
+        with mock.patch(
+            "cuentas.views.EmailAddress.objects.create",
+            side_effect=RuntimeError("fallo simulado, a medio camino"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    "/cuentas/esperando-verificacion/corregir/",
+                    {"nuevo_correo": "otra-direccion@example.com"},
+                )
+
+        # La fila ORIGINAL sigue ahí, sin verificar, tal cual estaba: nada se quedó a medias.
+        self.assertTrue(
+            EmailAddress.objects.filter(
+                email="alejandro@example.com", verified=False
+            ).exists(),
+            "sin la fila original, la persona se queda sin ninguna EmailAddress pendiente",
+        )
+        usuario = Usuario.objects.get(email="alejandro@example.com")
+        self.assertEqual(usuario.email, "alejandro@example.com")
+        self.assertFalse(
+            Usuario.objects.filter(email="otra-direccion@example.com").exists()
+        )
+
     def test_no_se_puede_corregir_a_un_correo_que_ya_tiene_cuenta(self):
         self.registrar_y_verificar("alejandro@example.com")
         self.client.logout()
@@ -440,9 +510,48 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta = self.client.get("/cuentas/email/")
         self.assertEqual(respuesta.status_code, 404)
 
-    def test_las_rutas_que_si_hacen_falta_siguen_ahi(self):
-        """Control: la poda de arriba no se llevó por delante nada que sí haga falta."""
-        for ruta in ["/cuentas/signup/", "/cuentas/login/", "/cuentas/logout/"]:
-            with self.subTest(ruta=ruta):
-                respuesta = self.client.get(ruta)
-                self.assertNotEqual(respuesta.status_code, 404)
+    def test_las_seis_rutas_declaradas_renderizan_de_verdad(self):
+        """
+        Control corregido en la 3ª revisión (H4): la versión anterior solo comprobaba que
+        estas rutas EXISTÍAN (`status_code != 404`), y así se coló un `500` real —
+        `/cuentas/password/change/` "existía" (302 sin sesión, que es lo único que este test
+        miraba), pero en cuanto alguien CON sesión la abría de verdad, su plantilla de fábrica
+        reventaba con `NoReverseMatch`: enlazaba a `account_reset_password`, la ruta que H3
+        quitó a propósito. Que una URL resuelva no significa que su plantilla renderice.
+
+        Por eso ahora cada una de las SEIS rutas que `kcalibra/urls.py` monta explícitamente
+        se pide de la forma que de verdad la ejercita (con sesión si la necesita, con una
+        clave si la necesita) y se comprueba el CONTENIDO de lo que devuelve, no solo que no
+        sea 404.
+        """
+        # signup y login: SIN sesión, GET, 200 con su formulario pintado. (Con sesión,
+        # `RedirectAuthenticatedUserMixin` de allauth las salta — por eso van ANTES de
+        # autenticar más abajo, no da igual el orden.)
+        self.assertContains(self.client.get("/cuentas/signup/"), "Crea tu cuenta")
+        self.assertContains(self.client.get("/cuentas/login/"), "Entrar en KCalibra")
+
+        # inactive: página informativa de allauth (plantilla de fábrica, pero sin ningún
+        # {% url %} sin blindar — a diferencia de la de password_change, esta no reventaba).
+        self.assertEqual(self.client.get("/cuentas/inactive/").status_code, 200)
+
+        # logout: allauth solo RENDERIZA la confirmación si hay sesión que cerrar (sin ella,
+        # `LogoutView.get()` redirige sin más, R28 nunca llega a pintar la plantilla) — por
+        # eso esta comprobación va DESPUÉS de autenticar, no antes.
+        self.registrar_y_verificar("con-sesion@example.com")
+        self.assertContains(self.client.get("/cuentas/logout/"), "Salir de KCalibra")
+
+        # password/change/: la que reventaba. Hacía falta sesión para toparse con el 500 (por
+        # eso se coló: nadie la pedía ya autenticado en la ronda anterior). Un GET no cierra
+        # la sesión (solo el POST del formulario de logout de arriba lo haría), así que sigue
+        # autenticada aquí.
+        respuesta_cambiar = self.client.get("/cuentas/password/change/")
+        self.assertEqual(respuesta_cambiar.status_code, 200)
+        self.assertContains(respuesta_cambiar, "Cambiar tu contraseña")
+        # Y, a propósito, SIN el enlace roto que traía la plantilla de fábrica.
+        self.assertNotContains(respuesta_cambiar, "Forgot Password")
+
+        # confirm-email/<key>/: con un enlace inválido, SÍ renderiza su plantilla (con uno
+        # válido, redirige — eso ya lo cubre de sobra VerificacionDeCorreoTests).
+        respuesta_confirmar = self.client.get("/cuentas/confirm-email/una-clave-inventada/")
+        self.assertEqual(respuesta_confirmar.status_code, 200)
+        self.assertContains(respuesta_confirmar, "ya no vale")
