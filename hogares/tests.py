@@ -345,25 +345,61 @@ class AislamientoPorHogarTests(PruebaConRegistroAbierto):
 
 
 class CodigoDeHogarTests(PruebaConRegistroAbierto):
-    """R11/Q-11 — el código no es corto ni correlativo, y no delata qué hogares existen."""
+    """
+    R11 — "el código de un hogar no se puede adivinar: es aleatorio y largo, nunca
+    correlativo, y acertar uno no da acceso por sí solo — sigue haciendo falta que alguien de
+    dentro acepte." (Redacción corregida por el padre tras la 1ª revisión: la versión anterior
+    exigía además que la respuesta no distinguiera "ese hogar existe" de "no existe", y eso
+    era incompatible con R6, que obliga a avisar de que el código no vale.)
+
+    Que "acertar uno no da acceso por sí solo" ya está probado por otro lado: es exactamente
+    lo que comprueba `PedirEntrarConCodigoValidoTests` (meter un código que SÍ existe dejaentra
+    "sola", sin ver nada, hasta que alguien de dentro acepta).
+    """
 
     def test_codigos_de_hogares_seguidos_no_se_parecen_entre_si(self):
-        codigos = [Hogar.objects.create().codigo for _ in range(20)]
+        """
+        R11: "aleatorio y largo, nunca correlativo". La versión anterior de este test
+        (señalada en la 2ª revisión) solo comprobaba que la lista completa de códigos, tal
+        cual salió, no coincidiera EXACTAMENTE con la misma lista ordenada alfabéticamente —
+        una única pareja fuera de orden ya lo hacía pasar, así que un generador casi
+        correlativo (un contador con un empujón al final, por ejemplo) lo habría colado igual.
+        Aquí se mide algo más terco: con un generador correlativo, el orden de CREACIÓN y el
+        orden ALFABÉTICO casi siempre coinciden (o casi siempre se invierten, si el contador
+        fuera descendente) — con códigos de verdad aleatorios, ninguna de las dos cosas pasa:
+        el porcentaje de pares consecutivos "en orden" tiene que quedarse a media tabla, ni
+        casi 0% ni casi 100%.
+        """
+        codigos = [Hogar.objects.create().codigo for _ in range(60)]
 
         self.assertEqual(len(codigos), len(set(codigos)), "no puede haber dos iguales")
         for codigo in codigos:
             self.assertGreaterEqual(len(codigo), 10, "un código corto sí se puede fuerza bruta")
 
-        # "no correlativo": nada de códigos consecutivos tipo HOGAR-0001, HOGAR-0002... Si lo
-        # fueran, ordenados coincidirían con el orden de creación letra a letra; al ser
-        # aleatorios, el orden alfabético NO tiene por qué coincidir con el de creación.
-        self.assertNotEqual(codigos, sorted(codigos))
+        pares_en_orden_ascendente = sum(
+            1 for actual, siguiente in zip(codigos, codigos[1:]) if actual < siguiente
+        )
+        total_de_pares = len(codigos) - 1
+        proporcion = pares_en_orden_ascendente / total_de_pares
+
+        self.assertGreater(
+            proporcion,
+            0.2,
+            "casi todos los pares van 'hacia abajo': parece un contador descendente disfrazado",
+        )
+        self.assertLess(
+            proporcion,
+            0.8,
+            "casi todos los pares van 'hacia arriba': parece un contador ascendente disfrazado",
+        )
 
     def test_probar_un_codigo_que_no_existe_no_distingue_nada_de_otro(self):
-        """Q-11: "la respuesta no distingue entre 'ese hogar existe' y 'no existe'". Aquí se
-        comprueba la mitad que SÍ es responsabilidad de esta unidad: la respuesta a un código
-        inventado es la MISMA sea cual sea el código que no exista (no hay manera de, probando
-        muchos, aprender cuál "casi" acierta)."""
+        """
+        Nicety más allá de lo que R11 exige ya (no es parte de su redacción corregida, pero
+        sigue siendo cierto y barato de mantener): probar dos códigos que NO existen da
+        siempre la misma respuesta, sea cual sea el código — no hay manera de aprender, a
+        base de probar, cuál "se acerca más" a uno real.
+        """
         Hogar.objects.create()  # un hogar real de verdad, para que exista ALGO en la base
 
         respuesta_1 = self.registrar("persona1@example.com", codigo_hogar="AAAAAAAAAAAA")

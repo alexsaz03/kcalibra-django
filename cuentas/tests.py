@@ -7,6 +7,7 @@ demostrar que la APP se comporta así de punta a punta, tal como exige el AGENTS
 unidad y la lección de docs/conocimiento/tests-que-no-fallan-cuando-deben.md del meta-repo.
 """
 
+from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase, override_settings
@@ -67,10 +68,35 @@ class CorreoDuplicadoTests(PruebaConRegistroAbierto):
             1,
             "no debe crearse una segunda cuenta con el mismo correo",
         )
+        # H2 de la revisión (2ª ronda): "le lleva a la pantalla de iniciar sesión" significa
+        # que la petición TERMINA ahí (una redirección real), no que el enlace de "inicia
+        # sesión" aparezca mencionado en alguna parte — ese enlace está en TODAS las páginas
+        # de alta (`templates/account/signup.html` lo pinta siempre, con o sin error), así
+        # que buscarlo en el HTML no demuestra nada por sí solo. Lo que sí lo demuestra es la
+        # cadena de redirecciones.
+        self.assertTrue(
+            respuesta.redirect_chain,
+            "el alta con un correo duplicado debe REDIRIGIR (no quedarse en el formulario)",
+        )
+        url_final, status_intermedio = respuesta.redirect_chain[-1]
+        self.assertEqual(url_final, "/cuentas/login/")
+        self.assertEqual(status_intermedio, 302)
+        # Y la página en la que se acaba viendo es de verdad la de iniciar sesión, con el
+        # aviso puesto — no un 200 cualquiera que por casualidad contenga esa URL en un enlace.
+        self.assertContains(respuesta, "Entrar en KCalibra")
         self.assertContains(respuesta, "Ya existe una cuenta")
-        # "le lleva a la pantalla de iniciar sesión": el enlace tiene que estar en la propia
-        # respuesta, visible, no solo mencionado.
-        self.assertContains(respuesta, "/cuentas/login/")
+
+    def test_un_correo_nuevo_NO_redirige_a_iniciar_sesion(self):
+        """
+        Control del test de arriba: sin el hueco de C-14, dar de alta un correo que NO existe
+        todavía se queda en la pantalla de espera de verificación, nunca en la de iniciar
+        sesión — así se sabe que la redirección de arriba depende de verdad del correo
+        duplicado, y no es algo que pase siempre.
+        """
+        respuesta = self.registrar("nunca-registrado@example.com")
+
+        self.assertFalse(respuesta.redirect_chain[-1][0] == "/cuentas/login/")
+        self.assertContains(respuesta, "Revisa tu correo")
 
 
 class SesionNoCaducaTests(PruebaConRegistroAbierto):
@@ -323,6 +349,58 @@ class VerificacionDeCorreoTests(PruebaConRegistroAbierto):
         respuesta_confirmar = self.client.get(enlace, follow=True)
         self.assertTrue(respuesta_confirmar.wsgi_request.user.is_authenticated)
 
+    def test_corregir_invalida_el_enlace_viejo(self):
+        """
+        H1 de la revisión (2ª ronda, el hueco GRAVE): el enlace de verificación firma el PK de
+        la fila `EmailAddress`, no la dirección. Reproduce el ataque tal cual lo describió el
+        revisor: alguien se da de alta con una dirección, NO pulsa el enlace, "corrige" la
+        dirección a la de una víctima, y prueba el enlace VIEJO — que no debe verificar NADA
+        ni dejar ninguna sesión abierta sobre la dirección corregida.
+        """
+        self.registrar("atacante@evil.com")
+        enlace_viejo = self.ultimo_enlace_de_verificacion(para_correo="atacante@evil.com")
+
+        self.client.post(
+            "/cuentas/esperando-verificacion/corregir/",
+            {"nuevo_correo": "victima@banco.com"},
+        )
+
+        respuesta = self.client.get(enlace_viejo, follow=True)
+
+        self.assertFalse(
+            respuesta.wsgi_request.user.is_authenticated,
+            "el enlace viejo NO debe dejar ninguna sesión abierta",
+        )
+        victima = Usuario.objects.get(email="victima@banco.com")
+        self.assertFalse(
+            EmailAddress.objects.filter(user=victima, verified=True).exists(),
+            "el enlace viejo NO debe haber verificado la dirección corregida",
+        )
+        # Y el enlace NUEVO (el que sí se manda a la dirección corregida) funciona con
+        # normalidad — el arreglo no rompe el camino feliz de R15.
+        enlace_nuevo = self.ultimo_enlace_de_verificacion(para_correo="victima@banco.com")
+        respuesta_buena = self.client.get(enlace_nuevo, follow=True)
+        self.assertTrue(respuesta_buena.wsgi_request.user.is_authenticated)
+
+    def test_reenviar_y_corregir_tienen_limite_de_intentos(self):
+        """
+        H1 de la revisión: sin límite, estas dos vistas convierten la app en un relé que manda
+        enlaces a cualquier dirección que alguien teclee. Se machaca "corregir" apuntando cada
+        vez a una víctima distinta (así se comprueba que el límite es por IP, no solo por
+        correo — si fuera solo por correo, cambiar de víctima en cada intento lo esquivaría).
+        """
+        self.registrar("atacante@evil.com")
+
+        ultima_respuesta = None
+        for numero in range(10):
+            ultima_respuesta = self.client.post(
+                "/cuentas/esperando-verificacion/corregir/",
+                {"nuevo_correo": f"victima{numero}@banco.com"},
+                follow=True,
+            )
+
+        self.assertContains(ultima_respuesta, "Demasiados intentos")
+
     def test_no_se_puede_corregir_a_un_correo_que_ya_tiene_cuenta(self):
         self.registrar_y_verificar("alejandro@example.com")
         self.client.logout()
@@ -341,3 +419,30 @@ class VerificacionDeCorreoTests(PruebaConRegistroAbierto):
         self.assertEqual(
             Usuario.objects.filter(email="alejandro@example.com").count(), 1
         )
+
+
+class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
+    """
+    H3 de la revisión (2ª ronda): `include("allauth.urls")` montaba de más — la recuperación
+    de contraseña (R-22) y la gestión de direcciones de correo (`account_email`, la misma
+    superficie que H1), ninguna de las dos especificada ni probada en esta unidad. "Fuera de
+    alcance" significa que ese comportamiento no se entrega: estas rutas tienen que devolver
+    404, para que si alguien las vuelve a montar sin querer (por ejemplo, al integrar R-21 o
+    R-22 de verdad) este test se entere.
+    """
+
+    def test_recuperar_contrasena_no_esta_montado(self):
+        respuesta = self.client.get("/cuentas/password/reset/")
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_gestion_de_direcciones_de_correo_no_esta_montado(self):
+        self.registrar_y_verificar("alejandro@example.com")
+        respuesta = self.client.get("/cuentas/email/")
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_las_rutas_que_si_hacen_falta_siguen_ahi(self):
+        """Control: la poda de arriba no se llevó por delante nada que sí haga falta."""
+        for ruta in ["/cuentas/signup/", "/cuentas/login/", "/cuentas/logout/"]:
+            with self.subTest(ruta=ruta):
+                respuesta = self.client.get(ruta)
+                self.assertNotEqual(respuesta.status_code, 404)

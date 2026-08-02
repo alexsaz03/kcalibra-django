@@ -230,6 +230,16 @@ ACCOUNT_SESSION_REMEMBER = True
 # cumplen el contrato ("cierra el acceso desde ahí durante un rato", sin decir cuántos
 # intentos ni cuánto rato exactos) y añadir un número propio sin que los planos lo pidan
 # sería inventar donde no hace falta.
+ACCOUNT_RATE_LIMITS = {
+    # H1 de la revisión (2ª ronda): "pedir otro correo" y "corregir la dirección"
+    # (cuentas/views.py) no tenían NINGÚN límite propio — allauth solo limita el envío
+    # cuando pasa por su propio flujo de login/alta, no cuando se llama a
+    # `EmailAddress.send_confirmation()` directamente, como hacen esas dos vistas. Sin este
+    # límite, la app sirve de relé para mandar enlaces a cualquier dirección que alguien
+    # teclee, una y otra vez. Mismo formato que el límite de accesos fallidos de arriba: por
+    # IP Y por correo a la vez.
+    "cuentas_correo_pendiente": "5/m/ip,10/h/key",
+}
 
 ACCOUNT_EMAIL_SUBJECT_PREFIX = "[KCalibra] "
 
