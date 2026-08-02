@@ -109,9 +109,46 @@ class R1_EuridicePorHTTPTests(PruebaConRegistroAbierto):
             respuesta = self.client.get("/perfiles/")
 
         self.assertContains(respuesta, "1894 kcal")
-        self.assertContains(respuesta, "136")
-        self.assertContains(respuesta, "59")
-        self.assertContains(respuesta, "205")
+        # H-menor de la revisión: `assertContains(respuesta, "59")` o `"205"` sueltos casan
+        # con casi cualquier cosa de la página (un id, una clase, un año...) — la red de R1 ya
+        # está en servicios/tests.py; aquí lo que hace falta es comprobar que CADA número
+        # aparece pegado a SU macro, tal como lo pinta la plantilla (perfiles/ver.html).
+        self.assertContains(respuesta, "Proteína: <strong>136 g</strong>")
+        self.assertContains(respuesta, "Grasa: <strong>59 g</strong>")
+        self.assertContains(respuesta, "Carbohidratos: <strong>205 g</strong>")
+
+    def test_ve_sus_calorias_incluso_registrandose_con_codigo_de_otro_hogar_sin_que_nadie_la_acepte(
+        self,
+    ):
+        """
+        H2 de la revisión: el episodio REAL de R1/C-13 y crear-cuenta.md no es "se registra
+        sin más" — es "se registra con el código de Alejandro" (C-16/C-104: su cuenta queda
+        SOLA, con `hogar = None`, hasta que alguien la acepte). El test anterior nunca
+        recorría ese camino porque registraba a Euridice SIN código — una aserción fuerte
+        sobre un escenario más cómodo, no el que el criterio describe (la lección de
+        `tests-que-no-fallan-cuando-deben.md`, otra vez, con otra cara).
+
+        El perfil PROPIO no es "una cosa del hogar" (G-43): tiene que verse aunque todavía no
+        haya ningún hogar de por medio.
+        """
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+            alejandro = Usuario.objects.get(email="alejandro@example.com")
+            self.client.logout()
+
+            self.registrar_y_verificar(
+                "euridice@example.com", codigo_hogar=alejandro.hogar.codigo
+            )
+            euridice = Usuario.objects.get(email="euridice@example.com")
+            self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
+
+            respuesta = self.client.get("/perfiles/")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "1894 kcal")
+        self.assertContains(respuesta, "Proteína: <strong>136 g</strong>")
+        self.assertContains(respuesta, "Grasa: <strong>59 g</strong>")
+        self.assertContains(respuesta, "Carbohidratos: <strong>205 g</strong>")
 
 
 class R2_AlejandroPorHTTPTests(PruebaConRegistroAbierto):
@@ -132,9 +169,9 @@ class R2_AlejandroPorHTTPTests(PruebaConRegistroAbierto):
             respuesta = self.client.get("/perfiles/")
 
         self.assertContains(respuesta, "3006 kcal")
-        self.assertContains(respuesta, "205")
-        self.assertContains(respuesta, "94")
-        self.assertContains(respuesta, "336")
+        self.assertContains(respuesta, "Proteína: <strong>205 g</strong>")
+        self.assertContains(respuesta, "Grasa: <strong>94 g</strong>")
+        self.assertContains(respuesta, "Carbohidratos: <strong>336 g</strong>")
 
 
 class PesoMedio7DiasTests(PruebaConRegistroAbierto):
@@ -163,6 +200,25 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         media = peso_medio_7_dias(self.usuario)
 
         self.assertEqual(media, 61)  # (60 + 62) / 2, SIN la de 100 kg
+
+    def test_la_ventana_es_hoy_y_los_6_anteriores_no_7_dias_atras(self):
+        """
+        Aclaración de contrato de la revisión: "los últimos 7 días" son HOY + 6 anteriores
+        (7 fechas de calendario en total), no `hoy - 7 días` en adelante (eso serían 8
+        fechas). Este test falla si la ventana se corre un día en cualquier dirección: la
+        medición de hace exactamente 6 días DEBE entrar, la de hace exactamente 7 días NO.
+        """
+        hoy = date.today()
+        MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy - timedelta(days=6), peso_kg=70
+        )
+        MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy - timedelta(days=7), peso_kg=200
+        )
+
+        media = peso_medio_7_dias(self.usuario)
+
+        self.assertEqual(media, 70)  # SOLO la de hace 6 días; la de hace 7 queda fuera
 
     def test_una_sola_medicion_reciente_es_su_propia_media(self):
         MedicionPeso.objects.create(usuario=self.usuario, fecha=date.today(), peso_kg=75)

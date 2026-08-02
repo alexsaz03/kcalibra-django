@@ -59,8 +59,12 @@ def peso_medio_7_dias(usuario):
     suelta ("el peso de un día concreto oscila por cosas que no son grasa"). Si por lo que
     sea no hay ninguna medición en ese rango (no debería pasar tras el alta, que siempre crea
     la primera), cae a la última medición que exista, y `None` si de verdad no hay ninguna.
+
+    "Los últimos 7 días" son HOY y los 6 anteriores (7 días de calendario en total, no 8):
+    el límite se resta con `timedelta(days=6)`, no `days=7` (corregido en la revisión — con
+    `days=7` la ventana colaba también el día −7, ocho fechas distintas en vez de siete).
     """
-    limite = timezone.localdate() - timedelta(days=7)
+    limite = timezone.localdate() - timedelta(days=6)
     mediciones_recientes = usuario.mediciones_peso.filter(fecha__gte=limite)
     promedio = mediciones_recientes.aggregate(media=django_models.Avg("peso_kg"))["media"]
     if promedio is not None:

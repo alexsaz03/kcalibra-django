@@ -42,6 +42,50 @@ class CalcularEdadTests(unittest.TestCase):
         self.assertEqual(edad, 27)
 
 
+class CalcularEdadDe29DeFebreroTests(unittest.TestCase):
+    """
+    H1 de la revisión: quien nació un 29 de febrero (fecha de nacimiento válida, R11 no la
+    rechaza) NO puede reventar `calcular_edad` en un año no bisiesto — antes lo hacía, con
+    `ValueError: day is out of range for month`, al intentar construir `date(2026, 2, 29)`.
+
+    Regla de negocio fijada (ver el docstring de `calcular_edad`): en un año no bisiesto,
+    cumple años el 28 de febrero, no el 1 de marzo.
+    """
+
+    NACIDO_EL_29_DE_FEBRERO = date(2000, 2, 29)  # 2000 sí fue bisiesto
+
+    def test_en_un_anio_no_bisiesto_no_revienta_y_da_la_edad_correcta(self):
+        # 2026 NO es bisiesto. Antes del 28/2 (su cumpleaños "movido"), aún no ha cumplido.
+        edad_antes = metabolismo.calcular_edad(
+            self.NACIDO_EL_29_DE_FEBRERO, hoy=date(2026, 2, 27)
+        )
+        self.assertEqual(edad_antes, 25)
+
+        # El propio 28/2 ya cuenta como cumplido (igual que cualquier otro cumpleaños, R10).
+        edad_el_dia = metabolismo.calcular_edad(
+            self.NACIDO_EL_29_DE_FEBRERO, hoy=date(2026, 2, 28)
+        )
+        self.assertEqual(edad_el_dia, 26)
+
+        # Y sigue en 26 el resto del año (agosto, el "hoy" que usan R1/R2 de esta unidad).
+        edad_en_agosto = metabolismo.calcular_edad(
+            self.NACIDO_EL_29_DE_FEBRERO, hoy=date(2026, 8, 2)
+        )
+        self.assertEqual(edad_en_agosto, 26)
+
+    def test_en_un_anio_bisiesto_cumple_el_29_de_verdad(self):
+        # 2028 SÍ es bisiesto: existe un 29/2/2028 de verdad, y es ESE día el que cuenta.
+        edad_la_vispera = metabolismo.calcular_edad(
+            self.NACIDO_EL_29_DE_FEBRERO, hoy=date(2028, 2, 28)
+        )
+        self.assertEqual(edad_la_vispera, 27)
+
+        edad_el_29 = metabolismo.calcular_edad(
+            self.NACIDO_EL_29_DE_FEBRERO, hoy=date(2028, 2, 29)
+        )
+        self.assertEqual(edad_el_29, 28)
+
+
 class CatalogoDeObjetivosTests(unittest.TestCase):
     """R4/G-60 — los cinco objetivos, con su ajuste y su proteína por kilo de fábrica."""
 

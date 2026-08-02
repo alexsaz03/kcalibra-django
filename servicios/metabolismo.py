@@ -24,6 +24,7 @@ cuenta): redondear antes de tiempo desplaza los números finales, y aquí "los n
 lo que la gente come" (especificación de la unidad).
 """
 
+import calendar
 import math
 from datetime import date
 
@@ -70,10 +71,23 @@ def calcular_edad(fecha_nacimiento, hoy=None):
     hoy no ha llegado aún el día y el mes de su cumpleaños de este año, tiene un año menos.
     `hoy` es opcional (por defecto, la fecha real) precisamente para que quien llama pueda
     fijarla en un test y así no depender del reloj de la máquina que ejecuta la suite.
+
+    R11 (hueco H1 de la revisión) — quien nació el 29 de febrero: en un año NO bisiesto no
+    existe un `date(ese_año, 2, 29)`, y construirlo revienta con `ValueError` (no con un dato
+    imposible que R11 pudiera rechazar al entrar: el 29/02/2000 es una fecha de nacimiento
+    perfectamente válida, y el fallo aparecía después, al calcular). Regla de negocio, para
+    que quede escrita y no se repita esta pregunta: en un año no bisiesto, quien nació el 29
+    de febrero cumple años el 28 de febrero (el último día de su mes de nacimiento), no el 1
+    de marzo — es la convención más extendida en el software que ya resuelve este caso.
     """
     hoy = hoy or date.today()
     edad = hoy.year - fecha_nacimiento.year
-    cumple_este_anio = date(hoy.year, fecha_nacimiento.month, fecha_nacimiento.day)
+
+    dia_cumpleanos = fecha_nacimiento.day
+    if fecha_nacimiento.month == 2 and dia_cumpleanos == 29 and not calendar.isleap(hoy.year):
+        dia_cumpleanos = 28
+
+    cumple_este_anio = date(hoy.year, fecha_nacimiento.month, dia_cumpleanos)
     if hoy < cumple_este_anio:
         edad -= 1
     return edad
