@@ -127,9 +127,56 @@ Abre `http://127.0.0.1:8000/` en el navegador. Si el puerto 8000 estuviera ocupa
 cosa en tu máquina, arranca en otro con `python manage.py runserver 8001` (o el que prefieras)
 y ajusta la URL.
 
-Deberías ver la portada de KCalibra con los estilos de Tailwind aplicados, y un botón
-"Comprobar hora del servidor" que, al pulsarlo, cambia el texto de debajo **sin recargar la
-página** (eso es HTMX pidiendo un trozo de plantilla al servidor y sustituyéndolo).
+Deberías ver la portada de KCalibra con los estilos de Tailwind aplicados y, si no tienes
+sesión, los enlaces de "Entrar" y "Crear cuenta" (unidad 003).
+
+## 4. Crear una cuenta de prueba y recorrer el camino de las dos personas (unidad 003)
+
+Con el registro abierto en tu `.env` (`DJANGO_REGISTRO_ABIERTO=True` — si no lo pones, la app
+rechaza cualquier alta a propósito, R12) y `python manage.py runserver` corriendo:
+
+### 4.1. Una sola persona
+
+1. Entra en `http://127.0.0.1:8000/cuentas/signup/` y crea una cuenta con tu correo y una
+   contraseña (deja el campo "Código de hogar" en blanco).
+2. La app te lleva a `/cuentas/esperando-verificacion/`, con el aviso de que te ha mandado un
+   correo. **En este portátil el correo no sale a ningún sitio: se imprime en la terminal
+   donde corre `manage.py runserver`.** Búscalo ahí: es un bloque de texto con
+   `Subject: [KCalibra] Confirma tu correo en KCalibra` y, dentro, una línea
+   `http://127.0.0.1:8000/cuentas/confirm-email/.../`.
+3. Copia esa URL y ábrela en el navegador (o pégala en la misma pestaña donde te registraste:
+   tiene que ser el MISMO navegador/sesión para que te deje entrar directamente, ver
+   `allauth.account.internal.flows.email_verification.login_on_verification`). Te deja dentro
+   sin pedirte la contraseña otra vez, en `/hogares/mi-hogar/`, con el código de tu hogar a la
+   vista.
+
+### 4.2. El camino de las dos personas (R5, el corazón de la unidad)
+
+1. Repite el paso 4.1 para una PRIMERA persona (p. ej. `alejandro@example.com`) y apunta el
+   código de su hogar que aparece en `/hogares/mi-hogar/`.
+2. Abre una ventana de incógnito (o cierra sesión) y repite el alta para una SEGUNDA persona
+   (p. ej. `euridice@example.com`), pero esta vez rellenando el campo "Código de hogar" con el
+   código del paso 1.
+3. Verifica el correo de la segunda persona (paso 4.1.3). En vez de ver el hogar, la deja en
+   `/hogares/mi-hogar/` con el mensaje "Esperando a que te acepten": **hasta este momento, la
+   primera persona no sabía nada de ella** (la petición no existía hasta que verificó, R5).
+4. Vuelve a la sesión de la primera persona y entra en `/hogares/mi-hogar/`: ahora aparece la
+   petición pendiente, con botones de "Aceptar" y "Rechazar".
+5. Pulsa "Aceptar". Si vuelves a la sesión de la segunda persona y recargas
+   `/hogares/mi-hogar/`, ya ve el hogar compartido con las dos personas dentro.
+
+Si en vez de aceptar dejas pasar más de una hora (o rechazas), la segunda persona se queda con
+su propia cuenta y su propio hogar (R7, R8) — para probar la caducidad sin esperar una hora de
+verdad, hazlo desde `manage.py shell` retrasando a mano el campo `creada_en` de la
+`SolicitudEntrada` correspondiente (así es como lo hace `hogares/tests.py`).
+
+### 4.3. Dónde mirar si algo no cuadra
+
+- El correo (enlaces de verificación, avisos): la terminal de `runserver`, nunca un buzón de
+  verdad — no hay ningún servicio de envío conectado en esta unidad (ver la sección de
+  variables de entorno más abajo).
+- Las contraseñas en la base de datos: `psql kcalibra_dev -c "SELECT email, password FROM
+  cuentas_usuario;"` — deben salir como `pbkdf2_sha256$...`, nunca en claro (R10).
 
 ## Cómo está organizado el código
 
@@ -137,10 +184,12 @@ página** (eso es HTMX pidiendo un trozo de plantilla al servidor y sustituyénd
 |---|---|---|
 | `kcalibra/` | configuración del proyecto (`settings.py`, `urls.py`) | lo que genera `django-admin startproject`, sin nada exótico |
 | `paginas/` | la app con la portada y sus vistas | punto de entrada de lo que ve el usuario en el navegador |
-| `templates/` | plantillas compartidas entre apps (`base.html`) | la base con Tailwind, HTMX y Alpine ya cargados; cada app extiende esto |
-| `paginas/templates/paginas/` | plantillas propias de la app `paginas` | convención estándar de Django: cada app guarda las suyas bajo su propio nombre, para que no choquen nombres entre apps |
-| `servicios/` | la capa de servicios (cálculos, lógica de negocio) | **vacía a propósito** en esta unidad; la lógica llega en la unidad 004. Las vistas deben LLAMAR a esta capa, nunca calcular ellas mismas |
-| `assets/tailwind/input.css` | el fichero de entrada de Tailwind | de aquí sale `static/css/tailwind.css` al compilar (paso 1.6) |
+| `cuentas/` | el modelo de usuario propio (`Usuario`, correo como identificador), el formulario de alta, el adaptador de `allauth` y las pantallas que `allauth` no trae hechas (esperar la verificación, pedir otro correo, corregir la dirección) | unidad 003 — "quién eres y cómo entras" |
+| `hogares/` | `Hogar`, `SolicitudEntrada`, la base abstracta `ModeloDeHogar` (el aislamiento reutilizable) y la puerta única de acceso (`hogares/acceso.py`) | unidad 003 — "con quién compartes y quién ve qué"; toda unidad futura con datos del hogar (despensa, recetas, calendario) hereda de `ModeloDeHogar` en vez de reinventar el aislamiento |
+| `templates/` | plantillas compartidas entre apps (`base.html`, y las de `allauth` que se han sobrescrito bajo `templates/account/`) | la base con Tailwind, HTMX y Alpine ya cargados; cada app extiende esto |
+| `paginas/templates/paginas/`, `cuentas/templates/cuentas/`, `hogares/templates/hogares/` | plantillas propias de cada app | convención estándar de Django: cada app guarda las suyas bajo su propio nombre, para que no choquen nombres entre apps |
+| `servicios/` | la capa de servicios (cálculos, lógica de negocio) | **vacía a propósito**; la lógica de cuentas y hogares vive DENTRO de sus propias apps (`hogares/logica.py`), porque esta carpeta es la de los cálculos del dominio nutricional que llega en la unidad 004, no un cajón general |
+| `assets/tailwind/input.css` | el fichero de entrada de Tailwind | de aquí sale `static/css/tailwind.css` al compilar (paso 1.6). Incluye los estilos base de los formularios (`@layer base`) para que cualquier campo de `allauth` salga con aspecto consistente sin tocarlo campo a campo |
 | `static/` | CSS generado + HTMX y Alpine vendidos | todo lo que Tailwind necesita servir sin depender de Node ni de una CDN |
 
 ## Variables de entorno obligatorias
@@ -148,3 +197,16 @@ página** (eso es HTMX pidiendo un trozo de plantilla al servidor y sustituyénd
 Si falta cualquiera de estas, la app **se niega a arrancar** y dice cuál falta (no arranca con
 valores por defecto inseguros): `DJANGO_SECRET_KEY`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`,
 `DB_HOST`, `DB_PORT`. Ver `.env.example` para el detalle de cada una.
+
+### Variables opcionales de la unidad 003 (con valor por defecto seguro si no las pones)
+
+| Variable | Por defecto | Qué hace |
+|---|---|---|
+| `DJANGO_REGISTRO_ABIERTO` | `False` (cerrado) | R12: con el registro cerrado, nadie puede crear una cuenta. Ponla a `True` en tu `.env` local para poder probar el alta |
+| `DJANGO_EMAIL_BACKEND` | `django.core.mail.backends.console.EmailBackend` | Por dónde salen los correos de verificación. En este portátil, por la consola — ver el punto 4.3 |
+| `DJANGO_DEFAULT_FROM_EMAIL` | `no-responder@kcalibra.app` | El remitente de esos correos |
+
+**Deuda pendiente, importante:** en producción hace falta cambiar `DJANGO_EMAIL_BACKEND` a un
+servicio de envío de verdad (no elegido todavía, fuera del alcance de la unidad 003). **Sin
+eso, el día del despliegue nadie podrá registrarse** — el enlace de verificación no llegará a
+ningún sitio real.

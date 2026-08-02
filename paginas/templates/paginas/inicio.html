@@ -6,10 +6,27 @@
 {% block content %}
 <div class="mx-auto mt-16 max-w-2xl px-6 text-center">
   <h1 class="text-4xl font-bold text-emerald-700">KCalibra está viva</h1>
+
+  {# La portada distingue si hay alguien dentro o no (unidad 003, "Cómo": "la portada, que ya #}
+  {# existe, pasa a distinguir si hay alguien dentro o no"). #}
+  {% if user.is_authenticated %}
+    <p class="mt-4 text-lg text-slate-600">
+      Hola, <strong class="text-slate-900">{{ user.email }}</strong>. Ve a
+      <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">tu hogar</a>
+      para ver el código con el que invitar a los tuyos.
+    </p>
+  {% else %}
+    <p class="mt-4 text-lg text-slate-600">
+      <a href="{% url 'account_signup' %}" class="font-medium text-emerald-700 hover:underline">Crea tu cuenta</a>
+      o <a href="{% url 'account_login' %}" class="font-medium text-emerald-700 hover:underline">entra</a>
+      si ya la tienes.
+    </p>
+  {% endif %}
+
   <p class="mt-4 text-lg text-slate-600">
-    Esto es el esqueleto de la unidad 002: Django, PostgreSQL, Tailwind, plantillas parciales,
-    HTMX y Alpine, todos en pie. Todavía no hace nada útil, y eso es a propósito &mdash; eso
-    llega con las próximas unidades.
+    Esto es el esqueleto de la unidad 002 (Django, PostgreSQL, Tailwind, plantillas parciales,
+    HTMX y Alpine) con las cuentas y los hogares de la unidad 003 encima. La app todavía no
+    calcula calorías ni guarda comidas &mdash; eso llega con las próximas unidades.
   </p>
 
   {# ---------------------------------------------------------------------------------- #}

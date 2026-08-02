@@ -1,0 +1,10 @@
+{% load account %}{% load i18n %}{% autoescape off %}{% user_display user as user_display %}Hola,
+
+Alguien (esperamos que tú) ha dado esta dirección para crear una cuenta en KCalibra.
+
+Para confirmar que es tuya y entrar, abre este enlace (vale 24 horas y una sola vez):
+
+{{ activate_url }}
+
+Si no has sido tú, ignora este correo: no se creará ninguna cuenta sin confirmar.
+{% endautoescape %}
