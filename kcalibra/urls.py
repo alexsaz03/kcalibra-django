@@ -55,6 +55,8 @@ urlpatterns = [
     path("hogares/", include("hogares.urls")),
     # Los datos físicos, el objetivo y las calorías del día de cada persona (unidad 004).
     path("perfiles/", include("perfiles.urls")),
+    # El plan de comidas del día, apuntado a mano (unidad 005).
+    path("planes/", include("planes.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]
