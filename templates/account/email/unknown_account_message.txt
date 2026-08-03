@@ -1,0 +1,11 @@
+{% load i18n %}{% autoescape off %}Hola,
+
+Alguien (esperamos que tú) ha pedido recuperar la contraseña de una cuenta en KCalibra con
+este correo. Pero no tenemos ninguna cuenta con esta dirección.
+
+Si has sido tú y querías crear una cuenta, puedes hacerlo aquí:
+
+{{ signup_url }}
+
+Si no has sido tú, ignora este correo: no se ha creado ni cambiado nada.
+{% endautoescape %}

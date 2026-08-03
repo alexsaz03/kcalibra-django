@@ -193,6 +193,22 @@ REGISTRO_ABIERTO = os.environ.get("DJANGO_REGISTRO_ABIERTO", "False") == "True"
 
 ACCOUNT_ADAPTER = "cuentas.adapters.AdaptadorDeCuentas"
 ACCOUNT_SIGNUP_FORM_CLASS = "cuentas.forms.FormularioAlta"
+# R3 (unidad 008): pedir recuperar la contraseña de un correo que NO existe da la MISMA
+# respuesta que pedirlo para uno que sí existe. El formulario de fábrica de allauth
+# (`ResetPasswordForm`) decide esto mirando `ACCOUNT_PREVENT_ENUMERATION` — pero esa palanca
+# es GLOBAL y aquí está en `False` A PROPÓSITO para otro flujo (R2: avisar si el correo ya
+# existe AL REGISTRARSE, justo lo contrario). No se puede usar el mismo ajuste para las dos
+# cosas sin romper una de las dos: `FormularioRecuperarContrasena` fija el comportamiento de
+# ESTE formulario sin tocar el ajuste global (mismo punto de extensión que
+# `ACCOUNT_SIGNUP_FORM_CLASS`, documentado por allauth para justo este caso). Vive en su
+# PROPIO módulo, `cuentas/forms_recuperacion.py` — no en `cuentas/forms.py` — porque ese
+# fichero se importa DESDE DENTRO de la carga de `allauth.account.forms` (por
+# `ACCOUNT_SIGNUP_FORM_CLASS`), y un `import` de `ResetPasswordForm` ahí reventaría con la
+# misma trampa de import circular que ya documentó la unidad 003 para `SignupForm` (ver el
+# docstring de `cuentas/forms_recuperacion.py`).
+ACCOUNT_FORMS = {
+    "reset_password": "cuentas.forms_recuperacion.FormularioRecuperarContrasena",
+}
 
 # Entrar solo con correo (no hay username: ver cuentas.models.Usuario). El mensaje de error
 # no distingue si falla el correo o la contraseña (R4, Q-32) — eso ya lo trae allauth de
@@ -276,17 +292,32 @@ SESSION_SAVE_EVERY_REQUEST = True
 # `update_session_auth_hash()` para ella (ver internal/flows/password_change.py). No hace
 # falta código propio para ninguna de las dos mitades.
 
-# El correo de verificación: por dónde sale (R13, "Cómo" de la especificación). En ESTE
-# portátil, por la consola (así se puede recorrer el alta entera sin montar nada). En
-# producción hace falta un servicio de envío de verdad: se deja el remitente detrás de
-# variables de entorno para que enchufarlo sea cambiar configuración, no código (deuda
-# documentada en hallazgos.md — sin ese servicio, el día del despliegue nadie podrá
-# registrarse).
+# El correo de verificación y el de recuperar contraseña: por dónde salen (R13, R2; "Cómo" de
+# la especificación de la unidad 008). En ESTE portátil, por la consola (así se puede recorrer
+# el alta entera sin montar nada). En producción, SMTP de verdad: ADR-004, Resend por SMTP con
+# el dominio `kcalibra.app` — decisión ya tomada, sin SDK propio (Django ya habla SMTP de
+# serie). Cambiar de backend son estas variables, no código.
 EMAIL_BACKEND = os.environ.get(
     "DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
 )
 DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@kcalibra.app")
 
+# Las variables de conexión SMTP (unidad 008). Con el backend de consola de arriba (el valor
+# por defecto en este portátil) `smtp.EmailBackend` ni se importa, así que estas variables no
+# se usan para nada — solo entran en juego el día que `DJANGO_EMAIL_BACKEND` apunte al backend
+# SMTP real. El repo NUNCA trae credenciales (regla de oro): todo sale del entorno, con
+# valores por defecto vacíos o inocuos, nunca con una clave de verdad escrita aquí.
+EMAIL_HOST = os.environ.get("DJANGO_EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("DJANGO_EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("DJANGO_EMAIL_USE_TLS", "True") == "True"
+# La deuda que el ADR-004 deja escrita: sin `EMAIL_TIMEOUT`, Django no pone ningún límite al
+# socket SMTP — si el proveedor no contesta, la petición entera (y el hilo que la atiende) se
+# queda colgada esperando, indefinidamente. 10 segundos sobra para un envío SMTP normal (y es
+# justo el tipo de fallo que R5/R6 tienen que sobrevivir sin dar un 500: ver
+# `cuentas/adapters.py`, que captura el `TimeoutError` que esto dispara).
+EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
