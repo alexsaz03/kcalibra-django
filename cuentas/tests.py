@@ -5,16 +5,49 @@ Todos pasan por el cliente de pruebas de Django contra las URLs reales (nunca ll
 `Usuario.objects.create(...)` a mano ni a las funciones internas): es la única forma de
 demostrar que la APP se comporta así de punta a punta, tal como exige el AGENTS.md de esta
 unidad y la lección de docs/conocimiento/tests-que-no-fallan-cuando-deben.md del meta-repo.
+
+Desde la unidad 008 (ver `EnvioDeCorreoTests` y `RecuperarContrasenaTests` más abajo) se
+suman R2 (R-22), R3, R4, R5, R6 y R7: el correo sale de verdad y, si el envío falla, nadie se
+queda atrapado.
 """
+
+import re
+from smtplib import SMTPException
+from unittest import mock
 
 from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.db import connection
 from django.test import TestCase, override_settings
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, DATOS_FISICOS_POR_DEFECTO, PruebaConRegistroAbierto
 
 Usuario = get_user_model()
+
+# Igual que `_RE_ENLACE` de ayuda_pruebas.py, pero para el enlace de RECUPERAR CONTRASEÑA
+# (unidad 008): otra ruta, otro correo, así que hace falta su propio patrón.
+_RE_ENLACE_RECUPERAR = re.compile(r"(http\S+/cuentas/password/reset/key/\S+/)")
+
+
+def _ultimo_enlace_de_recuperacion(para_correo=None):
+    """Como `PruebaConRegistroAbierto.ultimo_enlace_de_verificacion`, pero para el enlace de
+    "pon una contraseña nueva" del correo de recuperación."""
+    mensajes = mail.outbox
+    if para_correo:
+        mensajes = [m for m in mensajes if para_correo in m.to]
+    assert mensajes, f"no se mandó ningún correo a {para_correo!r}"
+    cuerpo = mensajes[-1].body
+    coincidencia = _RE_ENLACE_RECUPERAR.search(cuerpo)
+    assert coincidencia, f"el correo no contiene un enlace de recuperación: {cuerpo!r}"
+    return coincidencia.group(1)
+
+# El punto único por el que sale CUALQUIER correo de la app, una vez que
+# `AdaptadorDeCuentas.send_mail` ya ha construido el mensaje (ver cuentas/adapters.py): es lo
+# que hay que hacer fallar para simular "el proveedor no contesta" sin tocar la red de
+# verdad, tal como pide el plan de esta unidad ("el test SIMULA el fallo, no espera a que
+# ocurra").
+_RUTA_ENVIO_DE_MENSAJE = "django.core.mail.message.EmailMessage.send"
 
 
 class RegistroCerradoTests(TestCase):
@@ -498,19 +531,355 @@ class VerificacionDeCorreoTests(PruebaConRegistroAbierto):
         )
 
 
-class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
+class EnvioDeCorreoTests(PruebaConRegistroAbierto):
     """
-    H3 de la revisión (2ª ronda): `include("allauth.urls")` montaba de más — la recuperación
-    de contraseña (R-22) y la gestión de direcciones de correo (`account_email`, la misma
-    superficie que H1), ninguna de las dos especificada ni probada en esta unidad. "Fuera de
-    alcance" significa que ese comportamiento no se entrega: estas rutas tienen que devolver
-    404, para que si alguien las vuelve a montar sin querer (por ejemplo, al integrar R-21 o
-    R-22 de verdad) este test se entere.
+    Unidad 008 — R5 (LO IMPORTANTE), R6 y R7: si el envío de un correo falla, nadie se queda
+    atrapado y queda constancia en el log.
+
+    Los tres tests que importan (`test_fallo_al_dar_de_alta...`,
+    `test_fallo_al_reenviar...`, `test_fallo_al_corregir...`) SIMULAN el fallo del proveedor
+    haciendo que `EmailMessage.send()` lance `SMTPException` — nunca esperan a que un envío de
+    verdad falle, ni tocan la red (R8).
     """
 
-    def test_recuperar_contrasena_no_esta_montado(self):
-        respuesta = self.client.get("/cuentas/password/reset/")
-        self.assertEqual(respuesta.status_code, 404)
+    def test_fallo_al_dar_de_alta_no_deja_una_cuenta_atrapada(self):
+        """
+        R5 — el criterio que da sentido a la unidad. Antes del arreglo, este fallo tumbaba la
+        petición con un 500 (allauth no captura nada, Django no lo permite en silencio) sobre
+        una cuenta que YA estaba guardada (no hay ATOMIC_REQUESTS): la persona se quedaba sin
+        ver la pantalla de espera y, al reintentar, R2 le decía "ya existe una cuenta con ese
+        correo" — sin salida.
+        """
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=SMTPException("el proveedor no contesta")):
+            respuesta = self.registrar("alejandro@example.com")
+
+        # No sale un 500: si `send_mail` no hubiera capturado el fallo, esta misma línea del
+        # test habría reventado con la SMTPException sin capturar (el cliente de pruebas de
+        # Django deja subir las excepciones no manejadas por la vista, no las convierte en un
+        # 500 silencioso) — el hecho de llegar hasta aquí con una respuesta normal YA es la
+        # prueba.
+        self.assertEqual(respuesta.status_code, 200)
+
+        # La cuenta se creó (a medias, sin verificar: eso es aceptable y esperado), pero NO es
+        # una cuenta "a medio crear que le impida volver a intentarlo": le queda la pantalla
+        # de espera, con su camino de vuelta.
+        self.assertTrue(Usuario.objects.filter(email="alejandro@example.com").exists())
+        self.assertContains(respuesta, "Revisa tu correo")
+        self.assertContains(respuesta, "alejandro@example.com")
+
+        # Camino de vuelta 1: pedir otro enlace desde esa misma pantalla, sin rellenar el alta
+        # de nuevo. Sigue fallando el envío (mismo mock), pero eso NO puede volver a tumbar la
+        # petición.
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=SMTPException("sigue caído")):
+            respuesta_reenvio = self.client.post(
+                "/cuentas/esperando-verificacion/reenviar/", follow=True
+            )
+        self.assertEqual(respuesta_reenvio.status_code, 200)
+
+        # Camino de vuelta 2: si el proveedor se recupera, un reenvío de verdad SÍ deja
+        # entrar — la cuenta nunca quedó en un estado del que no se pudiera salir.
+        respuesta_reenvio_bueno = self.client.post(
+            "/cuentas/esperando-verificacion/reenviar/", follow=True
+        )
+        self.assertEqual(respuesta_reenvio_bueno.status_code, 200)
+        enlace = self.ultimo_enlace_de_verificacion(para_correo="alejandro@example.com")
+        respuesta_confirmar = self.client.get(enlace, follow=True)
+        self.assertTrue(respuesta_confirmar.wsgi_request.user.is_authenticated)
+
+    def test_fallo_de_red_generico_tampoco_tumba_el_alta(self):
+        """
+        R5, caso límite: no todos los fallos de un proveedor SMTP son `SMTPException` — un
+        DNS que no resuelve o una conexión rechazada son `OSError` (y el `TimeoutError` que
+        dispara `EMAIL_TIMEOUT` en cuanto el proveedor no contesta a tiempo, también). Sin
+        `OSError` en la captura, precisamente el timeout que esta unidad añade para no colgar
+        la petición seguiría colgándola con una excepción sin capturar.
+        """
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=TimeoutError("tiempo agotado")):
+            respuesta = self.registrar("timeout@example.com")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(Usuario.objects.filter(email="timeout@example.com").exists())
+        self.assertContains(respuesta, "Revisa tu correo")
+
+    def test_fallo_al_reenviar_no_da_un_500(self):
+        """R6, primera de las "otras dos puertas": reenviar la verificación."""
+        self.registrar("alejandro@example.com")
+
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=SMTPException("caído")):
+            respuesta = self.client.post(
+                "/cuentas/esperando-verificacion/reenviar/", follow=True
+            )
+
+        self.assertEqual(respuesta.status_code, 200)
+        # Sigue en la pantalla de espera, con su camino de vuelta intacto — no la echa a
+        # ningún sitio raro ni la deja sin nada que hacer.
+        self.assertContains(respuesta, "Revisa tu correo")
+
+    def test_fallo_al_corregir_no_da_un_500(self):
+        """R6, segunda puerta: corregir la dirección de correo."""
+        self.registrar("con-un-typo@example.com")
+
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=SMTPException("caído")):
+            respuesta = self.client.post(
+                "/cuentas/esperando-verificacion/corregir/",
+                {"nuevo_correo": "corregido@example.com"},
+                follow=True,
+            )
+
+        self.assertEqual(respuesta.status_code, 200)
+        # La corrección en sí (cambiar de fila EmailAddress, ver H1 de la 003) no depende del
+        # envío: se aplicó igual, y la pantalla de espera sigue ahí para reintentar.
+        self.assertTrue(
+            Usuario.objects.filter(email="corregido@example.com").exists()
+        )
+        self.assertContains(respuesta, "Revisa tu correo")
+
+    def test_el_fallo_de_envio_queda_registrado_en_el_log(self):
+        """
+        R7 — "si un envío falla, queda registrado donde se pueda ver". Hoy nadie se entera de
+        nada: se comprueba que el logger de `cuentas.adapters` (el que usa `send_mail`) emite
+        un registro de error cuando el envío revienta.
+        """
+        with mock.patch(_RUTA_ENVIO_DE_MENSAJE, side_effect=SMTPException("boom")):
+            with self.assertLogs("cuentas.adapters", level="ERROR") as registro:
+                self.registrar("se-queda-en-el-log@example.com")
+
+        self.assertTrue(
+            any("No se pudo enviar el correo" in mensaje for mensaje in registro.output),
+            registro.output,
+        )
+
+    def test_sin_ningun_fallo_no_se_registra_nada_de_error(self):
+        """Control del test de arriba: con el envío yendo bien (el caso normal de toda la
+        suite), el logger de `cuentas.adapters` no tiene por qué decir nada."""
+        with self.assertRaises(AssertionError):
+            # `assertLogs` FALLA con AssertionError si NINGÚN mensaje se emitió en ese
+            # logger/nivel durante el bloque — que es justo lo que se espera aquí: ningún
+            # error, porque el envío (al backend de memoria de los tests) no falla.
+            with self.assertLogs("cuentas.adapters", level="ERROR"):
+                self.registrar("sin-fallos@example.com")
+
+
+class RecuperarContrasenaTests(PruebaConRegistroAbierto):
+    """
+    Unidad 008 — R2 (R-22), R3 y R4: recuperar la contraseña por correo, sin enseñar nunca la
+    anterior, sin revelar si un correo existe, y con un enlace que caduca y se gasta.
+    """
+
+    NUEVA_CLAVE = "una-clave-nueva-de-verdad-2026"
+
+    def test_pedir_recuperacion_y_usarla_deja_entrar_con_la_nueva(self):
+        """R2: el camino feliz completo, de punta a punta."""
+        self.registrar_y_verificar("alejandro@example.com")
+        self.client.logout()
+
+        respuesta = self.client.post(
+            "/cuentas/password/reset/",
+            {"email": "alejandro@example.com"},
+            follow=True,
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Revisa tu correo")
+
+        enlace = _ultimo_enlace_de_recuperacion(para_correo="alejandro@example.com")
+        respuesta_formulario = self.client.get(enlace, follow=True)
+        self.assertNotContains(respuesta_formulario, "ya no vale")
+
+        respuesta_cambio = self.client.post(
+            respuesta_formulario.wsgi_request.path,
+            {"password1": self.NUEVA_CLAVE, "password2": self.NUEVA_CLAVE},
+            follow=True,
+        )
+        self.assertEqual(respuesta_cambio.status_code, 200)
+
+        # Entra con la NUEVA, nunca vio la anterior en ningún sitio.
+        self.client.logout()
+        entrada = self.client.post(
+            "/cuentas/login/",
+            {"login": "alejandro@example.com", "password": self.NUEVA_CLAVE},
+        )
+        self.assertTrue(entrada.wsgi_request.user.is_authenticated)
+
+    def test_la_contrasena_vieja_deja_de_servir(self):
+        """R2, la otra mitad: "sin enseñarle nunca la anterior" implica que deja de valer."""
+        self.registrar_y_verificar("alejandro@example.com", password=CLAVE_VALIDA)
+        self.client.logout()
+
+        self.client.post("/cuentas/password/reset/", {"email": "alejandro@example.com"})
+        enlace = _ultimo_enlace_de_recuperacion(para_correo="alejandro@example.com")
+        # `follow=True`: la primera visita al enlace REDIRIGE (allauth mueve el token de la
+        # URL a la sesión, para no dejarlo en la cabecera Referer) a la URL de verdad del
+        # formulario — hay que POSTear ahí, no a la URL original del correo.
+        respuesta_formulario = self.client.get(enlace, follow=True)
+        self.client.post(
+            respuesta_formulario.wsgi_request.path,
+            {"password1": self.NUEVA_CLAVE, "password2": self.NUEVA_CLAVE},
+        )
+
+        respuesta = self.client.post(
+            "/cuentas/login/",
+            {"login": "alejandro@example.com", "password": CLAVE_VALIDA},
+        )
+        self.assertFalse(respuesta.wsgi_request.user.is_authenticated)
+
+    def test_la_contrasena_nunca_se_manda_ni_se_ensena_en_ningun_sitio(self):
+        """
+        R2 en negativo: en ninguna de las respuestas del camino de recuperación aparece la
+        contraseña ANTERIOR en claro — ni en el correo, ni en ninguna pantalla.
+        """
+        clave_vieja = "la-vieja-clave-de-verdad-2026"
+        self.registrar_y_verificar("alejandro@example.com", password=clave_vieja)
+        self.client.logout()
+
+        respuesta = self.client.post(
+            "/cuentas/password/reset/",
+            {"email": "alejandro@example.com"},
+            follow=True,
+        )
+        self.assertNotContains(respuesta, clave_vieja)
+
+        mensaje = mail.outbox[-1]
+        self.assertNotIn(clave_vieja, mensaje.body)
+        self.assertNotIn(clave_vieja, mensaje.subject)
+
+    def test_correo_que_no_existe_da_la_misma_respuesta_que_uno_que_si_existe(self):
+        """
+        R3, el caso límite: pedir el enlace para un correo SIN cuenta no puede decir "ese
+        correo no existe" — la respuesta (status, redirección, contenido) tiene que ser
+        IDÉNTICA a la de un correo que sí tiene cuenta. Solo el contenido del correo —que
+        nadie fuera de esa bandeja puede ver— es distinto, y eso no lo mide un test contra la
+        respuesta HTTP.
+        """
+        self.registrar_y_verificar("existe@example.com")
+        self.client.logout()
+
+        respuesta_existe = self.client.post(
+            "/cuentas/password/reset/",
+            {"email": "existe@example.com"},
+            follow=True,
+        )
+        respuesta_no_existe = self.client.post(
+            "/cuentas/password/reset/",
+            {"email": "nunca-registrado@example.com"},
+            follow=True,
+        )
+
+        self.assertEqual(respuesta_existe.status_code, respuesta_no_existe.status_code)
+        self.assertEqual(
+            [url for url, _ in respuesta_existe.redirect_chain],
+            [url for url, _ in respuesta_no_existe.redirect_chain],
+        )
+        self.assertEqual(
+            respuesta_existe.content.decode(), respuesta_no_existe.content.decode()
+        )
+        # Y no queda ninguna cuenta fantasma: pedir la recuperación no crea nada.
+        self.assertFalse(
+            Usuario.objects.filter(email="nunca-registrado@example.com").exists()
+        )
+
+    def test_correo_que_no_existe_no_da_un_error_de_formulario(self):
+        """
+        Control del test de arriba, más explícito: sin `FormularioRecuperarContrasena` (ver
+        cuentas/forms_recuperacion.py), `ResetPasswordForm.clean_email()` de allauth mira
+        `ACCOUNT_PREVENT_ENUMERATION` —que este proyecto tiene en `False` A PROPÓSITO para
+        R2— y el formulario queda INVÁLIDO para un correo desconocido: la petición NO
+        redirige, se queda en la pantalla con un error "unknown_email". Este test se enteraría
+        de que alguien quitó el arreglo.
+        """
+        respuesta = self.client.post(
+            "/cuentas/password/reset/",
+            {"email": "nunca-registrado@example.com"},
+            follow=True,
+        )
+        self.assertTrue(
+            respuesta.redirect_chain,
+            "un correo desconocido NO debe dejar a la persona en el formulario con un error",
+        )
+
+    def test_el_enlace_caducado_no_deja_cambiar_la_contrasena(self):
+        """R4, primer caso: un enlace caducado."""
+        self.registrar_y_verificar("alejandro@example.com")
+        self.client.logout()
+        self.client.post("/cuentas/password/reset/", {"email": "alejandro@example.com"})
+        enlace = _ultimo_enlace_de_recuperacion(para_correo="alejandro@example.com")
+
+        # `PASSWORD_RESET_TIMEOUT=-1`: cualquier token, por reciente que sea, queda fuera del
+        # plazo permitido (Django compara "segundos transcurridos > PASSWORD_RESET_TIMEOUT").
+        # No hace falta esperar de verdad ni mockear el reloj: es la MISMA comprobación que
+        # usaría un enlace de hace días, solo que forzada a fallar ya. Las DOS peticiones (la
+        # que sigue el enlace y la que intenta mandar la contraseña nueva) van DENTRO del
+        # mismo `override_settings`, para que las dos vean el token igual de caducado — si la
+        # segunda se hiciera ya fuera del bloque, el mismo enlace volvería a parecer válido
+        # bajo el plazo normal y el test dejaría de probar lo que dice probar.
+        with override_settings(PASSWORD_RESET_TIMEOUT=-1):
+            respuesta = self.client.get(enlace, follow=True)
+            self.assertContains(respuesta, "ya no vale")
+
+            respuesta_cambio = self.client.post(
+                respuesta.wsgi_request.path,
+                {"password1": self.NUEVA_CLAVE, "password2": self.NUEVA_CLAVE},
+                follow=True,
+            )
+            self.assertContains(respuesta_cambio, "ya no vale")
+
+        # Sigue sin dejar cambiarla: la persona no entra con la clave nueva.
+        self.client.logout()
+        entrada = self.client.post(
+            "/cuentas/login/",
+            {"login": "alejandro@example.com", "password": self.NUEVA_CLAVE},
+        )
+        self.assertFalse(entrada.wsgi_request.user.is_authenticated)
+
+    def test_el_enlace_ya_usado_no_vuelve_a_dar_acceso(self):
+        """R4, segundo caso: "caducado O YA USADO" — un enlace que ya sirvió una vez no sirve
+        una segunda."""
+        self.registrar_y_verificar("alejandro@example.com")
+        self.client.logout()
+        self.client.post("/cuentas/password/reset/", {"email": "alejandro@example.com"})
+        enlace = _ultimo_enlace_de_recuperacion(para_correo="alejandro@example.com")
+
+        primera_vez = self.client.get(enlace, follow=True)
+        self.client.post(
+            primera_vez.wsgi_request.path,
+            {"password1": self.NUEVA_CLAVE, "password2": self.NUEVA_CLAVE},
+        )
+
+        # El MISMO enlace, otra vez: cambiar la contraseña cambia el hash que el token firma
+        # (allauth/Django lo hacen así a propósito, ver EmailAwarePasswordResetTokenGenerator),
+        # así que el enlace usado deja de resolver, igual que uno caducado.
+        segunda_vez = self.client.get(enlace, follow=True)
+        self.assertContains(segunda_vez, "ya no vale")
+
+    def test_pedir_recuperacion_no_manda_ni_un_correo_de_verdad(self):
+        """R8: control de que este flujo, como todos, usa el backend de memoria en tests."""
+        self.registrar_y_verificar("alejandro@example.com")
+        num_correos_antes = len(mail.outbox)
+
+        self.client.post("/cuentas/password/reset/", {"email": "alejandro@example.com"})
+
+        self.assertGreater(len(mail.outbox), num_correos_antes)
+        # `mail.outbox` SOLO existe con el backend de memoria (locmem) — si algo cambiara el
+        # backend a uno real dentro de los tests, esta lista ni se llenaría así.
+        from django.conf import settings
+
+        self.assertIn("locmem", settings.EMAIL_BACKEND)
+
+
+class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
+    """
+    H3 de la revisión (2ª ronda, unidad 003): `include("allauth.urls")` montaba de más — la
+    recuperación de contraseña (R-22) y la gestión de direcciones de correo (`account_email`,
+    la misma superficie que H1), ninguna de las dos especificada ni probada en la unidad 003.
+    "Fuera de alcance" significa que ese comportamiento no se entrega: estas rutas tenían que
+    devolver 404, para que si alguien las montaba sin querer, un test se enterase.
+
+    La unidad 008 saca a `account_reset_password` (y las que encadena) de esa lista A
+    PROPÓSITO: ver `RecuperarContrasenaTests` más abajo, donde esas mismas rutas ahora sí
+    tienen especificación y tests — dejar aquí un 404 sería contradecir el propio contrato de
+    esta unidad, no protegerlo. `account_email` (la gestión de direcciones: añadir, cambiar,
+    quitar) SIGUE fuera de alcance — la unidad 008 es explícita en que no la toca — así que
+    ese 404 se queda.
+    """
 
     def test_gestion_de_direcciones_de_correo_no_esta_montado(self):
         self.registrar_y_verificar("alejandro@example.com")
