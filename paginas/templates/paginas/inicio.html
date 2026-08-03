@@ -57,7 +57,11 @@
 {# ------------------------------------------------------------------------------------ #}
 <div class="mx-auto mt-10 max-w-2xl space-y-6 px-6 pb-16">
   {% for tarjeta in tarjetas %}
-    <section class="rounded-xl border border-slate-200 bg-white p-6">
+    {# id único por tarjeta (H1 de la revisión): el email de quien mira YA sale en la barra  #}
+    {# de arriba (`templates/base.html`), así que buscar el email a pelo en toda la página   #}
+    {# no sirve para comprobar el ORDEN de las tarjetas — este id es lo que usan los tests    #}
+    {# de R4 (`planes/tests.py`) para saber dónde empieza cada una. #}
+    <section id="tarjeta-{{ tarjeta.usuario.id }}" class="rounded-xl border border-slate-200 bg-white p-6">
       <div class="flex items-start justify-between gap-4">
         <h2 class="text-lg font-bold text-slate-900">
           {% if tarjeta.es_propio %}Tú ({{ tarjeta.usuario.email }}){% else %}{{ tarjeta.usuario.email }}{% endif %}
@@ -119,12 +123,26 @@
             {# vacía sin salida. #}
             <p class="text-sm text-slate-500">Sin plan puesto para hoy.</p>
           {% endif %}
-          <a
-            href="{% url 'planes:apuntar' tarjeta.usuario.id %}"
-            class="mt-2 inline-block text-sm font-medium text-emerald-700 hover:underline"
-          >
-            {% if tarjeta.resumen.tiene_comidas %}Añadir otra comida{% else %}Apuntar el plan{% endif %}
-          </a>
+          {% if tarjeta.hogar_pendiente %}
+            {# H2 de la revisión: mientras espera que le acepten en un hogar (R14 de la #}
+            {# unidad 003, `hogar = None`), `PlanDeDia.hogar` es obligatorio y no hay    #}
+            {# ningún hogar todavía al que colgarlo — no se puede apuntar nada de verdad #}
+            {# (planes/acceso.py da 404). Ofrecer aquí el botón sería un enlace muerto:  #}
+            {# se explica por qué, en vez de prometer una salida que no lleva a ningún   #}
+            {# sitio (R5/G-153: "una pantalla vacía que no explica nada... es una        #}
+            {# pantalla rota" — aquí la salida existía pero no llevaba a nada, que es    #}
+            {# casi peor). #}
+            <p class="mt-2 text-xs text-slate-500">
+              Cuando te acepten en el hogar podrás apuntar tu plan.
+            </p>
+          {% else %}
+            <a
+              href="{% url 'planes:apuntar' tarjeta.usuario.id %}"
+              class="mt-2 inline-block text-sm font-medium text-emerald-700 hover:underline"
+            >
+              {% if tarjeta.resumen.tiene_comidas %}Añadir otra comida{% else %}Apuntar el plan{% endif %}
+            </a>
+          {% endif %}
         </div>
       </div>
     </section>

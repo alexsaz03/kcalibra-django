@@ -18,6 +18,7 @@ from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
 from hogares.models import SolicitudEntrada
@@ -124,7 +125,7 @@ class R1_ApuntarComidaApareceEnLaTarjetaTests(BaseConHogarDeDosPersonas):
             carbos_g="20",
         )
 
-        plan = PlanDeDia.objects.get(usuario=self.alejandro, fecha=date.today())
+        plan = PlanDeDia.objects.get(usuario=self.alejandro, fecha=timezone.localdate())
         comida = plan.comidas.get()
         self.assertEqual(comida.nombre, "Tortilla de claras")
         self.assertEqual(comida.momento_del_dia, "desayuno")
@@ -176,8 +177,18 @@ class R2_AnilloComparaElPlanConElObjetivoTests(BaseConHogarDeDosPersonas):
 
 
 class R4_TarjetaPropiaPrimeraTests(BaseConHogarDeDosPersonas):
-    """R4/C-78/G-152 — una tarjeta por persona del hogar, y la de quien abre la app va
-    SIEMPRE la primera."""
+    """
+    R4/C-78/G-152 — una tarjeta por persona del hogar, y la de quien abre la app va SIEMPRE
+    la primera.
+
+    H1 de la revisión: buscar el email a pelo en TODA la página no vale para comprobar el
+    orden — `templates/base.html` imprime `{{ user.email }}` en la barra de arriba de
+    CUALQUIER pantalla, así que el email de quien mira aparece SIEMPRE antes que cualquier
+    tarjeta, pase lo que pase con el orden real (la aserción daba verde incluso con las
+    tarjetas invertidas a propósito). Se compara en su lugar la posición del `id="tarjeta-N"`
+    que pinta `paginas/templates/paginas/inicio.html` en cada `<section>`, que solo existe
+    dentro del contenedor de tarjetas.
+    """
 
     def test_alejandro_ve_la_suya_primero_y_la_de_euridice_debajo(self):
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -185,8 +196,8 @@ class R4_TarjetaPropiaPrimeraTests(BaseConHogarDeDosPersonas):
         respuesta = self.client.get("/")
 
         contenido = respuesta.content.decode()
-        posicion_alejandro = contenido.index("alejandro@example.com")
-        posicion_euridice = contenido.index("euridice@example.com")
+        posicion_alejandro = contenido.index(f'id="tarjeta-{self.alejandro.id}"')
+        posicion_euridice = contenido.index(f'id="tarjeta-{self.euridice.id}"')
         self.assertLess(posicion_alejandro, posicion_euridice)
 
     def test_euridice_ve_la_suya_primero_y_la_de_alejandro_debajo(self):
@@ -197,8 +208,8 @@ class R4_TarjetaPropiaPrimeraTests(BaseConHogarDeDosPersonas):
         respuesta = self.client.get("/")
 
         contenido = respuesta.content.decode()
-        posicion_euridice = contenido.index("euridice@example.com")
-        posicion_alejandro = contenido.index("alejandro@example.com")
+        posicion_euridice = contenido.index(f'id="tarjeta-{self.euridice.id}"')
+        posicion_alejandro = contenido.index(f'id="tarjeta-{self.alejandro.id}"')
         self.assertLess(posicion_euridice, posicion_alejandro)
 
 
@@ -221,6 +232,72 @@ class R5_SinPlanElInicioSigueSirviendoTests(BaseConHogarDeDosPersonas):
         self.assertContains(respuesta, f'/planes/{self.euridice.id}/apuntar/')
 
 
+class H2_EsperandoAceptacionNoOfreceEnlaceMuertoTests(PruebaConRegistroAbierto):
+    """
+    H2 de la revisión — mientras alguien espera que le acepten en un hogar (R14 de la unidad
+    003: se registró CON el código de otro hogar y su cuenta queda "sola", `hogar = None`,
+    hasta que alguien de dentro la acepte), su Inicio seguía enseñando el botón "Apuntar el
+    plan", pero apuntaba a una URL que SIEMPRE daba 404 —`PlanDeDia.hogar` es obligatorio y
+    no hay ningún hogar todavía al que colgar el plan—. Incumplía R5/G-153: "una pantalla
+    vacía que no explica nada ni ofrece salida es una pantalla rota" — aquí la salida existía
+    pero no llevaba a ningún sitio, que es casi peor. Es el MISMO estado ("esperando
+    aceptación") que ya se había pasado por alto en el perfil propio de la unidad 004 (ver
+    hallazgos.md de esta unidad, sección de descubrimientos).
+
+    Clase aparte de `BaseConHogarDeDosPersonas` a propósito: esa base SIEMPRE acepta la
+    solicitud en el `setUp`; aquí hace falta el estado intermedio, sin aceptar.
+    """
+
+    def setUp(self):
+        super().setUp()
+        parche_de_hoy = _con_hoy_fijo()
+        parche_de_hoy.start()
+        self.addCleanup(parche_de_hoy.stop)
+
+        self.registrar_y_verificar("alejandro@example.com")
+        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.client.logout()
+
+        # Euridice pide entrar con el código de Alejandro, pero NADIE la acepta todavía: se
+        # queda "esperando" (hogar = None), el estado que hay que comprobar aquí.
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
+        )
+        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.assertIsNone(self.euridice.hogar_id)  # control: sigue esperando, no aceptada
+
+    def test_no_ofrece_el_enlace_muerto_de_apuntar_el_plan(self):
+        self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
+
+        respuesta = self.client.get("/")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotContains(respuesta, f"/planes/{self.euridice.id}/apuntar/")
+        self.assertContains(
+            respuesta, "Cuando te acepten en el hogar podrás apuntar tu plan."
+        )
+
+    def test_sigue_ensenando_sus_calorias_y_macros_igual_r5(self):
+        """R5/G-153 no se rompe por estar sin hogar: sin plan (y encima sin hogar todavía) el
+        Inicio sigue sirviendo, con sus calorías y macros de siempre."""
+        self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
+
+        respuesta = self.client.get("/")
+
+        self.assertContains(respuesta, "1894 kcal")  # datos de fábrica (unidad 004)
+
+    def test_la_url_de_apuntar_tecleada_a_mano_sigue_dando_404(self):
+        """Control negativo: quitar el enlace del botón no basta por sí solo — si alguien
+        teclea la URL a mano (o la tenía guardada de antes de este arreglo), tiene que seguir
+        respondiendo 404, no reventar con un `IntegrityError` al intentar crear un plan sin
+        hogar."""
+        self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
+
+        respuesta = self.client.get(f"/planes/{self.euridice.id}/apuntar/")
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
 class R6_CualquieraDelHogarApuntaAOtroSinPedirPermisoTests(BaseConHogarDeDosPersonas):
     """
     R6/G-43, el corazón de la unidad — Alejandro puede apuntarle la cena a Euridice SIN pedir
@@ -237,7 +314,7 @@ class R6_CualquieraDelHogarApuntaAOtroSinPedirPermisoTests(BaseConHogarDeDosPers
         )
 
         self.assertEqual(respuesta.status_code, 200)
-        plan_de_euridice = PlanDeDia.objects.get(usuario=self.euridice, fecha=date.today())
+        plan_de_euridice = PlanDeDia.objects.get(usuario=self.euridice, fecha=timezone.localdate())
         comida = plan_de_euridice.comidas.get()
         self.assertEqual(comida.nombre, "Cena que le puso Alejandro")
 
@@ -380,7 +457,7 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_un_plan_de_ayer_no_se_cuenta_en_el_inicio(self):
         ayer = PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=date.today() - timedelta(days=1)
+            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
         )
         ComidaDelPlan.objects.create(
             plan=ayer, nombre="Comida de ayer", momento_del_dia="comida", calorias=999
@@ -394,7 +471,7 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_un_plan_de_manana_no_se_cuenta_en_el_inicio(self):
         manana = PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=date.today() + timedelta(days=1)
+            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() + timedelta(days=1)
         )
         ComidaDelPlan.objects.create(
             plan=manana, nombre="Comida de mañana", momento_del_dia="comida", calorias=999
@@ -407,17 +484,17 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_apuntar_una_comida_hoy_cuelga_del_plan_de_hoy_no_del_de_ayer_ni_manana(self):
         PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=date.today() - timedelta(days=1)
+            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
         )
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
 
         self.apuntar(self.alejandro, nombre="Comida de hoy")
 
-        plan_de_hoy = PlanDeDia.objects.get(usuario=self.alejandro, fecha=date.today())
+        plan_de_hoy = PlanDeDia.objects.get(usuario=self.alejandro, fecha=timezone.localdate())
         self.assertEqual(plan_de_hoy.comidas.get().nombre, "Comida de hoy")
         # El de ayer sigue existiendo, intacto y sin la comida de hoy dentro.
         plan_de_ayer = PlanDeDia.objects.get(
-            usuario=self.alejandro, fecha=date.today() - timedelta(days=1)
+            usuario=self.alejandro, fecha=timezone.localdate() - timedelta(days=1)
         )
         self.assertEqual(plan_de_ayer.comidas.count(), 0)
 
@@ -433,10 +510,10 @@ class UnPlanPorPersonaYDiaTests(TestCase):
         from hogares.models import crear_hogar_propio
 
         crear_hogar_propio(usuario)
-        PlanDeDia.objects.create(usuario=usuario, hogar=usuario.hogar, fecha=date.today())
+        PlanDeDia.objects.create(usuario=usuario, hogar=usuario.hogar, fecha=timezone.localdate())
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 PlanDeDia.objects.create(
-                    usuario=usuario, hogar=usuario.hogar, fecha=date.today()
+                    usuario=usuario, hogar=usuario.hogar, fecha=timezone.localdate()
                 )

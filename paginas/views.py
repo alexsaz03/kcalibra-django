@@ -17,10 +17,15 @@ def inicio(request):
         return render(request, "paginas/inicio.html")
 
     hogar = request.user.hogar
-    if hogar is None:
-        # R14 de la unidad 003: esperando que le acepten en otro hogar. Todavía no hay
-        # "hogar" del que sacar las tarjetas de nadie más (el perfil propio ya se ve en este
-        # mismo estado, unidad 004/hueco H2): se enseña solo la suya.
+    # H2 de la revisión: mientras espera que le acepten en otro hogar (R14 de la unidad 003,
+    # el mismo estado que ya se había pasado por alto en el perfil propio de la unidad 004),
+    # `request.user.hogar` es `None`. Todavía no hay "hogar" del que sacar las tarjetas de
+    # nadie más (se enseña solo la suya) NI del que colgar un plan (`PlanDeDia.hogar` es
+    # obligatorio): `hogar_pendiente` se lleva a la plantilla para que NO ofrezca el botón de
+    # "Apuntar el plan" en ese estado — sería un enlace muerto (404 al pulsarlo) — y explique
+    # por qué en su lugar, en vez de una salida que no lleva a ningún sitio.
+    hogar_pendiente = hogar is None
+    if hogar_pendiente:
         miembros = [request.user]
     else:
         # G-152: la propia SIEMPRE la primera; el resto, detrás, sin más criterio de orden.
@@ -31,6 +36,7 @@ def inicio(request):
         {
             "usuario": miembro,
             "es_propio": miembro.id == request.user.id,
+            "hogar_pendiente": hogar_pendiente,
             **resumen_del_dia(miembro),
         }
         for miembro in miembros
