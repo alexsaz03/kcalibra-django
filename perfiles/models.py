@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -20,10 +20,14 @@ from . import constantes
 
 
 def _fecha_no_futura(valor):
-    """R11 — los datos imposibles se rechazan al entrar: una fecha de nacimiento futura no
-    tiene sentido y `calcular_edad` (servicios/metabolismo.py) daría una edad negativa."""
+    """
+    R11/R10 — los datos imposibles se rechazan al entrar: una fecha futura no tiene sentido
+    ni en `Perfil.fecha_nacimiento` (daría una edad negativa en `calcular_edad`) ni en
+    `MedicionPeso.fecha` (unidad 006, R10: nadie se pesa "mañana"). Un único validador para
+    los dos campos: el mensaje se generalizó al reutilizarlo (antes decía "de nacimiento").
+    """
     if valor > timezone.localdate():
-        raise ValidationError("La fecha de nacimiento no puede ser futura.")
+        raise ValidationError("La fecha no puede ser futura.")
 
 
 class Perfil(models.Model):
@@ -59,22 +63,46 @@ class Perfil(models.Model):
 
 class MedicionPeso(models.Model):
     """
-    Una pesada de una persona, con su fecha (R7/G-61). Mínima y sin pantalla propia a
-    propósito: "apuntar el peso" es su propia actividad y su propia unidad futura — aquí solo
-    se crea la primera (con el peso del alta, ver `perfiles.logica.crear_perfil_desde_alta`)
-    para que el cálculo tenga con qué trabajar desde el primer día.
+    Una pesada de una persona, con su fecha (R7/G-61 de la unidad 004; R-63/R-66/G-130/G-131
+    de "apuntar-el-peso.md", unidad 006). El peso es obligatorio; la grasa corporal y la
+    cintura son opcionales (`null=True, blank=True`): no toda báscula las mide, y que falten
+    no impide nada (G-131). Desde la unidad 006 SÍ tiene pantalla propia (el histórico de
+    pesadas, dentro de `perfiles/`) — antes de esa unidad este docstring decía "sin pantalla
+    propia a propósito"; ya no es verdad.
+
+    `UniqueConstraint` de abajo es G-130/Q-110 escrito en la base de datos: como mucho UNA
+    medición por persona y día. Apuntar dos veces el mismo día no son dos datos, es una
+    corrección — `perfiles.logica.apuntar_medicion` hace el `update_or_create` que la
+    aprovecha, nunca un `create` suelto que reventaría contra esta restricción.
     """
 
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mediciones_peso"
     )
-    fecha = models.DateField(default=timezone.localdate)
+    fecha = models.DateField(default=timezone.localdate, validators=[_fecha_no_futura])
     peso_kg = models.DecimalField(
         max_digits=5, decimal_places=1, validators=[MinValueValidator(Decimal("0.1"))]
+    )
+    # R-66/G-131 — opcionales a propósito: no toda báscula mide la grasa ni la cintura.
+    grasa_pct = models.DecimalField(
+        "grasa corporal (%)",
+        max_digits=4,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+    )
+    cintura_cm = models.DecimalField(
+        "cintura (cm)", max_digits=5, decimal_places=1, null=True, blank=True
     )
 
     class Meta:
         ordering = ["-fecha"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["usuario", "fecha"], name="una_medicion_por_persona_y_dia"
+            )
+        ]
 
     def __str__(self):
         return f"{self.peso_kg} kg de {self.usuario} el {self.fecha}"

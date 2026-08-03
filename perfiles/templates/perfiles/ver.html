@@ -56,11 +56,12 @@
         </button>
       </form>
 
-      {# R7/G-61: el peso NO se edita aquí — se apunta en Progreso (otra unidad). Se enseña #}
-      {# de dónde sale el número que usa el cálculo, para que no sorprenda. #}
+      {# R7/G-61: el peso NO se edita aquí — se apunta en su propio histórico (unidad 006). #}
+      {# Se enseña de dónde sale el número que usa el cálculo, para que no sorprenda. #}
       <p class="mt-3 text-xs text-slate-500">
-        El peso no se cambia desde aquí: se calcula con la media de tus últimas mediciones
-        (se apuntará en Progreso, en una unidad futura). Ahora mismo tienes
+        El peso no se cambia desde aquí:
+        <a href="{% url 'perfiles:peso_mio' %}" class="font-medium text-emerald-700 hover:underline">apúntalo en tu histórico de peso</a>,
+        que se calcula con la media de tus últimas mediciones. Ahora mismo tienes
         {% if resultado %}{{ resultado.peso_kg }} kg{% else %}ninguna medición todavía{% endif %}.
       </p>
     {% else %}

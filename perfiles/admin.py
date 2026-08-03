@@ -12,7 +12,7 @@ class PerfilAdmin(admin.ModelAdmin):
 
 @admin.register(MedicionPeso)
 class MedicionPesoAdmin(admin.ModelAdmin):
-    list_display = ["usuario", "fecha", "peso_kg"]
+    list_display = ["usuario", "fecha", "peso_kg", "grasa_pct", "cintura_cm"]
     list_filter = ["fecha"]
     search_fields = ["usuario__email"]
     ordering = ["-fecha"]

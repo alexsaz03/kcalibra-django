@@ -1,31 +1,53 @@
 """
-Tests de la unidad 004: R1-R11.
+Tests de las unidades 004 (R1-R11) y 006 (R1-R10, "apuntar el peso").
 
 Como en `cuentas/tests.py` y `hogares/tests.py`, todo pasa por el cliente de pruebas de
 Django contra las URLs reales (nunca `Perfil.objects.create(...)` a mano cuando lo que se
 prueba es un flujo completo) — la lección de
 docs/conocimiento/tests-que-no-fallan-cuando-deben.md del meta-repo: la petición tiene que
 LLEGAR a lo que dice probar, así que las respuestas de HTMX se comprueban por su CONTENIDO
-(los números cambiaron de verdad), no solo por el código de estado.
+(los números cambiaron de verdad), no solo por el código de estado. Excepción declarada, la
+misma que ya usa `perfiles/logica.py`: R2 de la unidad 006 exige demostrar que la restricción
+de unicidad vive en la BASE DE DATOS, así que ESE test concreto sí llama a
+`MedicionPeso.objects.create(...)` directamente, a propósito, saltándose el formulario.
 
-R1 y R2 (los números clavados) YA están probados llamando al servicio directamente, sin
-pasar por ninguna pantalla, en `servicios/tests.py` (R8: "verificable... llamándolo
-directamente"). Aquí se prueban otra vez, pero de punta a punta por HTTP —alta, verificación,
-pantalla de "tus datos"— para demostrar que el CABLEADO (formulario → perfil → vista) también
-funciona, no solo la fórmula suelta. Como una fecha de nacimiento hace que la edad (y por
-tanto las calorías) cambie el día del cumpleaños, estos dos tests fijan "hoy" con
+R1 y R2 de la unidad 004 (los números clavados) YA están probados llamando al servicio
+directamente, sin pasar por ninguna pantalla, en `servicios/tests.py` (R8: "verificable...
+llamándolo directamente"). Aquí se prueban otra vez, pero de punta a punta por HTTP —alta,
+verificación, pantalla de "tus datos"— para demostrar que el CABLEADO (formulario → perfil →
+vista) también funciona, no solo la fórmula suelta. Como una fecha de nacimiento hace que la
+edad (y por tanto las calorías) cambie el día del cumpleaños, estos dos tests fijan "hoy" con
 `unittest.mock.patch` en vez de confiar en la fecha real de la máquina que ejecute la suite.
+
+Unidad 006, punto 6 del "Cómo" de su especificación (unificar relojes): `perfiles/logica.py`
+ahora pasa SIEMPRE `hoy=timezone.localdate()` a `servicios.metabolismo`, así que fijar "hoy"
+en estos tests ya no consiste en parchear `servicios.metabolismo.date` (eso dejó de tener
+efecto: el `hoy` que le llega nunca es `None`) sino `django.utils.timezone.localdate`
+directamente — un único reloj mockeable para toda la cadena (edad, ventana de 7 días, fecha de
+la medición del alta). Por lo mismo, los tests que antes escribían `date.today()` para
+construir fechas "de hoy" de verdad ahora escriben `timezone.localdate()`, coherente con lo
+que usa el código que están probando (`MedicionPeso.fecha`, `peso_medio_7_dias`).
 """
 
+import re
 from datetime import date, timedelta
+from decimal import Decimal
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.utils import timezone
 
 from cuentas.ayuda_pruebas import PruebaConRegistroAbierto
-from perfiles.forms import FormularioPerfil
-from perfiles.logica import calcular_objetivo_del_dia, peso_medio_7_dias
+from perfiles.forms import FormularioPerfil, FormularioMedicion
+from perfiles.logica import (
+    apuntar_medicion,
+    borrar_medicion,
+    calcular_objetivo_del_dia,
+    peso_medio_7_dias,
+    ultima_medicion,
+)
 from perfiles.models import MedicionPeso, Perfil
 
 Usuario = get_user_model()
@@ -33,24 +55,21 @@ Usuario = get_user_model()
 HOY_DE_REFERENCIA = date(2026, 8, 2)
 
 
-class _FechaFija(date):
-    """
-    Subclase de `date` que fija `.today()` a `HOY_DE_REFERENCIA`, para congelar "hoy" en los
-    tests que necesitan un resultado EXACTO (R1/R2 por HTTP) sin depender de en qué día real
-    se ejecute la suite. Sigue siendo un `date` de verdad (no un mock a ciegas): construir
-    fechas con ella (`_FechaFija(1997, 6, 29)`) se comporta exactamente igual que con `date`.
-    """
-
-    @classmethod
-    def today(cls):
-        return HOY_DE_REFERENCIA
-
-
 def _con_hoy_fijo():
-    """`servicios.metabolismo` es el ÚNICO sitio que llama a `date.today()` (R8: es la única
-    pieza que decide "hoy" para el cálculo); parchear su `date` basta para congelar la edad
-    en toda la cadena perfiles → servicios, sin tocar nada de Django."""
-    return mock.patch("servicios.metabolismo.date", _FechaFija)
+    """
+    Congela "hoy" a `HOY_DE_REFERENCIA` para los tests que necesitan un resultado EXACTO
+    (R1/R2 de la 004 por HTTP) sin depender de en qué día real se ejecute la suite.
+
+    Unidad 006: `perfiles/logica.py` ahora pasa `hoy=timezone.localdate()` explícito a
+    `servicios.metabolismo` (el reloj unificado del punto 6 del "Cómo"), así que parchear
+    `servicios.metabolismo.date` ya no tiene ningún efecto — el `hoy` que le llega nunca es
+    `None`. El único reloj que hace falta congelar es `django.utils.timezone.localdate`: lo
+    usan a la vez `crear_perfil_desde_alta` (la fecha de la primera medición),
+    `calcular_objetivo_del_dia` (el `hoy` que le pasa a la fórmula de la edad) y
+    `peso_medio_7_dias` (la ventana de 7 días), así que un único mock deja los tres en el
+    mismo día, sin que se puedan desincronizar entre sí.
+    """
+    return mock.patch("django.utils.timezone.localdate", return_value=HOY_DE_REFERENCIA)
 
 
 class AltaConDatosFisicosTests(PruebaConRegistroAbierto):
@@ -70,7 +89,7 @@ class AltaConDatosFisicosTests(PruebaConRegistroAbierto):
         mediciones = MedicionPeso.objects.filter(usuario=usuario)
         self.assertEqual(mediciones.count(), 1)
         self.assertEqual(mediciones.first().peso_kg, 62)
-        self.assertEqual(mediciones.first().fecha, date.today())
+        self.assertEqual(mediciones.first().fecha, timezone.localdate())
 
     def test_sin_ajuste_manual_el_perfil_usa_el_de_fabrica_del_objetivo(self):
         # DATOS_FISICOS_POR_DEFECTO trae objetivo=perder_grasa y ajuste_pct="" (en blanco).
@@ -187,7 +206,7 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         MedicionPeso.objects.filter(usuario=self.usuario).delete()
 
     def test_la_media_solo_cuenta_los_ultimos_7_dias(self):
-        hoy = date.today()
+        hoy = timezone.localdate()
         MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=60)
         MedicionPeso.objects.create(
             usuario=self.usuario, fecha=hoy - timedelta(days=3), peso_kg=62
@@ -208,7 +227,7 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         fechas). Este test falla si la ventana se corre un día en cualquier dirección: la
         medición de hace exactamente 6 días DEBE entrar, la de hace exactamente 7 días NO.
         """
-        hoy = date.today()
+        hoy = timezone.localdate()
         MedicionPeso.objects.create(
             usuario=self.usuario, fecha=hoy - timedelta(days=6), peso_kg=70
         )
@@ -221,23 +240,31 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         self.assertEqual(media, 70)  # SOLO la de hace 6 días; la de hace 7 queda fuera
 
     def test_una_sola_medicion_reciente_es_su_propia_media(self):
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=date.today(), peso_kg=75)
+        MedicionPeso.objects.create(usuario=self.usuario, fecha=timezone.localdate(), peso_kg=75)
         self.assertEqual(peso_medio_7_dias(self.usuario), 75)
 
     def test_apuntar_un_peso_nuevo_cambia_las_calorias_sin_tocar_el_perfil(self):
-        """C-35 (cambiar-tus-datos.md): apuntar un peso nuevo mueve las calorías SOLAS, sin
-        pasar por la pantalla de perfil. Aquí no hay pantalla de "apuntar peso" (fuera de
-        alcance de esta unidad): se demuestra creando la medición directamente y comprobando
-        que el CÁLCULO ya la usa, sin que nadie haya tocado el Perfil."""
+        """
+        C-35 (cambiar-tus-datos.md): apuntar un peso nuevo mueve las calorías SOLAS, sin
+        pasar por la pantalla de perfil. Se demuestra creando la medición directamente y
+        comprobando que el CÁLCULO ya la usa, sin que nadie haya tocado el Perfil (la unidad
+        006 añadió su propia pantalla de "apuntar peso" — con red de HTTP en
+        `ApuntarPesoTests`, más abajo — pero esto de aquí sigue probando la pieza de más
+        abajo del todo: la base de datos).
+
+        Dos MEDICIONES en DÍAS DISTINTOS (no la misma, sustituida): desde la unidad 006,
+        `MedicionPeso` tiene como mucho una fila por (usuario, fecha) — G-130/Q-110 — así que
+        "apuntar un peso nuevo" para este test es un DÍA nuevo, no una segunda fila del mismo
+        día (eso lo prueba `SustituirMedicionDelMismoDiaTests`).
+        """
         with _con_hoy_fijo():
-            MedicionPeso.objects.create(
-                usuario=self.usuario, fecha=date.today(), peso_kg=61
-            )
+            hoy = timezone.localdate()
+            MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=61)
             objetivo_original = self.usuario.perfil.objetivo
             resultado_antes = calcular_objetivo_del_dia(self.usuario)
 
             MedicionPeso.objects.create(
-                usuario=self.usuario, fecha=date.today(), peso_kg=59
+                usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=59
             )
             resultado_despues = calcular_objetivo_del_dia(self.usuario)
 
@@ -473,7 +500,7 @@ class DatosImposiblesEnElAltaTests(PruebaConRegistroAbierto):
         self.assertFalse(Usuario.objects.filter(email="alguien@example.com").exists())
 
     def test_fecha_de_nacimiento_futura_no_crea_ninguna_cuenta(self):
-        fecha_futura = (date.today() + timedelta(days=365)).isoformat()
+        fecha_futura = (timezone.localdate() + timedelta(days=365)).isoformat()
         self.registrar("alguien@example.com", fecha_nacimiento=fecha_futura)
         self.assertFalse(Usuario.objects.filter(email="alguien@example.com").exists())
 
@@ -525,3 +552,683 @@ class DatosImposiblesAlCambiarElPerfilTests(PruebaConRegistroAbierto):
 
         self.usuario.perfil.refresh_from_db()
         self.assertEqual(self.usuario.perfil.altura_cm, altura_original)
+
+
+# ==============================================================================================
+# Unidad 006 — "Apuntar el peso" (R1-R10). Los R* de aquí abajo son los de
+# docs/05-trabajo/006-apuntar-el-peso/especificacion.md, que a su vez remiten a
+# docs/02-flujos/apuntar-el-peso.md (R-63 a R-66, C-68 a C-72, G-130 a G-132, Q-110 a Q-112).
+# ==============================================================================================
+
+
+class ApuntarPesoTests(PruebaConRegistroAbierto):
+    """R1/R3/R-63/R-66/G-131 — apuntar una medición, completa o solo con el peso obligatorio."""
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("euridice@example.com")
+        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        # El alta ya dejó una medición (62 kg, hoy); se limpia para partir de un histórico
+        # controlado en cada escenario, sin que la del alta interfiera con las fechas exactas
+        # que arma cada test.
+        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+
+    def _apuntar(self, **campos):
+        payload = {
+            "fecha": timezone.localdate().isoformat(),
+            "peso_kg": "60",
+            "grasa_pct": "",
+            "cintura_cm": "",
+            **campos,
+        }
+        return self.client.post(f"/perfiles/{self.usuario.id}/peso/apuntar/", payload)
+
+    def test_apuntar_solo_el_peso_deja_la_grasa_y_la_cintura_en_blanco_y_no_degrada_nada(self):
+        """R1/C-68 — Euridice apunta 61,4 kg sin grasa ni cintura (su báscula no las mide): la
+        medición se guarda igual y su objetivo del día se sigue calculando con normalidad."""
+        respuesta = self._apuntar(peso_kg="61.4")
+
+        self.assertEqual(respuesta.status_code, 200)
+        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+        self.assertEqual(medicion.peso_kg, Decimal("61.4"))
+        self.assertIsNone(medicion.grasa_pct)
+        self.assertIsNone(medicion.cintura_cm)
+        # "nada queda degradado por que falten esos dos datos" (R1, R-66): el cálculo sigue
+        # funcionando, no se queda en blanco ni revienta.
+        self.assertIsNotNone(calcular_objetivo_del_dia(self.usuario))
+
+    def test_apuntar_peso_grasa_y_cintura_los_tres_se_guardan_y_se_ven_en_el_historico(self):
+        """R3 — apuntando los tres juntos, los tres se guardan y se pueden volver a ver."""
+        respuesta = self._apuntar(peso_kg="70.5", grasa_pct="18.2", cintura_cm="82.3")
+        self.assertEqual(respuesta.status_code, 200)
+
+        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+        self.assertEqual(medicion.peso_kg, Decimal("70.5"))
+        self.assertEqual(medicion.grasa_pct, Decimal("18.2"))
+        self.assertEqual(medicion.cintura_cm, Decimal("82.3"))
+
+        respuesta_historico = self.client.get(f"/perfiles/{self.usuario.id}/peso/")
+        # LANGUAGE_CODE="es": la plantilla pinta los decimales con coma, no con punto (mismo
+        # formato que ya usa el resto de la app para cualquier número localizado).
+        self.assertContains(respuesta_historico, "70,5")
+        self.assertContains(respuesta_historico, "18,2")
+        self.assertContains(respuesta_historico, "82,3")
+
+    def test_grasa_0_apuntada_se_ve_en_el_historico_no_se_esconde(self):
+        """
+        H4 de la revisión (2ª ronda) — 0% de grasa es un valor válido (R10: 0-100 inclusive,
+        `test_grasa_0_es_valida` en `FormularioMedicionTests` ya lo prueba a nivel de
+        formulario). `{% if medicion.grasa_pct %}` en la plantilla trataría `Decimal("0.0")`
+        como "falso" y se comería el dato en el histórico, aunque SÍ se guardó — un 0 no es
+        lo mismo que "no se apuntó grasa". Este test comprueba la PANTALLA, no el modelo.
+        """
+        respuesta = self._apuntar(peso_kg="70.0", grasa_pct="0", cintura_cm="")
+
+        respuesta_historico = self.client.get(f"/perfiles/{self.usuario.id}/peso/")
+        self.assertContains(respuesta_historico, "0,0% grasa")  # "0,0": Decimal(0.0) en es
+
+
+class SustituirMedicionDelMismoDiaTests(PruebaConRegistroAbierto):
+    """
+    R2/C-69/G-130/Q-110 — la nueva pesada del mismo día SUSTITUYE a la anterior, no se
+    acumula. R2 exige, además, que sea la BASE DE DATOS quien lo garantice, no solo el
+    formulario: el segundo test de esta clase lo demuestra con un `create` directo, sin pasar
+    por `apuntar_medicion` ni por ningún formulario.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.usuario = Usuario.objects.get(email="alejandro@example.com")
+        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+
+    def test_apuntar_dos_veces_el_mismo_dia_deja_una_sola_medicion_la_de_la_tarde(self):
+        hoy = timezone.localdate().isoformat()
+        self.client.post(
+            f"/perfiles/{self.usuario.id}/peso/apuntar/",
+            {"fecha": hoy, "peso_kg": "93.2", "grasa_pct": "", "cintura_cm": ""},
+        )
+        self.client.post(
+            f"/perfiles/{self.usuario.id}/peso/apuntar/",
+            {"fecha": hoy, "peso_kg": "94.1", "grasa_pct": "", "cintura_cm": ""},
+        )
+
+        mediciones = MedicionPeso.objects.filter(usuario=self.usuario)
+        self.assertEqual(mediciones.count(), 1)
+        self.assertEqual(mediciones.first().peso_kg, Decimal("94.1"))
+
+    def test_la_restriccion_de_unicidad_vive_en_la_base_de_datos_no_solo_en_el_formulario(self):
+        """R2 — un `create` directo (saltándose `apuntar_medicion` y el formulario por
+        completo) también tiene que reventar: la garantía es de la base de datos, con su
+        `UniqueConstraint`, no una comprobación que solo vive en Python."""
+        hoy = timezone.localdate()
+        MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=Decimal("93.2"))
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                MedicionPeso.objects.create(
+                    usuario=self.usuario, fecha=hoy, peso_kg=Decimal("94.1")
+                )
+
+        # Y sigue habiendo solo una, la primera (el `create` que revienta no deja nada a medias).
+        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
+
+
+class UnMalDiaDeBasculaNoDescolocaElPlanTests(PruebaConRegistroAbierto):
+    """R4/C-70/Q-111 — una medición aislada muy distinta de las demás no mueve las calorías
+    del día más de un 3%, porque se calculan con la media de los últimos 7 días, no con la
+    pesada suelta de hoy."""
+
+    def test_una_pesada_alta_tras_una_semana_estable_mueve_las_calorias_menos_de_un_3_por_ciento(
+        self,
+    ):
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+            usuario = Usuario.objects.get(email="alejandro@example.com")
+            MedicionPeso.objects.filter(usuario=usuario).delete()
+
+            hoy = timezone.localdate()
+            for delta in range(1, 7):  # los 6 días anteriores, toda la semana sobre 93 kg
+                MedicionPeso.objects.create(
+                    usuario=usuario, fecha=hoy - timedelta(days=delta), peso_kg=Decimal("93.0")
+                )
+            resultado_antes = calcular_objetivo_del_dia(usuario)  # media de 93 kg (6 días)
+
+            # Hoy, tras una comida salada, marca 95 kg.
+            self.client.post(
+                f"/perfiles/{usuario.id}/peso/apuntar/",
+                {"fecha": hoy.isoformat(), "peso_kg": "95", "grasa_pct": "", "cintura_cm": ""},
+            )
+            resultado_despues = calcular_objetivo_del_dia(usuario)
+
+        cambio_pct = (
+            abs(resultado_despues["calorias"] - resultado_antes["calorias"])
+            / resultado_antes["calorias"]
+            * 100
+        )
+        self.assertLessEqual(cambio_pct, 3)
+        # Y de verdad se movió (para que la aserción de arriba no pase "por casualidad" con
+        # dos números iguales): la media SÍ se desplazó un poco con el dato de hoy.
+        self.assertNotEqual(resultado_antes["calorias"], resultado_despues["calorias"])
+
+        # H3 de la revisión (2ª ronda): el techo del 3% de Q-111 por sí solo NO distingue
+        # "se calculó con la MEDIA de 7 días" (R4/C-70, lo que el criterio exige) de "se
+        # calculó con la ÚLTIMA medición suelta" (justo lo que C-70/G-132 PROHÍBEN) — con
+        # estos números concretos, la media da un cambio del 0,17% y la última suelta del
+        # 1,06%: ambos caben bajo el 3%, así que un `assertLessEqual` a secas pasaría igual
+        # con la implementación prohibida. Clavar el PESO con el que se recalculó (93,3 kg,
+        # la media de (93×6 + 95)/7, NO los 95 kg sueltos de hoy) es lo que mata ese mutante.
+        self.assertEqual(resultado_despues["peso_kg"], 93.3)
+
+
+class UnaSolaMedicionEsLaQueSeUsaTests(PruebaConRegistroAbierto):
+    """R5/C-71 — recién creada la cuenta con 62 kg, si solo se ha apuntado una pesada de
+    verdad (61,4 kg), el cálculo usa esos 61,4 kg, no los 62 del alta."""
+
+    def test_con_una_sola_medicion_de_verdad_el_calculo_usa_esa(self):
+        self.registrar_y_verificar("euridice@example.com")  # 62 kg de fábrica, hoy
+        usuario = Usuario.objects.get(email="euridice@example.com")
+
+        # Su primera pesada de verdad, el mismo día que el alta: sustituye a la de 62 kg
+        # ("solo se ha pesado una vez", el criterio).
+        self.client.post(
+            f"/perfiles/{usuario.id}/peso/apuntar/",
+            {
+                "fecha": timezone.localdate().isoformat(),
+                "peso_kg": "61.4",
+                "grasa_pct": "",
+                "cintura_cm": "",
+            },
+        )
+
+        self.assertEqual(MedicionPeso.objects.filter(usuario=usuario).count(), 1)
+        resultado = calcular_objetivo_del_dia(usuario)
+        self.assertEqual(resultado["peso_kg"], 61.4)
+
+
+class DosNumerosDistintosTests(PruebaConRegistroAbierto):
+    """
+    R6/C-72/Q-112 — lo que marcó la báscula y el peso con el que se calcula son dos números
+    DISTINTOS, en sitios distintos y rotulados aparte. No vale que el mismo número sirva para
+    los dos sitios: este test monta un escenario donde de verdad difieren (92,8 kg de ayer
+    frente a 93,4 kg de media, los mismos números del criterio) y comprueba que cada uno
+    aparece SOLO en su marcador, no en los dos.
+    """
+
+    def test_la_pantalla_distingue_la_ultima_pesada_de_la_media_con_la_que_se_calcula(self):
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        usuario = Usuario.objects.get(email="alejandro@example.com")
+        MedicionPeso.objects.filter(usuario=usuario).delete()
+
+        hoy = timezone.localdate()
+        # Ayer 92,8 kg, hace dos días 94,0 kg → media de la semana: 93,4 kg (los números del
+        # criterio C-72, tal cual).
+        MedicionPeso.objects.create(
+            usuario=usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
+        )
+        MedicionPeso.objects.create(
+            usuario=usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
+        )
+
+        respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
+        contenido = respuesta.content.decode()
+
+        bloque_bascula = re.search(r'id="peso-bascula".*?</p>', contenido, re.S)
+        bloque_calculo = re.search(r'id="peso-calculo".*?</p>', contenido, re.S)
+        self.assertIsNotNone(bloque_bascula, "falta el marcador #peso-bascula en la pantalla")
+        self.assertIsNotNone(bloque_calculo, "falta el marcador #peso-calculo en la pantalla")
+
+        # LANGUAGE_CODE="es": la plantilla pinta los decimales con coma, no con punto.
+        self.assertIn("92,8", bloque_bascula.group())
+        self.assertNotIn("93,4", bloque_bascula.group())
+        self.assertIn("93,4", bloque_calculo.group())
+        self.assertNotIn("92,8", bloque_calculo.group())
+
+
+class AislamientoDePesoTests(PruebaConRegistroAbierto):
+    """
+    R7/§8 "Qué NO debe poder jamás" — nadie apunta ni borra el peso de otra persona con
+    cuenta propia, tampoco llamando al servidor con el id exacto. Siempre 404, nunca 403
+    (mismo principio que `perfiles/acceso.py` ya prueba para el perfil, unidad 004).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.client.logout()
+
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
+        )
+        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.client.logout()
+
+        # Alejandro la acepta: quedan en el MISMO hogar (R7 presupone que comparten hogar; si
+        # ni siquiera eso, con más razón sigue sin poder tocar su peso).
+        self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
+        from hogares.models import SolicitudEntrada
+
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
+        self.euridice.refresh_from_db()
+        self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
+
+    def test_alejandro_no_puede_ver_la_pantalla_de_peso_de_euridice(self):
+        respuesta = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_alejandro_no_puede_apuntar_peso_a_euridice_llamando_al_servidor(self):
+        mediciones_antes = MedicionPeso.objects.filter(usuario=self.euridice).count()
+
+        respuesta = self.client.post(
+            f"/perfiles/{self.euridice.id}/peso/apuntar/",
+            {
+                "fecha": timezone.localdate().isoformat(),
+                "peso_kg": "50",
+                "grasa_pct": "",
+                "cintura_cm": "",
+            },
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(
+            MedicionPeso.objects.filter(usuario=self.euridice).count(), mediciones_antes
+        )
+
+    def test_alejandro_no_puede_borrar_una_medicion_de_euridice_llamando_al_servidor(self):
+        medicion = MedicionPeso.objects.filter(usuario=self.euridice).first()  # la del alta
+        self.assertIsNotNone(medicion)  # control
+
+        respuesta = self.client.post(f"/perfiles/{self.euridice.id}/peso/{medicion.id}/borrar/")
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertTrue(MedicionPeso.objects.filter(id=medicion.id).exists())
+
+    def test_el_404_es_igual_para_una_medicion_que_no_existe_que_para_una_ajena(self):
+        respuesta_inexistente = self.client.post(
+            f"/perfiles/{self.euridice.id}/peso/999999/borrar/"
+        )
+        medicion_ajena = MedicionPeso.objects.filter(usuario=self.euridice).first()
+        respuesta_ajena = self.client.post(
+            f"/perfiles/{self.euridice.id}/peso/{medicion_ajena.id}/borrar/"
+        )
+        self.assertEqual(respuesta_inexistente.status_code, respuesta_ajena.status_code)
+        self.assertEqual(respuesta_inexistente.status_code, 404)
+
+    def test_un_desconocido_sin_sesion_no_ve_ni_apunta_ni_borra_nada(self):
+        self.client.logout()
+        respuesta_ver = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+        respuesta_apuntar = self.client.post(f"/perfiles/{self.euridice.id}/peso/apuntar/")
+        respuesta_borrar = self.client.post(f"/perfiles/{self.euridice.id}/peso/1/borrar/")
+        # @login_required manda a iniciar sesión (302), nunca deja pasar la petición.
+        self.assertEqual(respuesta_ver.status_code, 302)
+        self.assertEqual(respuesta_apuntar.status_code, 302)
+        self.assertEqual(respuesta_borrar.status_code, 302)
+
+    def test_alejandro_no_puede_borrar_la_medicion_de_euridice_pasando_su_propio_usuario_id(self):
+        """
+        H2 de la revisión (2ª ronda) — el ataque que R7 nombra LITERALMENTE ("tampoco
+        llamando al servidor con el id exacto") no es probarlo con el `usuario_id` de
+        Euridice (eso muere en la PRIMERA puerta, `perfil_propio_o_404`, y ni siquiera llega
+        a mirar `medicion_id`): es Alejandro llamando con SU PROPIO `usuario_id` —de verdad
+        el suyo, pasa la primera puerta sin problema— pero colando el `medicion_id` de
+        Euridice en la URL. Sin el segundo cinturón de `borrar_peso`
+        (`get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)`, que exige
+        que la medición sea TAMBIÉN suya) esto borraría una medición ajena. Se comprobó a
+        mano que si ese filtro se cambia por `get_object_or_404(MedicionPeso, id=medicion_id)`
+        a secas, este test se pone en rojo (y la suite entera seguía en verde sin él antes de
+        este arreglo — el hueco que delató la revisión).
+        """
+        medicion_de_euridice = MedicionPeso.objects.filter(usuario=self.euridice).first()
+        self.assertIsNotNone(medicion_de_euridice)  # control
+
+        respuesta = self.client.post(
+            f"/perfiles/{self.alejandro.id}/peso/{medicion_de_euridice.id}/borrar/"
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertTrue(MedicionPeso.objects.filter(id=medicion_de_euridice.id).exists())
+
+
+class BorrarMedicionTests(PruebaConRegistroAbierto):
+    """R8/§6 Estados — borrar una medición equivocada la quita del histórico y el objetivo
+    del día se recalcula al momento con las que queden."""
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("euridice@example.com")
+        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        hoy = timezone.localdate()
+        self.buena = MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy, peso_kg=Decimal("62.0")
+        )
+        self.equivocada = MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("99.9")
+        )
+
+    def test_borrar_una_medicion_la_quita_del_historico(self):
+        respuesta = self.client.post(
+            f"/perfiles/{self.usuario.id}/peso/{self.equivocada.id}/borrar/"
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(MedicionPeso.objects.filter(id=self.equivocada.id).exists())
+        self.assertTrue(MedicionPeso.objects.filter(id=self.buena.id).exists())
+
+    def test_borrar_una_medicion_recalcula_el_objetivo_al_momento(self):
+        resultado_antes = calcular_objetivo_del_dia(self.usuario)  # media con la de 99,9 kg
+
+        self.client.post(f"/perfiles/{self.usuario.id}/peso/{self.equivocada.id}/borrar/")
+
+        resultado_despues = calcular_objetivo_del_dia(self.usuario)
+        self.assertNotEqual(resultado_antes["calorias"], resultado_despues["calorias"])
+
+
+class SinNingunaMedicionTests(PruebaConRegistroAbierto):
+    """
+    R9, caso límite (§6 Estados) — borrar la ÚLTIMA medición que quedaba no revienta ni
+    inventa un número: la app se queda "sin ninguna medición" y la pantalla lo dice con
+    claridad, invitando a apuntar una. Prohibido resolverlo devolviendo el peso a `Perfil`
+    (nota de alcance de la especificación): este test comprueba que sigue sin existir ese
+    campo (ver también `FormularioPerfilNoPideElPesoTests` de la unidad 004, más arriba).
+    """
+
+    def test_borrar_la_ultima_medicion_deja_sin_ninguna_y_no_revienta(self):
+        self.registrar_y_verificar("euridice@example.com")
+        usuario = Usuario.objects.get(email="euridice@example.com")
+        medicion = MedicionPeso.objects.get(usuario=usuario)  # la única, la del alta
+
+        respuesta = self.client.post(f"/perfiles/{usuario.id}/peso/{medicion.id}/borrar/")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(MedicionPeso.objects.filter(usuario=usuario).exists())
+        self.assertIsNone(calcular_objetivo_del_dia(usuario))  # no revienta, no inventa nada
+        self.assertIsNone(ultima_medicion(usuario))
+        self.assertContains(respuesta, "ninguna medici")  # el mensaje del estado, en pantalla
+
+    def test_la_pantalla_de_peso_sin_mediciones_no_revienta_al_entrar(self):
+        self.registrar_y_verificar("euridice@example.com")
+        usuario = Usuario.objects.get(email="euridice@example.com")
+        MedicionPeso.objects.get(usuario=usuario).delete()
+
+        respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "ninguna medici")
+
+    def test_el_peso_no_vuelve_a_ser_un_campo_de_perfil_para_resolver_este_estado(self):
+        """Nota de alcance de la especificación: prohibido por escrito. `Perfil` sigue sin
+        ningún campo de peso, esté como esté el histórico de mediciones."""
+        self.assertNotIn("peso_kg", FormularioPerfil().fields)
+        self.assertFalse(hasattr(Perfil, "peso_kg"))
+
+
+class DatosImposiblesAlApuntarPesoTests(PruebaConRegistroAbierto):
+    """R10, caso límite (R-63 del plano) — un peso de cero o negativo, una grasa fuera de
+    0-100 y una fecha futura se rechazan AL ENTRAR, con su mensaje, sin llegar a la base de
+    datos."""
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("euridice@example.com")
+        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+
+    def _apuntar(self, **campos):
+        payload = {
+            "fecha": timezone.localdate().isoformat(),
+            "peso_kg": "60",
+            "grasa_pct": "",
+            "cintura_cm": "",
+            **campos,
+        }
+        return self.client.post(f"/perfiles/{self.usuario.id}/peso/apuntar/", payload)
+
+    def test_peso_cero_se_rechaza_sin_llegar_a_la_base_de_datos(self):
+        respuesta = self._apuntar(peso_kg="0")
+        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertIn("peso_kg", respuesta.context["form"].errors)
+
+    def test_peso_negativo_se_rechaza_sin_llegar_a_la_base_de_datos(self):
+        respuesta = self._apuntar(peso_kg="-5")
+        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertIn("peso_kg", respuesta.context["form"].errors)
+
+    def test_grasa_por_encima_de_cien_se_rechaza(self):
+        respuesta = self._apuntar(grasa_pct="101")
+        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertIn("grasa_pct", respuesta.context["form"].errors)
+
+    def test_grasa_negativa_se_rechaza(self):
+        respuesta = self._apuntar(grasa_pct="-1")
+        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertIn("grasa_pct", respuesta.context["form"].errors)
+
+    def test_fecha_futura_se_rechaza(self):
+        fecha_futura = (timezone.localdate() + timedelta(days=1)).isoformat()
+        respuesta = self._apuntar(fecha=fecha_futura)
+        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertIn("fecha", respuesta.context["form"].errors)
+
+    def test_el_error_senala_el_campo_concreto_que_esta_mal(self):
+        """"Se avisa de cuál está mal": consistente con R11 de la unidad 004
+        (`test_el_error_senala_el_campo_concreto_que_esta_mal` de más arriba)."""
+        respuesta = self._apuntar(peso_kg="-5")
+        self.assertIn("peso_kg", respuesta.context["form"].errors)
+        self.assertNotIn("grasa_pct", respuesta.context["form"].errors)
+
+
+class LogicaDeMedicionesTests(TestCase):
+    """
+    Unit tests directos de `perfiles/logica.py` (sin pasar por HTTP), para las piezas nuevas
+    de la unidad 006 que no tienen ya una red de HTTP arriba: `apuntar_medicion` hace upsert
+    de verdad (no dos `create`), y `ultima_medicion` es un número DISTINTO del que calcula
+    `peso_medio_7_dias` (la base misma de R6).
+    """
+
+    def setUp(self):
+        self.usuario = Usuario.objects.create_user(
+            email="directo@example.com", password="una-clave-de-verdad-2026"
+        )
+
+    def test_apuntar_medicion_dos_veces_el_mismo_dia_actualiza_en_vez_de_duplicar(self):
+        hoy = timezone.localdate()
+        apuntar_medicion(self.usuario, {"fecha": hoy, "peso_kg": Decimal("80.0")})
+        apuntar_medicion(self.usuario, {"fecha": hoy, "peso_kg": Decimal("81.5")})
+
+        mediciones = MedicionPeso.objects.filter(usuario=self.usuario)
+        self.assertEqual(mediciones.count(), 1)
+        self.assertEqual(mediciones.first().peso_kg, Decimal("81.5"))
+
+    def test_apuntar_medicion_con_grasa_y_cintura_las_guarda(self):
+        medicion = apuntar_medicion(
+            self.usuario,
+            {
+                "fecha": timezone.localdate(),
+                "peso_kg": Decimal("80.0"),
+                "grasa_pct": Decimal("20.5"),
+                "cintura_cm": Decimal("90.0"),
+            },
+        )
+        self.assertEqual(medicion.grasa_pct, Decimal("20.5"))
+        self.assertEqual(medicion.cintura_cm, Decimal("90.0"))
+
+    def test_ultima_medicion_es_la_mas_reciente_por_fecha_no_la_de_mayor_peso(self):
+        hoy = timezone.localdate()
+        MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy - timedelta(days=5), peso_kg=Decimal("99.0"))
+        reciente = MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=Decimal("80.0"))
+
+        self.assertEqual(ultima_medicion(self.usuario), reciente)
+
+    def test_ultima_medicion_sin_ninguna_es_none(self):
+        self.assertIsNone(ultima_medicion(self.usuario))
+
+    def test_borrar_medicion_la_elimina_de_verdad(self):
+        medicion = MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=timezone.localdate(), peso_kg=Decimal("80.0")
+        )
+        borrar_medicion(medicion)
+        self.assertFalse(MedicionPeso.objects.filter(id=medicion.id).exists())
+
+    def test_ultima_medicion_y_peso_medio_7_dias_son_numeros_distintos_cuando_difieren(self):
+        """La base de R6: si la última pesada y la media de la semana difieren, las dos
+        funciones tienen que devolver valores DISTINTOS entre sí (nunca el mismo número por
+        casualidad de la implementación)."""
+        hoy = timezone.localdate()
+        MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
+        )
+        MedicionPeso.objects.create(
+            usuario=self.usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
+        )
+
+        self.assertEqual(ultima_medicion(self.usuario).peso_kg, Decimal("92.8"))
+        self.assertEqual(peso_medio_7_dias(self.usuario), 93.4)
+        self.assertNotEqual(ultima_medicion(self.usuario).peso_kg, peso_medio_7_dias(self.usuario))
+
+
+class RespuestaHTMXDelHistoricoTests(PruebaConRegistroAbierto):
+    """
+    Caso límite del "Cómo" de la especificación (punto 5: "HTMX para apuntar sin recargar,
+    como ya hace la 005"): con la cabecera `HX-Request`, la respuesta es SOLO el trozo del
+    histórico (nunca la página entera, para que HTMX pueda "no recargar nada más"); sin ella,
+    sigue siendo una página completa y válida — mismo control negativo que ya tiene
+    `RecalculoAlMomentoTests.test_sin_cabecera_hx_devuelve_la_pagina_completa` para el perfil.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("euridice@example.com")
+        self.usuario = Usuario.objects.get(email="euridice@example.com")
+
+    def _payload(self):
+        return {
+            "fecha": timezone.localdate().isoformat(),
+            "peso_kg": "61.4",
+            "grasa_pct": "",
+            "cintura_cm": "",
+        }
+
+    def test_con_htmx_la_respuesta_es_solo_el_trozo_del_historico(self):
+        respuesta = self.client.post(
+            f"/perfiles/{self.usuario.id}/peso/apuntar/",
+            self._payload(),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertNotIn("<!DOCTYPE html>", contenido)
+        self.assertNotIn("Crear cuenta", contenido)  # texto que solo sale en la barra de arriba
+        self.assertIn('id="historico-de-peso"', contenido)
+
+    def test_sin_htmx_la_respuesta_es_la_pagina_completa(self):
+        respuesta = self.client.post(f"/perfiles/{self.usuario.id}/peso/apuntar/", self._payload())
+        self.assertContains(respuesta, "<!DOCTYPE html>", status_code=200)
+
+    def test_borrar_con_htmx_tambien_devuelve_solo_el_trozo_del_historico(self):
+        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+
+        respuesta = self.client.post(
+            f"/perfiles/{self.usuario.id}/peso/{medicion.id}/borrar/",
+            HTTP_HX_REQUEST="true",
+        )
+
+        contenido = respuesta.content.decode()
+        self.assertNotIn("<!DOCTYPE html>", contenido)
+        self.assertIn('id="historico-de-peso"', contenido)
+
+    def test_el_enlace_de_conveniencia_peso_mio_resuelve_al_propio_sin_pasar_el_id(self):
+        """`perfiles:peso_mio` (usado desde la barra de navegación, `templates/base.html`) —
+        mismo patrón que `perfiles:ver_mio` de la unidad 004."""
+        respuesta = self.client.get("/perfiles/peso/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Tu peso")
+
+
+class FormularioMedicionTests(TestCase):
+    """R10/R11 — validación de `FormularioMedicion` a nivel de formulario, para que el
+    mensaje salga ANTES de tocar la base de datos y señalando el campo exacto (mismo patrón
+    que `clean_altura_cm` de `FormularioPerfil`, unidad 004)."""
+
+    def _datos_base(self, **campos):
+        return {
+            "fecha": timezone.localdate().isoformat(),
+            "peso_kg": "70",
+            "grasa_pct": "",
+            "cintura_cm": "",
+            **campos,
+        }
+
+    def test_formulario_valido_con_solo_el_peso(self):
+        form = FormularioMedicion(self._datos_base())
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_peso_cero_no_es_valido(self):
+        form = FormularioMedicion(self._datos_base(peso_kg="0"))
+        self.assertFalse(form.is_valid())
+        self.assertIn("peso_kg", form.errors)
+
+    def test_grasa_100_es_valida_grasa_101_no(self):
+        self.assertTrue(FormularioMedicion(self._datos_base(grasa_pct="100")).is_valid())
+        self.assertFalse(FormularioMedicion(self._datos_base(grasa_pct="101")).is_valid())
+
+    def test_grasa_0_es_valida(self):
+        self.assertTrue(FormularioMedicion(self._datos_base(grasa_pct="0")).is_valid())
+
+    def test_fecha_de_hoy_es_valida_fecha_futura_no(self):
+        self.assertTrue(FormularioMedicion(self._datos_base()).is_valid())
+        fecha_futura = (timezone.localdate() + timedelta(days=1)).isoformat()
+        self.assertFalse(FormularioMedicion(self._datos_base(fecha=fecha_futura)).is_valid())
+
+    def test_el_campo_fecha_sale_relleno_con_hoy_en_formato_que_el_input_date_entiende(self):
+        """
+        H1 de la revisión (2ª ronda): un formulario recién abierto (sin datos, `is_bound`
+        `False`) tiene que traer "hoy" YA puesto en el campo `fecha` — el gesto tiene que ser
+        corto (§8, "descalzo y con prisa"), sin que la persona tenga que teclear la fecha cada
+        vez. Con `LANGUAGE_CODE="es"` Django localiza los `DateField` por defecto y pinta
+        `03/08/2026`; un `<input type="date">` SOLO entiende `yyyy-mm-dd` en su `value` y
+        descarta cualquier otra cosa, dejando el campo VACÍO en el navegador aunque Python
+        tenga el valor correcto por dentro.
+
+        Trampa real encontrada escribiendo ESTE mismo test: `MedicionPeso.fecha` tiene un
+        `default` CALLABLE (`timezone.localdate`), así que Django ya renderiza por su cuenta
+        un segundo `<input type="hidden" name="initial-fecha" value="2026-08-03">` (su propio
+        mecanismo de "initial oculto" para defaults callable, nada que ver con nuestro
+        `__init__`) que SIEMPRE lleva el valor en ISO — un primer intento de este test con
+        `assertIn('value="...."', html)` a secas daba positivo por ESE campo oculto incluso
+        con el bug del `<input type="date">` visible sin arreglar. Por eso aquí se aísla con
+        una regexp el input `id="id_fecha"` en concreto (el visible, el que de verdad rellena
+        el navegador), no cualquier `value="yyyy-mm-dd"` suelto en el HTML.
+        """
+        html = str(FormularioMedicion()["fecha"])
+        input_visible = re.search(r'<input type="date"[^>]*id="id_fecha"[^>]*>', html)
+        self.assertIsNotNone(input_visible, f"no se encontró el input visible en: {html!r}")
+
+        hoy_iso = timezone.localdate().isoformat()  # yyyy-mm-dd, lo único que entiende el input
+        self.assertIn(f'value="{hoy_iso}"', input_visible.group())
+
+
+class LaPantallaDePesoProponeHoyDeFabricaTests(PruebaConRegistroAbierto):
+    """H1 de la revisión (2ª ronda), la misma comprobación pero de punta a punta por HTTP:
+    la pantalla real que ve la persona (no solo el formulario en aislamiento) trae el campo
+    "Día" ya relleno con hoy, en el formato que el navegador necesita."""
+
+    def test_la_pagina_de_peso_trae_el_campo_dia_ya_relleno_con_hoy(self):
+        self.registrar_y_verificar("euridice@example.com")
+        usuario = Usuario.objects.get(email="euridice@example.com")
+
+        respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
+        contenido = respuesta.content.decode()
+
+        # Mismo cuidado que en FormularioMedicionTests: aislar el input VISIBLE (`id_fecha`),
+        # no el `initial-fecha` oculto que Django añade solo porque el modelo tiene un
+        # `default` callable, y que siempre lleva la fecha en ISO pase lo que pase con el
+        # widget visible.
+        input_visible = re.search(r'<input type="date"[^>]*id="id_fecha"[^>]*>', contenido)
+        self.assertIsNotNone(input_visible, "no se encontró el input de fecha visible")
+
+        hoy_iso = timezone.localdate().isoformat()
+        self.assertIn(f'value="{hoy_iso}"', input_visible.group())

@@ -1,7 +1,8 @@
 """
 La lógica de negocio del perfil: crear el perfil y la primera medición al dar de alta a
 alguien (R7), calcular el objetivo del día uniendo el perfil de una persona con su peso
-reciente (R7/R34), y qué pasa al cambiar de objetivo (R5/R6). Vive separada de las vistas,
+reciente (R7/R34), qué pasa al cambiar de objetivo (R5/R6), y —desde la unidad 006— apuntar y
+borrar mediciones de peso (R-63 a R-66 de apuntar-el-peso.md). Vive separada de las vistas,
 igual que `hogares/logica.py`: las vistas se limitan a "recibir la petición HTTP y llamar
 aquí" — es la misma convención que ya sigue esta app (ver AGENTS.md del repo).
 
@@ -9,6 +10,13 @@ R8 (arquitectura): el CÁLCULO en sí —la fórmula— vive entera en `servicio
 no toca la base de datos. Este fichero es la pieza que SÍ toca la base de datos (consulta el
 peso reciente, lee el perfil) y luego llama a `servicios.metabolismo` con los números ya
 reunidos. Ninguna vista llama a `servicios.metabolismo` directamente: siempre pasan por aquí.
+
+Unidad 006, punto 6 del "Cómo" de su especificación — dos relojes en el mismo cálculo (hallazgo
+de la unidad 004): `calcular_edad` (dentro de `servicios.metabolismo`) usaba `date.today()` y
+`peso_medio_7_dias` usa `timezone.localdate()`. Se unifican aquí, sin tocar
+`servicios/metabolismo.py` (sigue sin saber nada de Django, R8): `calcular_objetivo_del_dia`
+pasa `hoy=timezone.localdate()` explícito en vez de dejar que la fórmula caiga a su
+`date.today()` por defecto — un único reloj para toda la cadena.
 """
 
 from datetime import timedelta
@@ -98,6 +106,9 @@ def calcular_objetivo_del_dia(usuario):
         actividad=perfil.actividad,
         objetivo=perfil.objetivo,
         ajuste_pct=perfil.ajuste_pct,
+        # Unidad 006, reloj unificado (ver el docstring del módulo): el mismo
+        # `timezone.localdate()` que ya decide la ventana de `peso_medio_7_dias`.
+        hoy=timezone.localdate(),
     )
     resultado["peso_kg"] = round(peso_kg, 1)
     return resultado
@@ -115,3 +126,47 @@ def cambiar_objetivo(perfil, objetivo_nuevo):
     perfil.objetivo = objetivo_nuevo
     perfil.ajuste_pct = metabolismo.OBJETIVOS[objetivo_nuevo]["ajuste_pct"]
     return perfil
+
+
+def apuntar_medicion(usuario, datos):
+    """
+    R-63/G-130/Q-110 — apunta una medición de `usuario`, SUSTITUYENDO la del mismo día si ya
+    existía: `update_or_create` por (usuario, fecha), nunca un `create` suelto que reventaría
+    contra la restricción `una_medicion_por_persona_y_dia` del modelo (R2: "pesarse dos veces
+    la misma mañana no son dos datos, es una corrección", G-130). `datos` es el
+    `cleaned_data` de `FormularioMedicion`, ya validado (R10/R11: peso positivo, grasa 0-100,
+    fecha no futura, rechazados antes de llegar aquí).
+    """
+    medicion, _ = MedicionPeso.objects.update_or_create(
+        usuario=usuario,
+        fecha=datos["fecha"],
+        defaults={
+            "peso_kg": datos["peso_kg"],
+            "grasa_pct": datos.get("grasa_pct"),
+            "cintura_cm": datos.get("cintura_cm"),
+        },
+    )
+    return medicion
+
+
+def ultima_medicion(usuario):
+    """
+    R6/Q-112 — "lo que marcó la báscula": la medición más reciente de `usuario` (la de fecha
+    mayor; `Meta.ordering = ["-fecha"]` del modelo ya deja `.first()` en ese orden), o `None`
+    si todavía no tiene ninguna (R9, estado "sin ninguna medición"). Es, a propósito, un
+    número DISTINTO de `peso_medio_7_dias`: esta función nunca promedia nada, solo mira la
+    última fila.
+    """
+    return usuario.mediciones_peso.first()
+
+
+def borrar_medicion(medicion):
+    """
+    R8/R9 (§6 Estados) — borra una medición equivocada. Quien llama es responsable de haber
+    comprobado antes que es del usuario correcto (la puerta de `perfiles/acceso.py`, R7); esta
+    función no vuelve a mirarlo, igual que `cambiar_objetivo` confía en quien la llama. Tras
+    borrar, el objetivo del día se recalcula solo con lo que quede la próxima vez que se
+    llame a `calcular_objetivo_del_dia` (que devuelve `None` sin reventar si ya no queda
+    ninguna, R9): esta función no recalcula nada, solo borra.
+    """
+    medicion.delete()
