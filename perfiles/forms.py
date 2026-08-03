@@ -77,7 +77,15 @@ class FormularioMedicion(forms.ModelForm):
     class Meta:
         model = MedicionPeso
         fields = ["fecha", "peso_kg", "grasa_pct", "cintura_cm"]
-        widgets = {"fecha": forms.DateInput(attrs={"type": "date"})}
+        # H1 de la revisión (2ª ronda): un `<input type="date">` SOLO acepta `yyyy-mm-dd` en
+        # su atributo `value`; con `LANGUAGE_CODE="es"` Django localiza por defecto y pinta
+        # `03/08/2026`, que el navegador descarta silenciosamente y deja el campo VACÍO (y es
+        # obligatorio: el "gesto corto" del §8 del plano se rompía en el primer campo). El
+        # `format="%Y-%m-%d"` fuerza el formato que el input HTML5 entiende, ignorando la
+        # localización del idioma para ESTE widget en concreto.
+        widgets = {
+            "fecha": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+        }
         labels = {
             "fecha": "Día",
             "peso_kg": "Peso (kg)",
@@ -89,7 +97,8 @@ class FormularioMedicion(forms.ModelForm):
         super().__init__(*args, **kwargs)
         # Un formulario recién abierto (sin datos enviados todavía) propone "hoy" de fábrica:
         # el gesto tiene que ser corto (§8, "descalzo y con prisa"), no obligar a teclear la
-        # fecha cada vez.
+        # fecha cada vez. `input_formats`/`format` del widget (arriba) es lo que hace que ese
+        # valor inicial se pinte de verdad en el HTML, no solo que exista en Python.
         if not self.is_bound:
             self.fields["fecha"].initial = timezone.localdate()
 

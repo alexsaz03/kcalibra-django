@@ -94,8 +94,11 @@
             <li class="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-sm">
               <span>
                 <strong>{{ medicion.fecha }}</strong> — {{ medicion.peso_kg }} kg
-                {% if medicion.grasa_pct %}· {{ medicion.grasa_pct }}% grasa{% endif %}
-                {% if medicion.cintura_cm %}· {{ medicion.cintura_cm }} cm cintura{% endif %}
+                {# H4 de la revisión (2ª ronda): "if medicion.grasa_pct" a secas es falso    #}
+                {# para Decimal("0.0") (grasa 0%, un valor válido de R10) y se lo tragaría   #}
+                {# sin enseñarlo; "!= None" sí distingue "0" de "no se apuntó".              #}
+                {% if medicion.grasa_pct != None %}· {{ medicion.grasa_pct }}% grasa{% endif %}
+                {% if medicion.cintura_cm != None %}· {{ medicion.cintura_cm }} cm cintura{% endif %}
               </span>
               <form
                 hx-post="{% url 'perfiles:borrar_peso' usuario_objetivo.id medicion.id %}"

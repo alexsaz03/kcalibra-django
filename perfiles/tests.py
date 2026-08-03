@@ -614,6 +614,19 @@ class ApuntarPesoTests(PruebaConRegistroAbierto):
         self.assertContains(respuesta_historico, "18,2")
         self.assertContains(respuesta_historico, "82,3")
 
+    def test_grasa_0_apuntada_se_ve_en_el_historico_no_se_esconde(self):
+        """
+        H4 de la revisión (2ª ronda) — 0% de grasa es un valor válido (R10: 0-100 inclusive,
+        `test_grasa_0_es_valida` en `FormularioMedicionTests` ya lo prueba a nivel de
+        formulario). `{% if medicion.grasa_pct %}` en la plantilla trataría `Decimal("0.0")`
+        como "falso" y se comería el dato en el histórico, aunque SÍ se guardó — un 0 no es
+        lo mismo que "no se apuntó grasa". Este test comprueba la PANTALLA, no el modelo.
+        """
+        respuesta = self._apuntar(peso_kg="70.0", grasa_pct="0", cintura_cm="")
+
+        respuesta_historico = self.client.get(f"/perfiles/{self.usuario.id}/peso/")
+        self.assertContains(respuesta_historico, "0,0% grasa")  # "0,0": Decimal(0.0) en es
+
 
 class SustituirMedicionDelMismoDiaTests(PruebaConRegistroAbierto):
     """
@@ -697,6 +710,15 @@ class UnMalDiaDeBasculaNoDescolocaElPlanTests(PruebaConRegistroAbierto):
         # Y de verdad se movió (para que la aserción de arriba no pase "por casualidad" con
         # dos números iguales): la media SÍ se desplazó un poco con el dato de hoy.
         self.assertNotEqual(resultado_antes["calorias"], resultado_despues["calorias"])
+
+        # H3 de la revisión (2ª ronda): el techo del 3% de Q-111 por sí solo NO distingue
+        # "se calculó con la MEDIA de 7 días" (R4/C-70, lo que el criterio exige) de "se
+        # calculó con la ÚLTIMA medición suelta" (justo lo que C-70/G-132 PROHÍBEN) — con
+        # estos números concretos, la media da un cambio del 0,17% y la última suelta del
+        # 1,06%: ambos caben bajo el 3%, así que un `assertLessEqual` a secas pasaría igual
+        # con la implementación prohibida. Clavar el PESO con el que se recalculó (93,3 kg,
+        # la media de (93×6 + 95)/7, NO los 95 kg sueltos de hoy) es lo que mata ese mutante.
+        self.assertEqual(resultado_despues["peso_kg"], 93.3)
 
 
 class UnaSolaMedicionEsLaQueSeUsaTests(PruebaConRegistroAbierto):
@@ -843,6 +865,30 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.assertEqual(respuesta_ver.status_code, 302)
         self.assertEqual(respuesta_apuntar.status_code, 302)
         self.assertEqual(respuesta_borrar.status_code, 302)
+
+    def test_alejandro_no_puede_borrar_la_medicion_de_euridice_pasando_su_propio_usuario_id(self):
+        """
+        H2 de la revisión (2ª ronda) — el ataque que R7 nombra LITERALMENTE ("tampoco
+        llamando al servidor con el id exacto") no es probarlo con el `usuario_id` de
+        Euridice (eso muere en la PRIMERA puerta, `perfil_propio_o_404`, y ni siquiera llega
+        a mirar `medicion_id`): es Alejandro llamando con SU PROPIO `usuario_id` —de verdad
+        el suyo, pasa la primera puerta sin problema— pero colando el `medicion_id` de
+        Euridice en la URL. Sin el segundo cinturón de `borrar_peso`
+        (`get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)`, que exige
+        que la medición sea TAMBIÉN suya) esto borraría una medición ajena. Se comprobó a
+        mano que si ese filtro se cambia por `get_object_or_404(MedicionPeso, id=medicion_id)`
+        a secas, este test se pone en rojo (y la suite entera seguía en verde sin él antes de
+        este arreglo — el hueco que delató la revisión).
+        """
+        medicion_de_euridice = MedicionPeso.objects.filter(usuario=self.euridice).first()
+        self.assertIsNotNone(medicion_de_euridice)  # control
+
+        respuesta = self.client.post(
+            f"/perfiles/{self.alejandro.id}/peso/{medicion_de_euridice.id}/borrar/"
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertTrue(MedicionPeso.objects.filter(id=medicion_de_euridice.id).exists())
 
 
 class BorrarMedicionTests(PruebaConRegistroAbierto):
@@ -1136,3 +1182,53 @@ class FormularioMedicionTests(TestCase):
         self.assertTrue(FormularioMedicion(self._datos_base()).is_valid())
         fecha_futura = (timezone.localdate() + timedelta(days=1)).isoformat()
         self.assertFalse(FormularioMedicion(self._datos_base(fecha=fecha_futura)).is_valid())
+
+    def test_el_campo_fecha_sale_relleno_con_hoy_en_formato_que_el_input_date_entiende(self):
+        """
+        H1 de la revisión (2ª ronda): un formulario recién abierto (sin datos, `is_bound`
+        `False`) tiene que traer "hoy" YA puesto en el campo `fecha` — el gesto tiene que ser
+        corto (§8, "descalzo y con prisa"), sin que la persona tenga que teclear la fecha cada
+        vez. Con `LANGUAGE_CODE="es"` Django localiza los `DateField` por defecto y pinta
+        `03/08/2026`; un `<input type="date">` SOLO entiende `yyyy-mm-dd` en su `value` y
+        descarta cualquier otra cosa, dejando el campo VACÍO en el navegador aunque Python
+        tenga el valor correcto por dentro.
+
+        Trampa real encontrada escribiendo ESTE mismo test: `MedicionPeso.fecha` tiene un
+        `default` CALLABLE (`timezone.localdate`), así que Django ya renderiza por su cuenta
+        un segundo `<input type="hidden" name="initial-fecha" value="2026-08-03">` (su propio
+        mecanismo de "initial oculto" para defaults callable, nada que ver con nuestro
+        `__init__`) que SIEMPRE lleva el valor en ISO — un primer intento de este test con
+        `assertIn('value="...."', html)` a secas daba positivo por ESE campo oculto incluso
+        con el bug del `<input type="date">` visible sin arreglar. Por eso aquí se aísla con
+        una regexp el input `id="id_fecha"` en concreto (el visible, el que de verdad rellena
+        el navegador), no cualquier `value="yyyy-mm-dd"` suelto en el HTML.
+        """
+        html = str(FormularioMedicion()["fecha"])
+        input_visible = re.search(r'<input type="date"[^>]*id="id_fecha"[^>]*>', html)
+        self.assertIsNotNone(input_visible, f"no se encontró el input visible en: {html!r}")
+
+        hoy_iso = timezone.localdate().isoformat()  # yyyy-mm-dd, lo único que entiende el input
+        self.assertIn(f'value="{hoy_iso}"', input_visible.group())
+
+
+class LaPantallaDePesoProponeHoyDeFabricaTests(PruebaConRegistroAbierto):
+    """H1 de la revisión (2ª ronda), la misma comprobación pero de punta a punta por HTTP:
+    la pantalla real que ve la persona (no solo el formulario en aislamiento) trae el campo
+    "Día" ya relleno con hoy, en el formato que el navegador necesita."""
+
+    def test_la_pagina_de_peso_trae_el_campo_dia_ya_relleno_con_hoy(self):
+        self.registrar_y_verificar("euridice@example.com")
+        usuario = Usuario.objects.get(email="euridice@example.com")
+
+        respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
+        contenido = respuesta.content.decode()
+
+        # Mismo cuidado que en FormularioMedicionTests: aislar el input VISIBLE (`id_fecha`),
+        # no el `initial-fecha` oculto que Django añade solo porque el modelo tiene un
+        # `default` callable, y que siempre lleva la fecha en ISO pase lo que pase con el
+        # widget visible.
+        input_visible = re.search(r'<input type="date"[^>]*id="id_fecha"[^>]*>', contenido)
+        self.assertIsNotNone(input_visible, "no se encontró el input de fecha visible")
+
+        hoy_iso = timezone.localdate().isoformat()
+        self.assertIn(f'value="{hoy_iso}"', input_visible.group())
