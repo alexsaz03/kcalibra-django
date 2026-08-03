@@ -1,6 +1,8 @@
 """
 Las pantallas del perfil (R3, R7, R8, R9): ver los datos y las calorías del día de cualquier
-persona del hogar, y cambiarlos solo si son los propios.
+persona del hogar, y cambiarlos solo si son los propios. Desde la unidad 006, también el
+histórico de peso: apuntar una medición y borrar una equivocada (R1-R10 de
+apuntar-el-peso.md), solo la propia (R7 — misma puerta que el resto del fichero).
 
 R8, la regla que más importa aquí: el CÁLCULO no se hace en ningún momento en este fichero.
 Estas vistas solo reciben la petición HTTP, llaman a `perfiles.logica` (que a su vez llama a
@@ -9,14 +11,22 @@ Estas vistas solo reciben la petición HTTP, llaman a `perfiles.logica` (que a s
 """
 
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
 from .acceso import perfil_propio_o_404, perfil_visible_o_404
-from .forms import FormularioPerfil
-from .logica import calcular_objetivo_del_dia, cambiar_objetivo
+from .forms import FormularioMedicion, FormularioPerfil
+from .logica import (
+    apuntar_medicion,
+    borrar_medicion,
+    calcular_objetivo_del_dia,
+    cambiar_objetivo,
+    ultima_medicion,
+)
+from .models import MedicionPeso
 
 NOMBRE_DEL_PARTIAL_DE_LA_TARJETA = "perfiles/ver.html#tarjeta_perfil"
+NOMBRE_DEL_PARTIAL_DEL_HISTORICO = "perfiles/peso.html#historico_de_peso"
 
 
 @login_required
@@ -79,5 +89,87 @@ def actualizar_perfil(request, usuario_id):
         NOMBRE_DEL_PARTIAL_DE_LA_TARJETA
         if request.headers.get("HX-Request")
         else "perfiles/ver.html"
+    )
+    return render(request, plantilla, contexto)
+
+
+def _contexto_peso(usuario, form=None):
+    """
+    Reúne lo que necesita la pantalla del histórico de peso: el formulario (uno nuevo si no
+    se pasa uno ya validado/con errores), el histórico completo, la última medición y el
+    objetivo del día — R6/Q-112: `ultima` (lo que marcó la báscula) y `resultado["peso_kg"]`
+    (el peso con el que se calcula) son DOS valores distintos, cada uno con su origen, para
+    que la plantilla los rotule aparte sin confundirlos.
+    """
+    return {
+        "usuario_objetivo": usuario,
+        "form": form if form is not None else FormularioMedicion(),
+        "mediciones": usuario.mediciones_peso.all(),
+        "ultima": ultima_medicion(usuario),
+        "resultado": calcular_objetivo_del_dia(usuario),
+    }
+
+
+@login_required
+def ver_peso(request, usuario_id=None):
+    """
+    R1/R3/R6/R9 (superficie de uso, apuntar-el-peso.md) — el histórico de peso de
+    `usuario_id`, y el formulario para apuntar una pesada nueva. Sin `usuario_id`, el propio
+    (enlace de la barra de navegación). R7: solo el propio, nunca el de otra persona del
+    hogar — a diferencia de `ver_perfil` (que SÍ deja verlo a todo el hogar), aquí
+    `perfil_propio_o_404` gatea también la LECTURA, no solo la escritura: el peso es un dato
+    delicado que "lo ve el hogar y nadie más" (§8 del plano) por la vía de las calorías ya
+    calculadas en `/perfiles/<id>/` — el histórico de pesadas en sí, con sus fechas
+    concretas, no se ha pedido que se comparta, así que no se inventa esa pantalla.
+    """
+    usuario_id = usuario_id if usuario_id is not None else request.user.id
+    perfil = perfil_propio_o_404(request, usuario_id)
+    return render(request, "perfiles/peso.html", _contexto_peso(perfil.usuario))
+
+
+@login_required
+@require_POST
+def apuntar_peso(request, usuario_id):
+    """
+    R1/R2/R3/R10 — apunta una medición (o sustituye la de hoy si ya existía, R2/G-130: lo hace
+    `apuntar_medicion` con su `update_or_create`). `perfil_propio_o_404` es la puerta de R7:
+    nadie apunta el peso de otra persona, tampoco llamando aquí con su id exacto — 404, nunca
+    403. Con HTMX, responde solo el trozo del histórico (mismo patrón que
+    `actualizar_perfil`); sin HTMX, la página completa.
+    """
+    perfil = perfil_propio_o_404(request, usuario_id)
+    form = FormularioMedicion(request.POST)
+    if form.is_valid():
+        apuntar_medicion(perfil.usuario, form.cleaned_data)
+        form = FormularioMedicion()  # formulario limpio, listo para la siguiente pesada
+
+    contexto = _contexto_peso(perfil.usuario, form=form)
+    plantilla = (
+        NOMBRE_DEL_PARTIAL_DEL_HISTORICO
+        if request.headers.get("HX-Request")
+        else "perfiles/peso.html"
+    )
+    return render(request, plantilla, contexto)
+
+
+@login_required
+@require_POST
+def borrar_peso(request, usuario_id, medicion_id):
+    """
+    R8/R9 — borra una medición equivocada; el objetivo del día se recalcula solo, con las que
+    queden (o "sin ninguna", R9, sin reventar). Doble cinturón de R7: `perfil_propio_o_404`
+    comprueba que `usuario_id` es quien pregunta, y el `get_object_or_404` de abajo exige
+    ADEMÁS que `medicion_id` sea SUYA — sin esto último, alguien podría apuntarse a sí mismo
+    (pasando su propio `usuario_id`) y colar el id de una medición ajena para borrarla.
+    """
+    perfil = perfil_propio_o_404(request, usuario_id)
+    medicion = get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)
+    borrar_medicion(medicion)
+
+    contexto = _contexto_peso(perfil.usuario)
+    plantilla = (
+        NOMBRE_DEL_PARTIAL_DEL_HISTORICO
+        if request.headers.get("HX-Request")
+        else "perfiles/peso.html"
     )
     return render(request, plantilla, contexto)
