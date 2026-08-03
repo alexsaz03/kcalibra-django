@@ -111,6 +111,11 @@ INSTALLED_APPS = [
     # docs/05-trabajo/004-perfil-y-objetivo-del-dia/especificacion.md del meta-repo. La
     # fórmula en sí NO vive aquí (R8): vive en `servicios/`, que esta unidad estrena.
     "perfiles",
+    # planes: el plan de comidas del día, apuntado a mano, y el Inicio de verdad. Unidad 005
+    # — ver docs/05-trabajo/005-plan-a-mano-e-inicio/especificacion.md del meta-repo. Es DEL
+    # HOGAR (G-43, a diferencia de perfiles): el primer modelo de negocio que cuelga de
+    # `hogares.ModeloDeHogar` (unidad 003).
+    "planes",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"

@@ -15,6 +15,7 @@ import unittest
 from datetime import date
 
 from servicios import metabolismo
+from servicios import planes
 
 HOY_DE_REFERENCIA = date(2026, 8, 2)
 
@@ -245,6 +246,103 @@ class MacrosNuncaNegativosTests(unittest.TestCase):
     def test_los_carbohidratos_nunca_bajan_de_cero(self):
         macros = metabolismo.calcular_macros(objetivo="mantener", calorias=1, peso_kg=200)
         self.assertGreaterEqual(macros["carbos_g"], 0)
+
+
+class SumarComidasTests(unittest.TestCase):
+    """
+    Unidad 005, R1/R8 — `servicios.planes.sumar_comidas` suma las 4 magnitudes de una lista de
+    comidas. Se prueba llamándola DIRECTAMENTE, sin base de datos ni vista (R8: "se prueban
+    llamándolos directamente").
+    """
+
+    def test_suma_las_cuatro_magnitudes_de_varias_comidas(self):
+        comidas = [
+            {"calorias": 500, "proteina_g": 30, "grasa_g": 15, "carbos_g": 50},
+            {"calorias": 700, "proteina_g": 40, "grasa_g": 20, "carbos_g": 80},
+        ]
+        totales = planes.sumar_comidas(comidas)
+        self.assertEqual(
+            totales,
+            {"calorias": 1200, "proteina_g": 70, "grasa_g": 35, "carbos_g": 130},
+        )
+
+    def test_una_lista_vacia_suma_cero_en_todo(self):
+        """R5 — "el anillo vacío": sin ninguna comida, el total es cero, no un error."""
+        totales = planes.sumar_comidas([])
+        self.assertEqual(
+            totales, {"calorias": 0, "proteina_g": 0, "grasa_g": 0, "carbos_g": 0}
+        )
+
+
+class CalcularPorcentajeCoberturaTests(unittest.TestCase):
+    """
+    R2/R3/C-79 — el % que el plan cubre del objetivo del día. El episodio de los planos:
+    Alejandro, 3.006 kcal de objetivo, plan de 2.800 kcal → en torno al 93%.
+    """
+
+    def test_el_episodio_de_alejandro_da_en_torno_al_93_por_ciento(self):
+        porcentaje = planes.calcular_porcentaje_cobertura(2800, 3006)
+        self.assertEqual(porcentaje, 93)
+
+    def test_sin_objetivo_no_revienta_por_cero_y_da_cero(self):
+        self.assertEqual(planes.calcular_porcentaje_cobertura(500, 0), 0)
+        self.assertEqual(planes.calcular_porcentaje_cobertura(500, None), 0)
+
+    def test_plan_vacio_frente_a_un_objetivo_real_da_cero(self):
+        self.assertEqual(planes.calcular_porcentaje_cobertura(0, 3006), 0)
+
+    def test_r9_un_plan_pasado_supera_el_100_por_ciento_sin_reventar(self):
+        """
+        R9 (caso límite) — un plan que suma MÁS que el objetivo no debe dar un porcentaje
+        absurdo (negativo, `inf`, una excepción): da un número por encima de 100, tal cual,
+        para que quien pinte el anillo decida cómo mostrarlo "pasado".
+        """
+        porcentaje = planes.calcular_porcentaje_cobertura(3600, 3006)
+        self.assertGreater(porcentaje, 100)
+        self.assertEqual(porcentaje, 120)
+
+
+class CalcularResumenDelDiaTests(unittest.TestCase):
+    """
+    R2/R3/R5/R8/R9 — la función que junta todo lo que necesita una tarjeta del Inicio: los
+    totales, el % de cobertura, si el plan está "pasado" (R9) y el % ya capado a 100 para
+    pintar el anillo sin desbordarlo (R9: "sin... anillos desbordados").
+    """
+
+    def test_con_plan_normal_no_esta_pasado_y_el_porcentaje_visual_es_el_mismo(self):
+        comidas = [{"calorias": 2800, "proteina_g": 0, "grasa_g": 0, "carbos_g": 0}]
+        resumen = planes.calcular_resumen_del_dia(comidas, 3006)
+        self.assertEqual(resumen["calorias"], 2800)
+        self.assertEqual(resumen["porcentaje"], 93)
+        self.assertEqual(resumen["porcentaje_visual"], 93)
+        self.assertFalse(resumen["pasado"])
+        self.assertTrue(resumen["tiene_comidas"])
+
+    def test_r9_un_plan_pasado_marca_pasado_y_capa_el_porcentaje_visual_a_100(self):
+        comidas = [{"calorias": 3600, "proteina_g": 0, "grasa_g": 0, "carbos_g": 0}]
+        resumen = planes.calcular_resumen_del_dia(comidas, 3006)
+        self.assertEqual(resumen["porcentaje"], 120)  # el dato real no se pierde (R9)
+        self.assertEqual(resumen["porcentaje_visual"], 100)  # pero el anillo no se desborda
+        self.assertTrue(resumen["pasado"])
+
+    def test_r5_sin_comidas_el_resumen_es_el_anillo_vacio(self):
+        resumen = planes.calcular_resumen_del_dia([], 3006)
+        self.assertEqual(resumen["calorias"], 0)
+        self.assertEqual(resumen["porcentaje"], 0)
+        self.assertFalse(resumen["pasado"])
+        self.assertFalse(resumen["tiene_comidas"])
+
+    def test_r3_el_resultado_depende_solo_de_las_comidas_y_el_objetivo_pasados(self):
+        """
+        R3 — "el anillo mide el plan, no lo comido": esta función pura no recibe (ni podría
+        leer) nada más que `comidas` y `calorias_objetivo`. Llamarla dos veces con los MISMOS
+        argumentos da SIEMPRE el mismo resultado — no hay ningún estado oculto (reloj, base de
+        datos, "lo comido") que pueda moverla.
+        """
+        comidas = [{"calorias": 1000, "proteina_g": 10, "grasa_g": 10, "carbos_g": 10}]
+        primera_llamada = planes.calcular_resumen_del_dia(comidas, 2000)
+        segunda_llamada = planes.calcular_resumen_del_dia(comidas, 2000)
+        self.assertEqual(primera_llamada, segunda_llamada)
 
 
 if __name__ == "__main__":

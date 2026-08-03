@@ -16,6 +16,7 @@ resultado sea el mismo lo ejecute quien lo ejecute.
 @source "../../cuentas/templates";
 @source "../../hogares/templates";
 @source "../../perfiles/templates";
+@source "../../planes/templates";
 
 /*
 Estilo base de los formularios (unidad 003, ampliado en la 004): allauth genera sus widgets

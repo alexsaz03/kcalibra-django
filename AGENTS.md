@@ -208,6 +208,37 @@ Para ver el perfil de otra persona de tu hogar (R9: se ve, pero no se puede camb
 `/hogares/mi-hogar/` y pulsa "Ver datos" junto a su correo, o ve directamente a
 `/perfiles/<su-id>/`.
 
+### 4.5. Apuntar el plan de hoy y ver el Inicio de verdad (unidad 005)
+
+Con dos cuentas ya en el mismo hogar (paso 4.2) y sus datos físicos puestos (paso 4.4), entra
+en `http://127.0.0.1:8000/` ("KCalibra" en la barra de arriba): ya no es la portada de
+"KCalibra está viva", es el Inicio de verdad — una tarjeta por persona del hogar, la tuya
+siempre la primera (R4), con tu número grande, tus macros y el anillo de cuánto cubre tu plan
+de hoy.
+
+1. **Sin plan puesto** (R5): la tarjeta enseña igual las calorías y los macros, el anillo
+   vacío (un círculo gris con un "—" en medio) y un botón **"Apuntar el plan"**.
+2. Pulsa ese botón (te lleva a `/planes/<tu-id>/apuntar/`) y rellena una comida: nombre,
+   momento del día, calorías y los tres macros. Al pulsar "Apuntar comida" se guarda sin
+   recargar la página (HTMX) y aparece en la lista de arriba, con el total del día y el % que
+   cubre de tu objetivo.
+3. Vuelve al Inicio (`/`): tu tarjeta ya enseña esa comida y el anillo con su porcentaje real
+   (con los datos de Alejandro del paso 4.4 —3.006 kcal de objetivo— y un plan que sume 2.800
+   kcal, el anillo marca **93%**, el episodio exacto de C-79).
+4. **La asimetría de G-43** (R6, el corazón de la unidad): ve a
+   `/planes/<id-de-la-otra-persona>/apuntar/` — el id lo ves en el enlace "Apuntar el
+   plan"/"Añadir otra comida" de SU tarjeta en el Inicio — y apúntale una comida. Se guarda
+   directamente, sin ningún aviso ni confirmación de la otra persona (a diferencia de entrar
+   en el hogar, unidad 003): es lo contrario del perfil (unidad 004), que solo lo cambia su
+   dueña. Si entras con la sesión de la otra persona, ya ve esa comida en su propia tarjeta.
+5. **Un plan pasado no rompe el anillo** (R9): apunta una comida con más calorías que tu
+   objetivo del día. El anillo se pinta en rojo y capado a un círculo completo (no se
+   desborda), y el número que enseña dentro es el % real, que puede pasar de 100 (p. ej.
+   127%), con un aviso en texto de que el plan se ha pasado.
+6. **El aislamiento** (R7): con la cuenta de una tercera persona que esté en OTRO hogar, entra
+   directamente a `/planes/<id-de-alguien-de-otro-hogar>/apuntar/` — tiene que dar 404, igual
+   que si esa persona no existiera.
+
 ## Cómo está organizado el código
 
 | dónde | qué hay | por qué |
@@ -218,8 +249,9 @@ Para ver el perfil de otra persona de tu hogar (R9: se ve, pero no se puede camb
 | `hogares/` | `Hogar`, `SolicitudEntrada`, la base abstracta `ModeloDeHogar` (el aislamiento reutilizable) y la puerta única de acceso (`hogares/acceso.py`) | unidad 003 — "con quién compartes y quién ve qué"; toda unidad futura con datos del hogar (despensa, recetas, calendario) hereda de `ModeloDeHogar` en vez de reinventar el aislamiento |
 | `templates/` | plantillas compartidas entre apps (`base.html`, y las de `allauth` que se han sobrescrito bajo `templates/account/`) | la base con Tailwind, HTMX y Alpine ya cargados; cada app extiende esto |
 | `paginas/templates/paginas/`, `cuentas/templates/cuentas/`, `hogares/templates/hogares/` | plantillas propias de cada app | convención estándar de Django: cada app guarda las suyas bajo su propio nombre, para que no choquen nombres entre apps |
-| `servicios/` | la capa de servicios: cálculos del dominio nutricional, en funciones puras | **estrenada en la unidad 004** (`servicios/metabolismo.py`): metabolismo basal, gasto diario, objetivo calórico y macros (fórmula Mifflin-St Jeor). Funciones puras — reciben datos y devuelven números, sin tocar la base de datos ni saber qué es una petición HTTP — para que se prueben solas y sirvan el día que haya una app nativa. La lógica de cuentas y hogares sigue viviendo DENTRO de sus propias apps (`hogares/logica.py`, `perfiles/logica.py`): esta carpeta es solo para cálculo puro, no un cajón general |
+| `servicios/` | la capa de servicios: cálculos del dominio nutricional, en funciones puras | **estrenada en la unidad 004** (`servicios/metabolismo.py`): metabolismo basal, gasto diario, objetivo calórico y macros (fórmula Mifflin-St Jeor). Funciones puras — reciben datos y devuelven números, sin tocar la base de datos ni saber qué es una petición HTTP — para que se prueben solas y sirvan el día que haya una app nativa. **Unidad 005** añade `servicios/planes.py`: sumar las comidas de un plan y calcular el % de cobertura del anillo (R8), con el mismo espíritu — ni sabe qué es un `PlanDeDia` ni qué es Django. La lógica de cuentas, hogares y planes sigue viviendo DENTRO de sus propias apps (`hogares/logica.py`, `perfiles/logica.py`, `planes/logica.py`): esta carpeta es solo para cálculo puro, no un cajón general |
 | `perfiles/` | los datos físicos, la actividad, el objetivo, el ajuste y las manías de cada persona (`Perfil`), y sus mediciones de peso (`MedicionPeso`); la pantalla de "tus datos" con las calorías y macros del día | unidad 004 — "cuenta quién eres y la app te dice cuántas calorías y qué macros te tocan". El cálculo en sí NO vive aquí (R8): `perfiles/logica.py` reúne los datos (perfil + media de peso de 7 días) y llama a `servicios/metabolismo.py`; las vistas (`perfiles/views.py`) solo llaman a `perfiles/logica.py`. El peso NO es un campo editable de `Perfil` (R7/G-61): es el resultado de las `MedicionPeso`, y el perfil no hereda de `hogares.ModeloDeHogar` porque es un dato DE LA PERSONA, no del hogar (G-43) — `perfiles/acceso.py` es la puerta: todo el hogar VE cualquier perfil, solo su dueña lo CAMBIA |
+| `planes/` | el plan de comidas del día (`PlanDeDia`, `ComidaDelPlan`) y la pantalla de "apuntar el plan" | unidad 005 — "apunta a mano lo que vas a comer, y el Inicio te lo enseña". `PlanDeDia` hereda de `hogares.ModeloDeHogar` (es DEL HOGAR, G-43: el PRIMER modelo de negocio que cuelga de ese mecanismo) y `planes/acceso.py` reutiliza `hogares.acceso.hogar_actual` tal cual — es lo contrario de `perfiles/`: cualquiera del hogar VE **y CAMBIA** el plan de cualquiera, no solo el suyo. El cálculo (sumar comidas, % del anillo) vive en `servicios/planes.py` (R8), y `planes/logica.py` es quien lo conecta con la base de datos y con el objetivo del día de `perfiles/logica.py` (se reutiliza, no se recalcula) |
 | `assets/tailwind/input.css` | el fichero de entrada de Tailwind | de aquí sale `static/css/tailwind.css` al compilar (paso 1.6). Incluye los estilos base de los formularios (`@layer base`) para que cualquier campo de `allauth` salga con aspecto consistente sin tocarlo campo a campo |
 | `static/` | CSS generado + HTMX y Alpine vendidos | todo lo que Tailwind necesita servir sin depender de Node ni de una CDN |
 

@@ -4,29 +4,20 @@
 {% block titulo %}Inicio{% endblock %}
 
 {% block content %}
+{% if not user.is_authenticated %}
 <div class="mx-auto mt-16 max-w-2xl px-6 text-center">
   <h1 class="text-4xl font-bold text-emerald-700">KCalibra está viva</h1>
 
-  {# La portada distingue si hay alguien dentro o no (unidad 003, "Cómo": "la portada, que ya #}
-  {# existe, pasa a distinguir si hay alguien dentro o no"). #}
-  {% if user.is_authenticated %}
-    <p class="mt-4 text-lg text-slate-600">
-      Hola, <strong class="text-slate-900">{{ user.email }}</strong>. Ve a
-      <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">tu hogar</a>
-      para ver el código con el que invitar a los tuyos.
-    </p>
-  {% else %}
-    <p class="mt-4 text-lg text-slate-600">
-      <a href="{% url 'account_signup' %}" class="font-medium text-emerald-700 hover:underline">Crea tu cuenta</a>
-      o <a href="{% url 'account_login' %}" class="font-medium text-emerald-700 hover:underline">entra</a>
-      si ya la tienes.
-    </p>
-  {% endif %}
+  <p class="mt-4 text-lg text-slate-600">
+    <a href="{% url 'account_signup' %}" class="font-medium text-emerald-700 hover:underline">Crea tu cuenta</a>
+    o <a href="{% url 'account_login' %}" class="font-medium text-emerald-700 hover:underline">entra</a>
+    si ya la tienes.
+  </p>
 
   <p class="mt-4 text-lg text-slate-600">
     Esto es el esqueleto de la unidad 002 (Django, PostgreSQL, Tailwind, plantillas parciales,
-    HTMX y Alpine) con las cuentas y los hogares de la unidad 003 encima. La app todavía no
-    calcula calorías ni guarda comidas &mdash; eso llega con las próximas unidades.
+    HTMX y Alpine), con las cuentas y los hogares de la unidad 003 y el objetivo del día de la
+    unidad 004. Entra o crea tu cuenta para ver tu plan de hoy.
   </p>
 
   {# ---------------------------------------------------------------------------------- #}
@@ -43,8 +34,9 @@
   {% partial hora_servidor %}
 
   {# ---------------------------------------------------------------------------------- #}
-  {# El botón de HTMX (R5): al pulsarlo, pide la URL de "hora_servidor" y sustituye SOLO  #}
-  {# el <p id="hora-servidor"> de arriba por lo que devuelva. No recarga la página.       #}
+  {# El botón de HTMX (R5 de la unidad 002): al pulsarlo, pide la URL de "hora_servidor" y #}
+  {# sustituye SOLO el <p id="hora-servidor"> de arriba por lo que devuelva. No recarga     #}
+  {# nada más de la página.                                                                #}
   {# ---------------------------------------------------------------------------------- #}
   <button
     type="button"
@@ -56,4 +48,87 @@
     Comprobar hora del servidor
   </button>
 </div>
+{% else %}
+{# ------------------------------------------------------------------------------------ #}
+{# R1-R11 (unidad 005): el Inicio de verdad. Una tarjeta por persona del hogar, la propia #}
+{# SIEMPRE la primera (R4/G-152, ver paginas/views.py) — todas con el MISMO formato: el   #}
+{# número grande, los macros, el anillo de cuánto cubre el plan de hoy y, debajo, las     #}
+{# comidas de hoy o el botón para apuntarlas si no hay ninguna (R5).                      #}
+{# ------------------------------------------------------------------------------------ #}
+<div class="mx-auto mt-10 max-w-2xl space-y-6 px-6 pb-16">
+  {% for tarjeta in tarjetas %}
+    <section class="rounded-xl border border-slate-200 bg-white p-6">
+      <div class="flex items-start justify-between gap-4">
+        <h2 class="text-lg font-bold text-slate-900">
+          {% if tarjeta.es_propio %}Tú ({{ tarjeta.usuario.email }}){% else %}{{ tarjeta.usuario.email }}{% endif %}
+        </h2>
+        {% if tarjeta.objetivo %}
+          <p class="shrink-0 text-2xl font-bold text-emerald-700">{{ tarjeta.objetivo.calorias }} kcal</p>
+        {% endif %}
+      </div>
+
+      {% if tarjeta.objetivo %}
+        <p class="mt-1 text-sm text-slate-600">
+          Proteína: <strong>{{ tarjeta.objetivo.proteina_g }} g</strong> ·
+          Grasa: <strong>{{ tarjeta.objetivo.grasa_g }} g</strong> ·
+          Carbohidratos: <strong>{{ tarjeta.objetivo.carbos_g }} g</strong>
+        </p>
+      {% else %}
+        <p class="mt-1 text-sm text-slate-500">
+          Aún no hay datos suficientes para calcular las calorías del día.
+        </p>
+      {% endif %}
+
+      <div class="mt-4 flex items-center gap-4">
+        {# --------------------------------------------------------------------------- #}
+        {# El anillo (R2/R3/R9): CSS puro con "conic-gradient", sin ninguna librería de #}
+        {# gráficos (bias.md / "Cómo" de la especificación). El % que se PINTA es       #}
+        {# "porcentaje_visual" (ya capado a 100 en servicios/planes.py, R9: "sin...     #}
+        {# anillos desbordados"); el número que se LEE es el % real, que sí puede pasar #}
+        {# de 100 ("pasado", R9) — los dos salen ya calculados de servicios/planes.py,  #}
+        {# esta plantilla no hace ninguna cuenta (R8).                                  #}
+        {# --------------------------------------------------------------------------- #}
+        <div
+          class="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full"
+          style="background: conic-gradient(
+            {% if tarjeta.resumen.tiene_comidas %}
+              {% if tarjeta.resumen.pasado %}#dc2626{% else %}#059669{% endif %} {{ tarjeta.resumen.porcentaje_visual }}%,
+              #e2e8f0 0
+            {% else %}
+              #e2e8f0 0
+            {% endif %}
+          );"
+        >
+          <div class="flex h-14 w-14 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-700">
+            {% if tarjeta.resumen.tiene_comidas %}{{ tarjeta.resumen.porcentaje }}%{% else %}—{% endif %}
+          </div>
+        </div>
+
+        <div class="flex-1">
+          {% if tarjeta.resumen.tiene_comidas %}
+            <ul class="space-y-1 text-sm text-slate-700">
+              {% for comida in tarjeta.comidas %}
+                <li>{{ comida.get_momento_del_dia_display }}: {{ comida.nombre }} ({{ comida.calorias }} kcal)</li>
+              {% endfor %}
+            </ul>
+            {% if tarjeta.resumen.pasado %}
+              <p class="mt-1 text-xs font-medium text-red-700">El plan se ha pasado del objetivo de hoy.</p>
+            {% endif %}
+          {% else %}
+            {# R5/G-153: sin plan puesto, el Inicio sigue sirviendo — nunca una pantalla #}
+            {# vacía sin salida. #}
+            <p class="text-sm text-slate-500">Sin plan puesto para hoy.</p>
+          {% endif %}
+          <a
+            href="{% url 'planes:apuntar' tarjeta.usuario.id %}"
+            class="mt-2 inline-block text-sm font-medium text-emerald-700 hover:underline"
+          >
+            {% if tarjeta.resumen.tiene_comidas %}Añadir otra comida{% else %}Apuntar el plan{% endif %}
+          </a>
+        </div>
+      </div>
+    </section>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}
