@@ -819,6 +819,17 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
+        self.client.logout()
+
+        # Carlos, en SU PROPIO hogar (nunca se une a nadie): la tercera puerta que faltaba,
+        # H1 de la 2ª ronda de revisión — `perfil_visible_o_404` pasó a `perfil_propio_o_404`
+        # más "mismo hogar", y esta clase solo montaba DOS personas, las dos del MISMO hogar
+        # (mismo patrón que `progreso.tests.BaseProgresoTests`, `progreso/tests.py:74-77`).
+        self.registrar_y_verificar("carlos@example.com", sexo="hombre")
+        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.client.logout()
+
+        self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
 
     def test_alejandro_puede_ver_la_pantalla_de_peso_de_euridice(self):
         """
@@ -925,6 +936,23 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
 
         self.assertEqual(respuesta.status_code, 404)
         self.assertTrue(MedicionPeso.objects.filter(id=medicion_de_euridice.id).exists())
+
+    def test_carlos_no_ve_la_pantalla_de_peso_de_euridice_es_de_otro_hogar(self):
+        """
+        H1 de la 2ª ronda de revisión — la rama que nació al abrir la LECTURA de esta
+        pantalla al hogar (unidad 010) y que ningún test tocaba todavía: "de OTRO hogar" ya
+        no es lo mismo que "no soy yo". `perfil_visible_o_404` (`perfiles/acceso.py:47`) debe
+        seguir dando 404, nunca 403 — el mismo dato delicado (G-1, el peso) abierto de par en
+        par si este filtro por hogar fallara. Se comprobó a mano (ver hallazgos.md, Ronda 2)
+        que si se le quita el filtro por hogar, este test es el que se pone en rojo.
+        """
+        self.client.logout()
+        self.client.login(username="carlos@example.com", password="una-clave-de-verdad-2026")
+
+        respuesta = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertNotEqual(respuesta.status_code, 403)
 
 
 class BorrarMedicionTests(PruebaConRegistroAbierto):
