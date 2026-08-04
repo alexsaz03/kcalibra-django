@@ -90,6 +90,8 @@ urlpatterns = [
     path("planes/", include("planes.urls")),
     # La evolución de peso, grasa y cintura de cada persona (unidad 010).
     path("progreso/", include("progreso.urls")),
+    # Lo que has entrenado, apuntado a mano, y cuánto le suma al objetivo del día (unidad 011).
+    path("entrenos/", include("entrenos.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]

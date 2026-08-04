@@ -124,6 +124,12 @@ INSTALLED_APPS = [
     # modelo de datos que los respalde todavía. Sin modelos propios: reutiliza
     # `perfiles.MedicionPeso`, así que no trae migraciones nuevas.
     "progreso",
+    # entrenos: lo que la persona ha entrenado, apuntado a mano, y cuánto le suma al objetivo
+    # del día. Unidad 011 — ver docs/05-trabajo/011-apuntar-un-entreno/especificacion.md del
+    # meta-repo. Dato DE LA PERSONA (no del hogar, mismo criterio que `perfiles.MedicionPeso`):
+    # apuntar, corregir y borrar son siempre sobre uno mismo (R10), sin lectura del hogar sobre
+    # entrenos ajenos todavía (R-79 llega con Progreso, otra unidad).
+    "entrenos",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"

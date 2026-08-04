@@ -114,11 +114,20 @@ def calcular_objetivo_calorico(gasto_diario, ajuste_pct):
     return gasto_diario * (1 + ajuste_pct / 100)
 
 
-def calcular_macros(*, objetivo, calorias, peso_kg):
+def calcular_macros(*, objetivo, calorias, peso_kg, redondear=True):
     """
     Reparto de macros (gramos) para unas calorías objetivo: la proteína se fija por kilo de
     peso según el objetivo, la grasa como % de las calorías (28%, o 25% si el objetivo es
     rendimiento), y los carbohidratos son lo que sobra de las calorías totales.
+
+    `redondear=False` (unidad 011, R7 de generar-el-plan.md) devuelve los tres gramos SIN
+    redondear: lo usa `escalar_macros` (aquí abajo) para escalar los macros del objetivo del
+    día cuando se suman los entrenos, sin arrastrar el error de haber redondeado antes de
+    tiempo (bias.md: "redondear en pasos intermedios desplaza los números finales" — probado
+    con el episodio de Euridice en C-2 de generar-el-plan.md: escalar la proteína YA
+    redondeada, 136, da 161; escalar la exacta, 136,4, da los 162 del criterio). Con el valor
+    por defecto (`True`, sin pasarlo), el comportamiento es EXACTAMENTE el de antes de la
+    unidad 011 — ningún llamador existente cambia.
     """
     proteina_por_kg = OBJETIVOS[objetivo]["proteina_por_kg"]
     pct_grasa = 0.25 if objetivo == "rendimiento" else 0.28
@@ -131,11 +140,26 @@ def calcular_macros(*, objetivo, calorias, peso_kg):
     kcal_carbos = max(0, calorias - kcal_proteina - kcal_grasa)
     carbos_g = kcal_carbos / 4  # 1 g de carbohidrato = 4 kcal
 
+    if not redondear:
+        return {"proteina_g": proteina_g, "grasa_g": grasa_g, "carbos_g": carbos_g}
+
     return {
         "proteina_g": _redondear(proteina_g),
         "grasa_g": _redondear(grasa_g),
         "carbos_g": _redondear(carbos_g),
     }
+
+
+def escalar_macros(macros, factor):
+    """
+    Escala un diccionario de macros por `factor` y redondea cada valor con el mismo criterio
+    que el resto del módulo (unidad 011, R7 de generar-el-plan.md: sumar los entrenos al
+    objetivo del día "escala los macros en la misma proporción"). Se espera que `macros` venga
+    de `calcular_macros(..., redondear=False)` — escalar macros YA redondeados desplaza el
+    resultado (ver el docstring de `calcular_macros`, arriba, y
+    servicios/tests.py:EscalarMacrosTests).
+    """
+    return {clave: _redondear(valor * factor) for clave, valor in macros.items()}
 
 
 def calcular_perfil_nutricional(

@@ -82,12 +82,44 @@ def peso_medio_7_dias(usuario):
     return float(ultima.peso_kg) if ultima else None
 
 
-def calcular_objetivo_del_dia(usuario):
+def _calorias_de_entrenos(usuario, fecha):
+    """
+    R7/R8/R71 (unidad 011, apuntar-un-entreno.md) — cuántas kcal ha quemado `usuario` en
+    `fecha` según sus entrenos apuntados; 0 si no tiene ninguno ese día (R8: "con cero
+    entrenos, ni una kcal se mueve").
+
+    El import va DENTRO de la función, no arriba del fichero: `entrenos/logica.py` necesita, a
+    su vez, `peso_medio_7_dias` de AQUÍ para estimar las calorías de un entreno sin pulsómetro
+    (G-70) — importar `entrenos` arriba cerraría un ciclo entre los dos ficheros de lógica. Se
+    consulta el MODELO directamente (no `entrenos.logica`, que es quien importa este módulo),
+    para que el ciclo solo exista en un sentido.
+    """
+    from entrenos.models import Entreno
+
+    total = Entreno.objects.filter(usuario=usuario, fecha=fecha).aggregate(
+        total=django_models.Sum("calorias")
+    )["total"]
+    return total or 0
+
+
+def calcular_objetivo_del_dia(usuario, fecha=None):
     """
     Une el perfil de `usuario` con su peso reciente y llama a `servicios.metabolismo` (R8: la
     fórmula solo vive ahí, esta función no la repite). Devuelve `None` si a esa persona
     todavía no le corresponde ningún cálculo (sin perfil, o sin ninguna medición de peso —
     ninguno de los dos debería pasar una vez completada el alta, pero se contempla).
+
+    `fecha` (unidad 011, R6/C-39 de apuntar-un-entreno.md) — el día del que se quiere el
+    objetivo, por defecto HOY: se añadió para poder recalcular el histórico al corregir un
+    entreno de un día pasado, SIN cambiar a ninguno de los llamadores existentes (todos siguen
+    pidiendo "hoy", sin pasar `fecha`). Solo decide QUÉ DÍA de entrenos se suma (más abajo); la
+    edad y el peso siguen calculándose con "hoy" de verdad — recalcular el peso histórico de
+    ese día queda fuera de esta unidad.
+
+    R7/R8/R71 — el objetivo sube con los entrenos de `fecha` y los macros escalan en la misma
+    proporción (R-2 de generar-el-plan.md, C-2: 1.894 -> 2.249 kcal, 136/59/205 -> 162/70/243
+    g). Con CERO entrenos ese día, `entreno_kcal` es 0 y nada de esto se toca: ni una kcal se
+    mueve (R8, la red de seguridad de las siete unidades anteriores).
     """
     try:
         perfil = usuario.perfil
@@ -98,6 +130,8 @@ def calcular_objetivo_del_dia(usuario):
     if peso_kg is None:
         return None
 
+    fecha = fecha or timezone.localdate()
+
     resultado = metabolismo.calcular_perfil_nutricional(
         sexo=perfil.sexo,
         fecha_nacimiento=perfil.fecha_nacimiento,
@@ -107,10 +141,28 @@ def calcular_objetivo_del_dia(usuario):
         objetivo=perfil.objetivo,
         ajuste_pct=perfil.ajuste_pct,
         # Unidad 006, reloj unificado (ver el docstring del módulo): el mismo
-        # `timezone.localdate()` que ya decide la ventana de `peso_medio_7_dias`.
+        # `timezone.localdate()` que ya decide la ventana de `peso_medio_7_dias`. NO es
+        # `fecha`: la edad se calcula con el día de HOY de verdad, no con el día del que se
+        # pide el objetivo (recalcular la edad o el peso históricos queda fuera de esta unidad).
         hoy=timezone.localdate(),
     )
     resultado["peso_kg"] = round(peso_kg, 1)
+
+    entreno_kcal = _calorias_de_entrenos(usuario, fecha)
+    resultado["entreno_kcal"] = entreno_kcal
+    if entreno_kcal:
+        calorias_base = resultado["calorias"]
+        nuevas_calorias = calorias_base + entreno_kcal
+        factor = nuevas_calorias / calorias_base
+        # Los macros SIN redondear (bias.md: redondear antes de tiempo desplaza el resultado
+        # final — probado con C-2 de generar-el-plan.md: escalar la proteína YA redondeada,
+        # 136, da 161; la exacta, 136,4, da los 162 del criterio).
+        macros_exactos = metabolismo.calcular_macros(
+            objetivo=perfil.objetivo, calorias=calorias_base, peso_kg=peso_kg, redondear=False
+        )
+        resultado["calorias"] = nuevas_calorias
+        resultado.update(metabolismo.escalar_macros(macros_exactos, factor))
+
     return resultado
 
 
