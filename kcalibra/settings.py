@@ -305,24 +305,35 @@ DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@k
 
 def _entero_desde_entorno(nombre, por_defecto):
     """
-    Lee una variable de entorno numérica. Regla (unidad 009, R1/R2/R10/R11): variable AUSENTE
-    o presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias) -> el
-    valor por defecto. Si SÍ trae algo, ese valor manda SIEMPRE (R11: no basta con no reventar,
-    hay que respetarlo de verdad) — y si no es un número, la app se niega a arrancar nombrando
-    la variable (mismo patrón que `variable_obligatoria()`, ahí arriba), nunca el `ValueError`
-    en bruto de antes, que no decía cuál de las variables había fallado.
+    Lee una variable de entorno numérica. Regla (unidad 009, R1/R2/R10/R11/R12): variable
+    AUSENTE o presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias)
+    -> el valor por defecto. Si SÍ trae algo, ese valor manda SIEMPRE (R11: no basta con no
+    reventar, hay que respetarlo de verdad) — pero solo si tiene sentido: si no es un número
+    (R10), o si es un número que no puede serlo (cero o negativo, R12: un timeout así no
+    revienta al arrancar, sino DESPUÉS, en plena petición SMTP, con
+    `ValueError: Timeout value out of range` — el mismo fallo tardío que R1/R2 cerraron para el
+    caso vacío), la app se niega a arrancar nombrando la variable (mismo patrón que
+    `variable_obligatoria()`, ahí arriba), nunca un `ValueError` en bruto que no dice cuál de
+    las variables había fallado ni cuándo iba a reventar de verdad.
     """
     valor = os.environ.get(nombre, "").strip()
     if not valor:
         return por_defecto
     try:
-        return int(valor)
+        numero = int(valor)
     except ValueError:
         raise ImproperlyConfigured(
             f"La variable de entorno '{nombre}' vale {valor!r} y no es un número. "
             "Corrígela en tu .env, o bórrala/déjala vacía para usar el valor por defecto. "
             "Instrucciones completas en AGENTS.md."
         ) from None
+    if numero <= 0:
+        raise ImproperlyConfigured(
+            f"La variable de entorno '{nombre}' vale {valor!r} y tiene que ser mayor que cero. "
+            "Corrígela en tu .env, o bórrala/déjala vacía para usar el valor por defecto. "
+            "Instrucciones completas en AGENTS.md."
+        )
+    return numero
 
 
 # R8: las formas habituales de decir "sí" y de decir "no" en una variable de entorno, sin

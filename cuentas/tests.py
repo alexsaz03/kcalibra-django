@@ -735,6 +735,24 @@ class ConfiguracionDeCorreoTests(TestCase):
         puerto, tiempo_espera, usa_tls = lineas[-3:]
         return int(puerto), int(tiempo_espera), usa_tls == "True"
 
+    @staticmethod
+    def _mensaje_final_de(salida_completa):
+        """
+        Aísla la ÚLTIMA línea no vacía de la salida de un subproceso que reventó — la que
+        Python usa para el mensaje real de la excepción ("NombreDeLaExcepcion: mensaje"), no
+        el volcado del traceback entero.
+
+        Bloqueante de la 3ª ronda (R13): comprobar `assertIn(nombre_variable, salida_completa)`
+        contra el volcado COMPLETO es un superviviente — el re-revisor mutiló los dos mensajes
+        para que dejaran de nombrar la variable y la suite se quedó en VERDE, porque cada marco
+        del traceback imprime la LÍNEA DE CÓDIGO FUENTE que lo originó, y esa línea
+        (`EMAIL_USE_TLS = _booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)`) YA contiene
+        el nombre de la variable, gane o pierda el mensaje. Aislar la última línea es la única
+        forma de comprobar el MENSAJE, no el fichero que lo rodea.
+        """
+        lineas = [linea for linea in salida_completa.strip().splitlines() if linea.strip()]
+        return lineas[-1] if lineas else ""
+
     def test_puerto_vacio_arranca_con_el_puerto_por_defecto(self):
         """R1 — hoy revienta con ValueError; debe arrancar y usar 587."""
         entorno = os.environ.copy()
@@ -784,9 +802,12 @@ class ConfiguracionDeCorreoTests(TestCase):
         R9 — un valor que no está en NINGUNA de las dos listas de R8 (un typo como "ture", o
         "xyz") no puede resolverse como "desactivado": eso sería exactamente el mismo fallo del
         lado inseguro que R3 cerró para la variable vacía. La app se niega a arrancar, y el
-        mensaje nombra la variable — se comprueba con la frase exacta del mensaje, no solo con
-        que algo fallara, porque un `ValueError` en bruto (el error críptico de antes) también
-        tumbaría el arranque sin decir nada útil.
+        MENSAJE nombra la variable — se comprueba en la última línea de la salida (el mensaje
+        real de la excepción, ver `_mensaje_final_de`), no en el volcado completo del
+        traceback: R13, unidad 009, 3ª ronda. El volcado completo contiene el nombre de la
+        variable de todos modos (aparece en la línea de código de la llamada,
+        `_booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)`), así que comprobarlo ahí no
+        distingue un mensaje que nombra la variable de uno que no.
         """
         for valor in ["ture", "xyz"]:
             with self.subTest(valor=valor):
@@ -806,10 +827,11 @@ class ConfiguracionDeCorreoTests(TestCase):
                     0,
                     f"la app NO debe arrancar con DJANGO_EMAIL_USE_TLS={valor!r}",
                 )
-                self.assertIn("DJANGO_EMAIL_USE_TLS", salida_completa)
+                mensaje_final = self._mensaje_final_de(salida_completa)
+                self.assertIn("DJANGO_EMAIL_USE_TLS", mensaje_final)
                 self.assertIn(
                     "no se entiende como sí/no",
-                    salida_completa,
+                    mensaje_final,
                     "el mensaje debe ser el nuestro, no un ValueError en bruto",
                 )
 
@@ -818,7 +840,9 @@ class ConfiguracionDeCorreoTests(TestCase):
         R10 — hoy un valor no numérico en PORT o TIMEOUT revienta con un `ValueError` críptico
         que no dice cuál de las dos variables falló (la queja con la que nació R1, resuelta en
         la 1ª ronda solo para el caso vacío). Mismo patrón que `variable_obligatoria()`, diez
-        líneas más arriba en `settings.py`: la app no arranca y el mensaje nombra la variable.
+        líneas más arriba en `settings.py`: la app no arranca y el MENSAJE nombra la variable —
+        comprobado en la última línea de la salida (ver `_mensaje_final_de`), no en el volcado
+        completo: R13, unidad 009, 3ª ronda.
         """
         for variable in ("DJANGO_EMAIL_PORT", "DJANGO_EMAIL_TIMEOUT"):
             with self.subTest(variable=variable):
@@ -836,23 +860,82 @@ class ConfiguracionDeCorreoTests(TestCase):
                 self.assertNotEqual(
                     resultado.returncode, 0, f"la app NO debe arrancar con {variable}='abc'"
                 )
-                self.assertIn(variable, salida_completa)
+                mensaje_final = self._mensaje_final_de(salida_completa)
+                self.assertIn(variable, mensaje_final)
                 self.assertIn(
                     "no es un número",
-                    salida_completa,
+                    mensaje_final,
                     "el mensaje debe ser el nuestro, no un ValueError en bruto",
                 )
 
     def test_el_tiempo_de_espera_del_correo_queda_clavado(self):
         """
         R7 — hoy `EMAIL_TIMEOUT` se puede borrar entero de `settings.py` y la suite sigue en
-        verde (nada afirma sobre su valor). Este test lee la configuración YA cargada en este
-        mismo proceso (la real, la del `.env` de esta rama) y exige el valor concreto: si la
-        línea desaparece, `EMAIL_TIMEOUT` cae al default de Django (`None`) y esto se rompe.
-        """
-        from django.conf import settings
+        verde (nada afirma sobre su valor). Clava que la LÍNEA
+        `EMAIL_TIMEOUT = _entero_desde_entorno(...)` sigue ahí: si desaparece, `EMAIL_TIMEOUT`
+        cae al default de Django (`None`) SIN IMPORTAR qué diga el entorno, y el test se entera.
 
-        self.assertEqual(settings.EMAIL_TIMEOUT, 10)
+        Corregido en la 3ª ronda: la versión anterior comparaba `settings.EMAIL_TIMEOUT` (ya
+        cargado en ESTE proceso desde el `.env` real de la máquina) contra `10` a secas — el
+        re-revisor demostró que con `DJANGO_EMAIL_TIMEOUT=30` en el entorno real (una
+        configuración perfectamente legítima), la suite se ponía roja con `30 != 10`, que no
+        tiene nada que ver con si la línea sigue en `settings.py`. Ahora se fuerza, en el
+        entorno del SUBPROCESO, un valor propio elegido por el test (`"17"`, que no coincide
+        con ningún valor por defecto ni con lo que traiga el `.env` real) — así el test es
+        portable a cualquier máquina, con cualquier `.env`.
+        """
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_TIMEOUT"] = "17"
+        _puerto, tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(tiempo_espera, 17)
+
+    def test_puerto_de_solo_espacios_arranca_con_el_puerto_por_defecto(self):
+        """
+        Superviviente confirmado por el re-revisor (3ª ronda): el `.strip()` de
+        `_entero_desde_entorno` (`kcalibra/settings.py`) no lo clavaba ningún test. Un valor de
+        puros espacios (fácil de meter sin querer al copiar/pegar un `.env`, o si el propio
+        editor añade un espacio de más) debe tratarse como AUSENTE — el valor por defecto —, no
+        como un valor no numérico que tumbe el arranque (R1/R10).
+        """
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_PORT"] = "   "
+        puerto, _tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(puerto, 587)
+
+    def test_tiempo_de_espera_negativo_o_cero_no_arranca_y_nombra_la_variable(self):
+        """
+        R12 (ampliación de la 3ª ronda, la última) — hoy `DJANGO_EMAIL_TIMEOUT=-1` o `=0` se
+        aceptan en silencio: la app arranca y revienta DESPUÉS, en plena petición SMTP, con
+        `ValueError: Timeout value out of range` (Python no acepta un timeout de socket que no
+        sea positivo). Es el último resquicio del lado inseguro: un valor sin sentido para un
+        timeout no puede colarse hasta la petición — la app se niega a arrancar y el MENSAJE
+        nombra la variable, igual que R10 para los no numéricos.
+        """
+        for valor in ["-1", "0"]:
+            with self.subTest(valor=valor):
+                entorno = os.environ.copy()
+                entorno["DJANGO_EMAIL_TIMEOUT"] = valor
+                resultado = subprocess.run(
+                    [sys.executable, "manage.py", "check"],
+                    cwd=str(self._RAIZ_PROYECTO),
+                    env=entorno,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                salida_completa = resultado.stdout + resultado.stderr
+                self.assertNotEqual(
+                    resultado.returncode,
+                    0,
+                    f"la app NO debe arrancar con DJANGO_EMAIL_TIMEOUT={valor!r}",
+                )
+                mensaje_final = self._mensaje_final_de(salida_completa)
+                self.assertIn("DJANGO_EMAIL_TIMEOUT", mensaje_final)
+                self.assertIn(
+                    "mayor que cero",
+                    mensaje_final,
+                    "el mensaje debe ser el nuestro, no un ValueError en bruto en plena petición",
+                )
 
     def test_sin_definir_en_absoluto_se_comporta_como_siempre(self):
         """
