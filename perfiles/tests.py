@@ -790,6 +790,12 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
     R7/§8 "Qué NO debe poder jamás" — nadie apunta ni borra el peso de otra persona con
     cuenta propia, tampoco llamando al servidor con el id exacto. Siempre 404, nunca 403
     (mismo principio que `perfiles/acceso.py` ya prueba para el perfil, unidad 004).
+
+    Unidad 010 (R7/R8 de ver-tu-progreso.md, y R-23 de darle-cuenta-propia-a-los-de-casa.md):
+    la LECTURA de esta pantalla dejó de estar aislada — el resto del hogar SÍ puede verla
+    ahora (`test_alejandro_puede_ver_la_pantalla_de_peso_de_euridice`, más abajo, reemplaza al
+    test que antes probaba lo contrario). Apuntar y borrar siguen dando 404 exactamente igual
+    que antes: esta clase es la prueba de que la 010 abrió la lectura sin tocar la escritura.
     """
 
     def setUp(self):
@@ -813,10 +819,51 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
+        self.client.logout()
 
-    def test_alejandro_no_puede_ver_la_pantalla_de_peso_de_euridice(self):
+        # Carlos, en SU PROPIO hogar (nunca se une a nadie): la tercera puerta que faltaba,
+        # H1 de la 2ª ronda de revisión — `perfil_visible_o_404` pasó a `perfil_propio_o_404`
+        # más "mismo hogar", y esta clase solo montaba DOS personas, las dos del MISMO hogar
+        # (mismo patrón que `progreso.tests.BaseProgresoTests`, `progreso/tests.py:74-77`).
+        self.registrar_y_verificar("carlos@example.com", sexo="hombre")
+        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.client.logout()
+
+        self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
+
+    def test_alejandro_puede_ver_la_pantalla_de_peso_de_euridice(self):
+        """
+        Unidad 010, R7 — antes de esta unidad esto daba 404 (el test se llamaba
+        "...no_puede_ver..."); R-23 nombra literalmente "el peso" entre lo que el hogar debe
+        poder VER de otra persona, así que ahora se renderiza de verdad (no solo un 200:
+        `render()` con una plantilla que ya no existiera también daría 200 si algo fuera
+        HttpResponse a pelo — se comprueba que el peso de EURIDICE sale en el HTML).
+        """
         respuesta = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "62,0 kg")  # el peso de alta de Euridice (unidad 004)
+
+        # R8, la otra mitad de la pareja: ver no es apuntar. Sin formulario ni botón de
+        # borrar en el HTML de la pantalla ajena (no basta con que la RUTA siga dando 404 —
+        # comprobado en los tests de abajo — si esta MISMA pantalla ofreciera el atajo).
+        self.assertNotContains(respuesta, "Apuntar pesada")
+        self.assertNotContains(respuesta, ">Borrar<")
+
+    def test_alejandro_ve_el_titulo_propio_y_ajeno_distintos(self):
+        """R7, matiz de UI: la pantalla deja claro DE QUIÉN es el peso que se mira, para que
+        no parezca la suya propia por error (dato delicado, G-1). El título de la barra de
+        navegación dice SIEMPRE "Tu peso" (enlace al propio, `templates/base.html`) — por eso
+        aquí se aísla el `<h1>` de la pantalla en sí, no un `assertContains` a pelo que
+        colaría igual con o sin el arreglo."""
+        respuesta_propia = self.client.get(f"/perfiles/{self.alejandro.id}/peso/")
+        respuesta_ajena = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+
+        h1_propio = re.search(r"<h1[^>]*>(.*?)</h1>", respuesta_propia.content.decode(), re.S)
+        h1_ajeno = re.search(r"<h1[^>]*>(.*?)</h1>", respuesta_ajena.content.decode(), re.S)
+        self.assertIsNotNone(h1_propio)
+        self.assertIsNotNone(h1_ajeno)
+        self.assertIn("Tu peso", h1_propio.group(1))
+        self.assertIn("Peso de euridice@example.com", h1_ajeno.group(1))
 
     def test_alejandro_no_puede_apuntar_peso_a_euridice_llamando_al_servidor(self):
         mediciones_antes = MedicionPeso.objects.filter(usuario=self.euridice).count()
@@ -889,6 +936,23 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
 
         self.assertEqual(respuesta.status_code, 404)
         self.assertTrue(MedicionPeso.objects.filter(id=medicion_de_euridice.id).exists())
+
+    def test_carlos_no_ve_la_pantalla_de_peso_de_euridice_es_de_otro_hogar(self):
+        """
+        H1 de la 2ª ronda de revisión — la rama que nació al abrir la LECTURA de esta
+        pantalla al hogar (unidad 010) y que ningún test tocaba todavía: "de OTRO hogar" ya
+        no es lo mismo que "no soy yo". `perfil_visible_o_404` (`perfiles/acceso.py:47`) debe
+        seguir dando 404, nunca 403 — el mismo dato delicado (G-1, el peso) abierto de par en
+        par si este filtro por hogar fallara. Se comprobó a mano (ver hallazgos.md, Ronda 2)
+        que si se le quita el filtro por hogar, este test es el que se pone en rojo.
+        """
+        self.client.logout()
+        self.client.login(username="carlos@example.com", password="una-clave-de-verdad-2026")
+
+        respuesta = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertNotEqual(respuesta.status_code, 403)
 
 
 class BorrarMedicionTests(PruebaConRegistroAbierto):

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block titulo %}
+  {% if es_propio %}Tu progreso{% else %}Progreso de {{ usuario_objetivo.email }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
+  <h1 class="text-2xl font-bold text-slate-900">
+    {% if es_propio %}Tu progreso{% else %}Progreso de {{ usuario_objetivo.email }}{% endif %}
+  </h1>
+  <p class="mt-1 text-sm text-slate-500">
+    Cómo ha ido {% if es_propio %}tu{% else %}su{% endif %} peso — y, si {% if es_propio %}las tienes apuntadas,{% else %}las tiene apuntadas,{% endif %}
+    también la grasa y la cintura — en las últimas semanas.
+  </p>
+
+  {# ------------------------------------------------------------------------------------ #}
+  {# R81/§8 — el selector de persona: cualquiera del hogar, una cada vez (R10/G-171: nunca #}
+  {# se mezclan). Son enlaces normales (recarga la pantalla entera con la persona nueva),  #}
+  {# no HTMX: cambiar de persona no es "actualizar un trozo", es otra pantalla.            #}
+  {# ------------------------------------------------------------------------------------ #}
+  {% if miembros_del_hogar|length > 1 %}
+    <div class="mt-4 flex flex-wrap gap-2">
+      {% for miembro in miembros_del_hogar %}
+        <a
+          href="{% url 'progreso:ver' miembro.id %}?semanas={{ semanas }}"
+          class="rounded-lg px-3 py-1.5 text-sm font-medium
+            {% if miembro.id == usuario_objetivo.id %}bg-emerald-600 text-white{% else %}bg-white text-slate-700 border border-slate-200 hover:border-emerald-300{% endif %}"
+        >
+          {% if miembro.id == request.user.id %}Tú{% else %}{{ miembro.email }}{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {# ------------------------------------------------------------------------------------ #}
+  {# R5/R6 — cuántas semanas mirar. Formulario GET normal (sin HTMX): el número de semanas #}
+  {# es parte de la URL a propósito, para que se pueda compartir o recargar el enlace tal  #}
+  {# cual. `min`/`max` son solo una ayuda del navegador (R6 exige que el SERVIDOR también  #}
+  {# lo valide, sin fiarse del cliente: ver servicios/progreso.py:semanas_desde_parametro). #}
+  {# ------------------------------------------------------------------------------------ #}
+  <form method="get" class="mt-4 flex items-end gap-3">
+    <div>
+      <label for="id_semanas" class="block text-xs font-medium text-slate-500">Semanas a mirar</label>
+      <input
+        type="number"
+        id="id_semanas"
+        name="semanas"
+        value="{{ semanas }}"
+        min="{{ semanas_min }}"
+        max="{{ semanas_max }}"
+        class="mt-1 w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+      >
+    </div>
+    <button type="submit" class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
+      Ver
+    </button>
+  </form>
+
+  {% if not tiene_alguna_medicion %}
+    {# R11, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
+    {# naturalidad y, si es la propia persona, se invita a apuntar la primera. #}
+    <p id="progreso-sin-datos" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+      {% if es_propio %}
+        Todavía no tienes ninguna pesada apuntada. En cuanto apuntes la primera, aquí
+        aparecerá su evolución.
+      {% else %}
+        {{ usuario_objetivo.email }} todavía no tiene ninguna pesada apuntada.
+      {% endif %}
+    </p>
+  {% elif not tiene_datos_en_periodo %}
+    {# Tiene mediciones, pero ninguna cae en las semanas elegidas: no es "sin datos", es #}
+    {# "sin datos EN ESTE periodo" — mensajes distintos para no confundir. #}
+    <p id="progreso-sin-datos-en-periodo" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+      {% if es_propio %}No tienes{% else %}{{ usuario_objetivo.email }} no tiene{% endif %}
+      ninguna pesada en las últimas {{ semanas }} semanas. Prueba a ampliar el periodo.
+    </p>
+  {% else %}
+    {# R1 — el peso, siempre que haya datos en el periodo. #}
+    {% include "progreso/_grafica.html" with grafica=grafica_peso titulo="Peso" unidad=" kg" color="#059669" %}
+
+    {# R2/Q-152 — grasa y cintura, cada una SOLO si esa persona la tiene apuntada: ni #}
+    {# hueco vacío ni aviso de que falta, si `grafica_grasa`/`grafica_cintura` es None esta #}
+    {# sección entera no existe. #}
+    {% if grafica_grasa %}
+      {% include "progreso/_grafica.html" with grafica=grafica_grasa titulo="Grasa corporal" unidad="%" color="#dc2626" %}
+    {% endif %}
+    {% if grafica_cintura %}
+      {% include "progreso/_grafica.html" with grafica=grafica_cintura titulo="Cintura" unidad=" cm" color="#2563eb" %}
+    {% endif %}
+  {% endif %}
+
+  {# Fuera de alcance de esta unidad (ver especificación): entrenos y cumplimiento no #}
+  {# tienen todavía ni modelo de datos, así que no se enseña nada de eso aquí — no se #}
+  {# inventa ni se deja "preparado" con datos falsos. #}
+
+  <p class="mt-6 text-sm">
+    <a href="{% url 'perfiles:peso' usuario_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+      {% if es_propio %}Ver tu histórico y apuntar una pesada →{% else %}Ver su histórico →{% endif %}
+    </a>
+  </p>
+</div>
+{% endblock %}

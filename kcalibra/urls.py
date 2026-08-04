@@ -88,6 +88,8 @@ urlpatterns = [
     path("perfiles/", include("perfiles.urls")),
     # El plan de comidas del día, apuntado a mano (unidad 005).
     path("planes/", include("planes.urls")),
+    # La evolución de peso, grasa y cintura de cada persona (unidad 010).
+    path("progreso/", include("progreso.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]

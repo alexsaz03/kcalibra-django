@@ -11,8 +11,11 @@ calendario de las unidades futuras; aquí, `SolicitudEntrada`) pasa por AQUÍ, n
   ("no tienes permiso"): así no se filtra ni la existencia de datos ajenos.
 """
 
+from django.contrib.auth import get_user_model
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+
+Usuario = get_user_model()
 
 
 def hogar_actual(request):
@@ -37,3 +40,23 @@ def obtener_de_mi_hogar_o_404(request, modelo, **filtros):
         # mirar si el objeto existe.
         raise Http404("No existe.")
     return get_object_or_404(modelo, hogar=hogar, **filtros)
+
+
+def usuario_del_hogar_o_404(request, usuario_id):
+    """
+    El `Usuario` `usuario_id`, SOLO si está en el MISMO hogar que quien pregunta (puede ser
+    cualquiera del hogar, incluida ella misma). 404 si `usuario_id` es de otro hogar, si quien
+    pregunta no tiene hogar todavía (R14), o si no existe — nunca 403 (Q-11, Q-20): un
+    `Usuario` de otro hogar es indistinguible desde fuera de uno que no existe.
+
+    Unidad 010 — consolidado aquí desde `planes/acceso.py` (unidad 005), que fue el primero
+    en necesitarlo: la misma comprobación ("¿este `usuario_id` es del MISMO hogar que quien
+    pregunta?") vivía duplicada en espíritu entre `planes/acceso.py` y la rama "ajena" de
+    `perfiles/acceso.py:perfil_visible_o_404`. `progreso/acceso.py` es la TERCERA aparición —
+    la señal de que tocaba subirlo a la puerta única del hogar en vez de escribirlo una cuarta
+    vez. Los tres sitios llaman ahora a esta misma función.
+    """
+    hogar = hogar_actual(request)
+    if hogar is None:
+        raise Http404("No existe.")
+    return get_object_or_404(Usuario, pk=usuario_id, hogar=hogar)

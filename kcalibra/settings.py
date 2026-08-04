@@ -116,6 +116,14 @@ INSTALLED_APPS = [
     # HOGAR (G-43, a diferencia de perfiles): el primer modelo de negocio que cuelga de
     # `hogares.ModeloDeHogar` (unidad 003).
     "planes",
+    # progreso: la evolución de peso, grasa y cintura de cada persona, con la puerta de
+    # lectura del hogar entero (R7) y la de escritura solo propia (R8, sin cambios: sigue
+    # viviendo en `perfiles`). Unidad 010 — ver
+    # docs/05-trabajo/010-ver-tu-progreso/especificacion.md del meta-repo. Entrega PARCIAL a
+    # propósito: entrenos (R-79) y cumplimiento (R-80) del plano quedan pendientes, sin
+    # modelo de datos que los respalde todavía. Sin modelos propios: reutiliza
+    # `perfiles.MedicionPeso`, así que no trae migraciones nuevas.
+    "progreso",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"
