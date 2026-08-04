@@ -301,10 +301,15 @@ que nombra la variable culpable — nunca revienta más tarde, a medias, en plen
 **Ojo con las comillas y los comentarios en la misma línea del `.env`:** el cargador de `.env`
 (`_cargar_dotenv` en `kcalibra/settings.py`) no quita comillas ni recorta un comentario que
 vaya detrás del valor — pasan a formar parte del valor tal cual. Escribir
-`DJANGO_EMAIL_USE_TLS="True"` deja el valor en `'"True"'` (no se entiende como sí/no), y
 `DJANGO_EMAIL_PORT=587  # el puerto de Resend` deja el valor en `'587  # el puerto de
-Resend'` (no es un número): las dos formas, antes inocuas, ahora impiden arrancar la app
-(unidad 009). Cada variable va sola en su línea, sin comillas y sin nada detrás del valor.
+Resend'` (no es un número): esto YA impedía arrancar antes de la unidad 009 también, pero con
+un `ValueError` en bruto que no decía cuál de las variables había fallado; la 009 no añadió
+la prohibición, solo puso nombre al culpable. Escribir `DJANGO_EMAIL_USE_TLS="True"` es el
+caso peor: antes de la 009 el valor `'"True"'` simplemente no coincidía con `"True"` y la app
+arrancaba igual, pero **sin cifrado y sin avisarlo** — el fallo silencioso que esta unidad vino
+a cerrar. Con la 009, las dos formas paran la app con un mensaje que nombra la variable, en
+vez de fallar a ciegas (el puerto) o fallar en silencio (el cifrado). Cada variable va sola en
+su línea, sin comillas y sin nada detrás del valor.
 
 **Estado real (unidad 008):** el servicio de envío ya está elegido, implementado y en marcha:
 **Resend por SMTP** (`smtp.resend.com:587`), con el dominio `kcalibra.app` verificado en la
