@@ -269,7 +269,24 @@ valores por defecto inseguros): `DJANGO_SECRET_KEY`, `DB_NAME`, `DB_USER`, `DB_P
 | `DJANGO_EMAIL_BACKEND` | `django.core.mail.backends.console.EmailBackend` | Por dónde salen los correos de verificación. En este portátil, por la consola — ver el punto 4.3 |
 | `DJANGO_DEFAULT_FROM_EMAIL` | `no-responder@kcalibra.app` | El remitente de esos correos |
 
-**Deuda pendiente, importante:** en producción hace falta cambiar `DJANGO_EMAIL_BACKEND` a un
-servicio de envío de verdad (no elegido todavía, fuera del alcance de la unidad 003). **Sin
-eso, el día del despliegue nadie podrá registrarse** — el enlace de verificación no llegará a
-ningún sitio real.
+### Variables opcionales de la unidad 008 (conexión SMTP, ADR-004)
+
+Con `DJANGO_EMAIL_BACKEND` en el backend de consola (el valor por defecto en este portátil),
+`smtp.EmailBackend` ni se importa: estas seis variables se cargan igualmente pero no se usan
+para nada. Solo entran en juego el día que `DJANGO_EMAIL_BACKEND` apunte al backend SMTP real.
+
+| Variable | Por defecto | Qué hace |
+|---|---|---|
+| `DJANGO_EMAIL_HOST` | (vacío) | El host SMTP. En producción, `smtp.resend.com` (ADR-004) |
+| `DJANGO_EMAIL_PORT` | `587` | El puerto del host SMTP |
+| `DJANGO_EMAIL_HOST_USER` | (vacío) | El usuario SMTP. Con Resend es literalmente `resend` |
+| `DJANGO_EMAIL_HOST_PASSWORD` | (vacío) | La contraseña SMTP. Con Resend es la API key — nunca en este repo (regla de oro): vive en `.private/` del meta-repo |
+| `DJANGO_EMAIL_USE_TLS` | `True` | Si la conexión al host SMTP va cifrada con TLS |
+| `DJANGO_EMAIL_TIMEOUT` | `10` (segundos) | Límite al socket SMTP: sin esto, un proveedor lento o caído cuelga la petición entera esperando, sin límite |
+
+**Estado real (unidad 008):** el servicio de envío ya está elegido, implementado y en marcha:
+**Resend por SMTP** (`smtp.resend.com:587`), con el dominio `kcalibra.app` verificado en la
+región Ireland (`eu-west-1`) — decisión de ADR-004, sin SDK propio (Django ya habla SMTP de
+serie). En este portátil el correo sigue saliendo por la consola (el valor por defecto de
+`DJANGO_EMAIL_BACKEND`, ver el punto 4.3): cambiar de backend a SMTP real es cuestión de estas
+variables en el `.env` de cada servidor, no de código.
