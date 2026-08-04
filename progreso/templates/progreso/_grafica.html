@@ -1,0 +1,39 @@
+{# ------------------------------------------------------------------------------------ #}
+{# Una gráfica de evolución (R1/R2/R3/R4): SVG generado con las coordenadas que ya trae   #}
+{# `grafica` desde servicios/progreso.py — esta plantilla no calcula NADA (R8), solo      #}
+{# dibuja el <polyline> y un <circle> por punto (para que un único dato, R11, se vea      #}
+{# igual aunque no haya línea que trazar con un solo punto).                              #}
+{#                                                                                        #}
+{# Se incluye con {% include %} y sus propias variables (`grafica`, `titulo`, `unidad`,   #}
+{# `color`) en vez de repetir el marcado tres veces en ver.html — nada de librerías de    #}
+{# gráficos (bias.md): esto es SVG puro generado en el servidor, como el anillo del plan  #}
+{# de la unidad 005 (`conic-gradient`), pero con una LÍNEA en vez de un donut.            #}
+{#                                                                                        #}
+{# {% load l10n %} + "|unlocalize" en cx/cy: con LANGUAGE_CODE="es" Django pinta los      #}
+{# números con COMA ("300,0"), que es justo lo que NO quiere un atributo numérico de SVG  #}
+{# (un `cx="300,0"` no es un número válido para el navegador). El resumen de texto        #}
+{# ({{ grafica.primero }}) sí quiere esa coma —es para que lo lea una persona—, así que    #}
+{# `unlocalize` se aplica SOLO a las coordenadas del dibujo, no a él.                     #}
+{# ------------------------------------------------------------------------------------ #}
+{% load l10n %}
+<section class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+  <div class="flex items-baseline justify-between gap-2">
+    <h3 class="text-sm font-medium uppercase tracking-wide text-slate-500">{{ titulo }}</h3>
+    <p class="text-xs text-slate-500">
+      {{ grafica.primero_fecha }} · {{ grafica.primero }}{{ unidad }}
+      → {{ grafica.ultimo_fecha }} · {{ grafica.ultimo }}{{ unidad }}
+    </p>
+  </div>
+  <svg
+    viewBox="0 0 {{ grafica.ancho }} {{ grafica.alto }}"
+    preserveAspectRatio="none"
+    class="mt-2 h-32 w-full"
+    role="img"
+    aria-label="Evolución de {{ titulo|lower }}"
+  >
+    <polyline points="{{ grafica.puntos_svg }}" fill="none" stroke="{{ color }}" stroke-width="2" />
+    {% for x, y in grafica.coordenadas %}
+      <circle cx="{{ x|unlocalize }}" cy="{{ y|unlocalize }}" r="3" fill="{{ color }}" />
+    {% endfor %}
+  </svg>
+</section>

@@ -2,7 +2,14 @@
 Las pantallas del perfil (R3, R7, R8, R9): ver los datos y las calorías del día de cualquier
 persona del hogar, y cambiarlos solo si son los propios. Desde la unidad 006, también el
 histórico de peso: apuntar una medición y borrar una equivocada (R1-R10 de
-apuntar-el-peso.md), solo la propia (R7 — misma puerta que el resto del fichero).
+apuntar-el-peso.md).
+
+Unidad 010 (R7/R8 de su especificación) — el histórico de peso deja de tratar lectura y
+escritura igual: `ver_peso` ahora es del hogar entero (`perfil_visible_o_404`, mismo criterio
+que `ver_perfil`), pero `apuntar_peso` y `borrar_peso` SIGUEN siendo solo de la propia persona
+(`perfil_propio_o_404`, sin cambios) — R-23 (darle-cuenta-propia-a-los-de-casa.md) nombra
+literalmente "el peso" entre lo que el hogar debe poder VER pero no cambiar, y G-171
+(ver-tu-progreso.md) exige que "se vea el de todos, pero uno cada vez".
 
 R8, la regla que más importa aquí: el CÁLCULO no se hace en ningún momento en este fichero.
 Estas vistas solo reciben la petición HTTP, llaman a `perfiles.logica` (que a su vez llama a
@@ -93,16 +100,22 @@ def actualizar_perfil(request, usuario_id):
     return render(request, plantilla, contexto)
 
 
-def _contexto_peso(usuario, form=None):
+def _contexto_peso(usuario, es_propio, form=None):
     """
     Reúne lo que necesita la pantalla del histórico de peso: el formulario (uno nuevo si no
     se pasa uno ya validado/con errores), el histórico completo, la última medición y el
     objetivo del día — R6/Q-112: `ultima` (lo que marcó la báscula) y `resultado["peso_kg"]`
     (el peso con el que se calcula) son DOS valores distintos, cada uno con su origen, para
     que la plantilla los rotule aparte sin confundirlos.
+
+    Unidad 010, R7/R8 — `es_propio` es lo que la plantilla usa para decidir si enseña el
+    formulario de apuntar y los botones de borrar (solo si es la propia persona): la LECTURA
+    ya puede llegar aquí siendo ajena (`ver_peso` abajo), pero la ESCRITURA sigue exigiendo
+    serlo (`apuntar_peso`/`borrar_peso`, sin cambios).
     """
     return {
         "usuario_objetivo": usuario,
+        "es_propio": es_propio,
         "form": form if form is not None else FormularioMedicion(),
         "mediciones": usuario.mediciones_peso.all(),
         "ultima": ultima_medicion(usuario),
@@ -115,16 +128,20 @@ def ver_peso(request, usuario_id=None):
     """
     R1/R3/R6/R9 (superficie de uso, apuntar-el-peso.md) — el histórico de peso de
     `usuario_id`, y el formulario para apuntar una pesada nueva. Sin `usuario_id`, el propio
-    (enlace de la barra de navegación). R7: solo el propio, nunca el de otra persona del
-    hogar — a diferencia de `ver_perfil` (que SÍ deja verlo a todo el hogar), aquí
-    `perfil_propio_o_404` gatea también la LECTURA, no solo la escritura: el peso es un dato
-    delicado que "lo ve el hogar y nadie más" (§8 del plano) por la vía de las calorías ya
-    calculadas en `/perfiles/<id>/` — el histórico de pesadas en sí, con sus fechas
-    concretas, no se ha pedido que se comparta, así que no se inventa esa pantalla.
+    (enlace de la barra de navegación).
+
+    Unidad 010, R7/R8 — la LECTURA de esta pantalla ahora es del hogar entero (mismo
+    principio que `ver_perfil`, y la puerta que R7/R-23/G-171 exigían para "ver el progreso
+    de otra persona de tu casa"): `perfil_visible_o_404` deja pasar el propio siempre y el
+    ajeno solo si comparte hogar. La ESCRITURA (`apuntar_peso`, `borrar_peso`, aquí abajo)
+    sigue exigiendo `perfil_propio_o_404` — nadie apunta ni borra el peso de otra persona con
+    cuenta propia (R8), eso NO cambia. La plantilla usa `es_propio` para no enseñar el
+    formulario ni los botones de borrar cuando se mira el de otra persona.
     """
     usuario_id = usuario_id if usuario_id is not None else request.user.id
-    perfil = perfil_propio_o_404(request, usuario_id)
-    return render(request, "perfiles/peso.html", _contexto_peso(perfil.usuario))
+    perfil = perfil_visible_o_404(request, usuario_id)
+    es_propio = perfil.usuario_id == request.user.id
+    return render(request, "perfiles/peso.html", _contexto_peso(perfil.usuario, es_propio))
 
 
 @login_required
@@ -143,7 +160,7 @@ def apuntar_peso(request, usuario_id):
         apuntar_medicion(perfil.usuario, form.cleaned_data)
         form = FormularioMedicion()  # formulario limpio, listo para la siguiente pesada
 
-    contexto = _contexto_peso(perfil.usuario, form=form)
+    contexto = _contexto_peso(perfil.usuario, es_propio=True, form=form)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")
@@ -166,7 +183,7 @@ def borrar_peso(request, usuario_id, medicion_id):
     medicion = get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)
     borrar_medicion(medicion)
 
-    contexto = _contexto_peso(perfil.usuario)
+    contexto = _contexto_peso(perfil.usuario, es_propio=True)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")

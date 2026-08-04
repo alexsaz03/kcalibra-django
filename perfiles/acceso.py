@@ -8,10 +8,17 @@ unidad 003): la ruta de ESCRITURA responde 404 si no es el perfil de quien pregu
 403 — un 403 confirmaría "existe, pero no es tuyo"; un 404 es indistinguible de "no existe".
 Aquí la VISIBILIDAD es más amplia que en `hogares/acceso.py` (cualquiera del hogar ve
 cualquier perfil del hogar, no solo el suyo): son dos puertas distintas a propósito.
+
+Unidad 010 — la rama "es de OTRA persona" de `perfil_visible_o_404` reutiliza AHORA
+`hogares.acceso.usuario_del_hogar_o_404` (consolidado desde `planes/acceso.py`) en vez de
+repetir su propio `if hogar is None / get_object_or_404(..., hogar=hogar)`: era la misma
+comprobación escrita dos veces, con `Perfil` en un sitio y `Usuario` en el otro.
 """
 
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+
+from hogares.acceso import usuario_del_hogar_o_404
 
 from .models import Perfil
 
@@ -34,12 +41,11 @@ def perfil_visible_o_404(request, usuario_id):
     if str(request.user.id) == str(usuario_id):
         return get_object_or_404(Perfil, usuario_id=usuario_id)
 
-    hogar = request.user.hogar
-    if hogar is None:
-        # Sin hogar propio todavía (R14 de la unidad 003), no hay ningún perfil AJENO que ver
-        # — pero el propio ya se resolvió arriba, antes de llegar aquí.
-        raise Http404("No existe.")
-    return get_object_or_404(Perfil, usuario_id=usuario_id, usuario__hogar=hogar)
+    # Sin hogar propio todavía (R14 de la unidad 003), no hay ningún perfil AJENO que ver —
+    # pero el propio ya se resolvió arriba, antes de llegar aquí. `usuario_del_hogar_o_404` ya
+    # hace exactamente esta comprobación (404 si no hay hogar, o si `usuario_id` es de otro).
+    usuario_ajeno = usuario_del_hogar_o_404(request, usuario_id)
+    return get_object_or_404(Perfil, usuario_id=usuario_ajeno.id)
 
 
 def perfil_propio_o_404(request, usuario_id):

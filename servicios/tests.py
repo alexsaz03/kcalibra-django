@@ -12,10 +12,11 @@ fecha real de la máquina: así el test no depende de en qué día se ejecute la
 """
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 from servicios import metabolismo
 from servicios import planes
+from servicios import progreso
 
 HOY_DE_REFERENCIA = date(2026, 8, 2)
 
@@ -343,6 +344,170 @@ class CalcularResumenDelDiaTests(unittest.TestCase):
         primera_llamada = planes.calcular_resumen_del_dia(comidas, 2000)
         segunda_llamada = planes.calcular_resumen_del_dia(comidas, 2000)
         self.assertEqual(primera_llamada, segunda_llamada)
+
+
+# ------------------------------------------------------------------------------------------
+# Unidad 010 (ver-tu-progreso.md): `servicios.progreso` — cuántas semanas mirar (R5/R6), qué
+# mediciones caen en ese periodo (R5), y cómo convertir una serie en los puntos de un SVG
+# (R1/R2/R4). Funciones puras, probadas DIRECTAMENTE (R8), sin base de datos ni vista.
+# ------------------------------------------------------------------------------------------
+
+
+class SemanasDesdeParametroTests(unittest.TestCase):
+    """
+    R5/R6 — el número de semanas llega como parámetro de URL: cualquiera puede teclear lo que
+    sea. Dentro de [4, 52] se respeta tal cual (R5); fuera de rango, no numérico o ausente cae
+    al valor por defecto (12) SIN reventar (R6) — al contrario que la unidad 009 (una
+    variable de entorno que no se entiende SÍ tumba el arranque, porque es despliegue, no
+    entrada de una persona).
+    """
+
+    def test_un_valor_dentro_del_rango_se_respeta(self):
+        # R5/sexta cara de tests-que-no-fallan-cuando-deben.md: no basta con probar "cae al
+        # defecto", hace falta probar también que un valor VÁLIDO se usa de verdad, no que la
+        # función esté simplemente ciega y devuelva siempre 12.
+        self.assertEqual(progreso.semanas_desde_parametro("8"), 8)
+        self.assertEqual(progreso.semanas_desde_parametro("4"), 4)  # el mínimo, inclusive
+        self.assertEqual(progreso.semanas_desde_parametro("52"), 52)  # el máximo, inclusive
+
+    def test_ausente_cae_al_defecto(self):
+        self.assertEqual(progreso.semanas_desde_parametro(None), 12)
+
+    def test_no_numerico_cae_al_defecto_sin_reventar(self):
+        self.assertEqual(progreso.semanas_desde_parametro("abc"), 12)
+        self.assertEqual(progreso.semanas_desde_parametro(""), 12)
+        self.assertEqual(progreso.semanas_desde_parametro("12.5"), 12)
+        self.assertEqual(progreso.semanas_desde_parametro("doce"), 12)
+
+    def test_fuera_de_rango_cae_al_defecto(self):
+        self.assertEqual(progreso.semanas_desde_parametro("3"), 12)  # justo por debajo del mínimo
+        self.assertEqual(progreso.semanas_desde_parametro("53"), 12)  # justo por encima del máximo
+        self.assertEqual(progreso.semanas_desde_parametro("-5"), 12)
+        self.assertEqual(progreso.semanas_desde_parametro("9999"), 12)
+        self.assertEqual(progreso.semanas_desde_parametro("0"), 12)
+
+
+class RecortarPorPeriodoTests(unittest.TestCase):
+    """R5 — solo las mediciones de las últimas `semanas` semanas, ambos extremos incluidos,
+    ordenadas de más antigua a más reciente."""
+
+    def test_deja_fuera_lo_anterior_al_periodo_y_ordena_ascendente(self):
+        hoy = date(2026, 8, 4)
+        mediciones = [
+            {"fecha": date(2026, 8, 1), "peso_kg": 93},
+            {"fecha": date(2026, 5, 1), "peso_kg": 96},  # más de 12 semanas antes de "hoy"
+            {"fecha": date(2026, 7, 1), "peso_kg": 94},
+        ]
+        recortadas = progreso.recortar_por_periodo(mediciones, semanas=12, hoy=hoy)
+        self.assertEqual([m["fecha"] for m in recortadas], [date(2026, 7, 1), date(2026, 8, 1)])
+
+    def test_los_dos_extremos_del_periodo_estan_incluidos(self):
+        hoy = date(2026, 8, 4)
+        limite = hoy - timedelta(weeks=4)
+        mediciones = [{"fecha": hoy, "peso_kg": 93}, {"fecha": limite, "peso_kg": 95}]
+        recortadas = progreso.recortar_por_periodo(mediciones, semanas=4, hoy=hoy)
+        self.assertEqual(len(recortadas), 2)
+
+    def test_sin_mediciones_da_una_lista_vacia_sin_reventar(self):
+        self.assertEqual(progreso.recortar_por_periodo([], semanas=12, hoy=date(2026, 8, 4)), [])
+
+
+class ConstruirGraficaTests(unittest.TestCase):
+    """
+    R1/R2/R4 — construye los puntos de un SVG a partir de una lista de mediciones YA
+    recortadas por periodo. R2/Q-152: sin ningún dato de ese campo, `None` — nunca una
+    gráfica vacía ni un aviso.
+    """
+
+    def test_sin_ningun_dato_de_ese_campo_devuelve_none(self):
+        """R2, la mitad de "aparece si tiene grasa Y cintura": sin grasa apuntada, la
+        gráfica de grasa ni se construye."""
+        mediciones = [{"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": None, "cintura_cm": None}]
+        self.assertIsNone(progreso.construir_grafica(mediciones, "grasa_pct"))
+        self.assertIsNone(progreso.construir_grafica(mediciones, "cintura_cm"))  # la otra mitad
+
+    def test_r4_ignora_los_dias_sueltos_sin_ese_campo_sin_inventarlos(self):
+        """R4 — "grasa solo algunos días sueltos": la gráfica se dibuja con los días que
+        tenga, no con un punto interpolado en los que faltan."""
+        mediciones = [
+            {"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": 22, "cintura_cm": None},
+            {"fecha": date(2026, 8, 2), "peso_kg": 92.8, "grasa_pct": None, "cintura_cm": None},
+            {"fecha": date(2026, 8, 3), "peso_kg": 92.9, "grasa_pct": 21.5, "cintura_cm": None},
+        ]
+        grafica_grasa = progreso.construir_grafica(mediciones, "grasa_pct")
+        self.assertIsNotNone(grafica_grasa)
+        # Dos puntos, no tres: el día de en medio (sin grasa) no se cuela como un 0 ni como
+        # un valor inventado.
+        self.assertEqual(len(grafica_grasa["coordenadas"]), 2)
+        self.assertEqual(grafica_grasa["primero"], 22)
+        self.assertEqual(grafica_grasa["ultimo"], 21.5)
+
+        # La gráfica de PESO, en cambio, sí tiene los tres días (todos tienen peso).
+        grafica_peso = progreso.construir_grafica(mediciones, "peso_kg")
+        self.assertEqual(len(grafica_peso["coordenadas"]), 3)
+
+    def test_un_valor_que_no_varia_no_revienta_por_dividir_entre_cero(self):
+        """C-88, el episodio que da sentido a la pantalla: el peso se queda exactamente
+        igual semana tras semana. Sin este caso especial, escalar el valor a un rango de
+        anchura cero dividiría entre cero."""
+        mediciones = [
+            {"fecha": date(2026, 6, 1), "peso_kg": 93, "grasa_pct": 22, "cintura_cm": None},
+            {"fecha": date(2026, 7, 1), "peso_kg": 93, "grasa_pct": 20.5, "cintura_cm": None},
+            {"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": 19, "cintura_cm": None},
+        ]
+        grafica_peso = progreso.construir_grafica(mediciones, "peso_kg")
+        self.assertIsNotNone(grafica_peso)
+        self.assertEqual(grafica_peso["primero"], 93)
+        self.assertEqual(grafica_peso["ultimo"], 93)
+        # Las tres coordenadas Y caen en la misma altura (línea recta y horizontal).
+        alturas = {y for _, y in grafica_peso["coordenadas"]}
+        self.assertEqual(len(alturas), 1)
+
+        # Pero la grasa, que SÍ varía, se sigue viendo bajar (C-88: "la línea del peso
+        # plana y la de la grasa bajando").
+        grafica_grasa = progreso.construir_grafica(mediciones, "grasa_pct")
+        self.assertLess(grafica_grasa["ultimo"], grafica_grasa["primero"])
+        primera_altura = grafica_grasa["coordenadas"][0][1]
+        ultima_altura = grafica_grasa["coordenadas"][-1][1]
+        # La grasa BAJA de valor (22 → 19); en un SVG "abajo" es "y grande" (invertir=True:
+        # el valor más ALTO, el primero, va con la "y" más PEQUEÑA — más arriba en el
+        # dibujo), así que la línea desciende de izquierda a derecha: la "y" final es MAYOR
+        # que la inicial.
+        self.assertGreater(ultima_altura, primera_altura)
+
+    def test_un_unico_punto_no_revienta_y_se_centra(self):
+        """R11 — con una sola medición no hay ningún rango que repartir (ni de fechas ni de
+        valores): se centra en el lienzo en vez de dividir entre cero."""
+        mediciones = [{"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": None, "cintura_cm": None}]
+        grafica = progreso.construir_grafica(mediciones, "peso_kg")
+        self.assertEqual(len(grafica["coordenadas"]), 1)
+        x, y = grafica["coordenadas"][0]
+        self.assertAlmostEqual(x, grafica["ancho"] / 2, delta=1)
+        self.assertAlmostEqual(y, grafica["alto"] / 2, delta=1)
+
+    def test_ninguna_medicion_en_absoluto_da_none(self):
+        self.assertIsNone(progreso.construir_grafica([], "peso_kg"))
+
+
+class ConstruirEvolucionTests(unittest.TestCase):
+    """R1/R2 — las tres gráficas juntas, cada una calculada de forma independiente: que una
+    tenga datos no obliga a las otras a tenerlos también."""
+
+    def test_solo_peso_apuntado_da_grasa_y_cintura_en_none(self):
+        mediciones = [{"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": None, "cintura_cm": None}]
+        evolucion = progreso.construir_evolucion(mediciones)
+        self.assertIsNotNone(evolucion["peso_kg"])
+        self.assertIsNone(evolucion["grasa_pct"])
+        self.assertIsNone(evolucion["cintura_cm"])
+
+    def test_las_tres_apuntadas_dan_las_tres_graficas(self):
+        mediciones = [
+            {"fecha": date(2026, 8, 1), "peso_kg": 93, "grasa_pct": 22, "cintura_cm": 95},
+        ]
+        evolucion = progreso.construir_evolucion(mediciones)
+        self.assertIsNotNone(evolucion["peso_kg"])
+        self.assertIsNotNone(evolucion["grasa_pct"])
+        self.assertIsNotNone(evolucion["cintura_cm"])
 
 
 if __name__ == "__main__":

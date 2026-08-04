@@ -26,6 +26,7 @@
           <span class="text-slate-600">{{ user.email }}</span>
           <a href="{% url 'perfiles:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tus datos</a>
           <a href="{% url 'perfiles:peso_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu peso</a>
+          <a href="{% url 'progreso:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu progreso</a>
           <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">Mi hogar</a>
           <form method="post" action="{% url 'account_logout' %}" class="inline">
             {% csrf_token %}

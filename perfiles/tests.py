@@ -790,6 +790,12 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
     R7/§8 "Qué NO debe poder jamás" — nadie apunta ni borra el peso de otra persona con
     cuenta propia, tampoco llamando al servidor con el id exacto. Siempre 404, nunca 403
     (mismo principio que `perfiles/acceso.py` ya prueba para el perfil, unidad 004).
+
+    Unidad 010 (R7/R8 de ver-tu-progreso.md, y R-23 de darle-cuenta-propia-a-los-de-casa.md):
+    la LECTURA de esta pantalla dejó de estar aislada — el resto del hogar SÍ puede verla
+    ahora (`test_alejandro_puede_ver_la_pantalla_de_peso_de_euridice`, más abajo, reemplaza al
+    test que antes probaba lo contrario). Apuntar y borrar siguen dando 404 exactamente igual
+    que antes: esta clase es la prueba de que la 010 abrió la lectura sin tocar la escritura.
     """
 
     def setUp(self):
@@ -814,9 +820,39 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
 
-    def test_alejandro_no_puede_ver_la_pantalla_de_peso_de_euridice(self):
+    def test_alejandro_puede_ver_la_pantalla_de_peso_de_euridice(self):
+        """
+        Unidad 010, R7 — antes de esta unidad esto daba 404 (el test se llamaba
+        "...no_puede_ver..."); R-23 nombra literalmente "el peso" entre lo que el hogar debe
+        poder VER de otra persona, así que ahora se renderiza de verdad (no solo un 200:
+        `render()` con una plantilla que ya no existiera también daría 200 si algo fuera
+        HttpResponse a pelo — se comprueba que el peso de EURIDICE sale en el HTML).
+        """
         respuesta = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "62,0 kg")  # el peso de alta de Euridice (unidad 004)
+
+        # R8, la otra mitad de la pareja: ver no es apuntar. Sin formulario ni botón de
+        # borrar en el HTML de la pantalla ajena (no basta con que la RUTA siga dando 404 —
+        # comprobado en los tests de abajo — si esta MISMA pantalla ofreciera el atajo).
+        self.assertNotContains(respuesta, "Apuntar pesada")
+        self.assertNotContains(respuesta, ">Borrar<")
+
+    def test_alejandro_ve_el_titulo_propio_y_ajeno_distintos(self):
+        """R7, matiz de UI: la pantalla deja claro DE QUIÉN es el peso que se mira, para que
+        no parezca la suya propia por error (dato delicado, G-1). El título de la barra de
+        navegación dice SIEMPRE "Tu peso" (enlace al propio, `templates/base.html`) — por eso
+        aquí se aísla el `<h1>` de la pantalla en sí, no un `assertContains` a pelo que
+        colaría igual con o sin el arreglo."""
+        respuesta_propia = self.client.get(f"/perfiles/{self.alejandro.id}/peso/")
+        respuesta_ajena = self.client.get(f"/perfiles/{self.euridice.id}/peso/")
+
+        h1_propio = re.search(r"<h1[^>]*>(.*?)</h1>", respuesta_propia.content.decode(), re.S)
+        h1_ajeno = re.search(r"<h1[^>]*>(.*?)</h1>", respuesta_ajena.content.decode(), re.S)
+        self.assertIsNotNone(h1_propio)
+        self.assertIsNotNone(h1_ajeno)
+        self.assertIn("Tu peso", h1_propio.group(1))
+        self.assertIn("Peso de euridice@example.com", h1_ajeno.group(1))
 
     def test_alejandro_no_puede_apuntar_peso_a_euridice_llamando_al_servidor(self):
         mediciones_antes = MedicionPeso.objects.filter(usuario=self.euridice).count()
