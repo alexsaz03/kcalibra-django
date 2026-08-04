@@ -305,24 +305,54 @@ DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@k
 
 def _entero_desde_entorno(nombre, por_defecto):
     """
-    Lee una variable de entorno numérica. Regla única (unidad 009, R1/R2): variable AUSENTE o
-    presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias) —> el valor
-    por defecto, nunca un `ValueError` que tumbe el arranque entero sin decir qué variable fue.
+    Lee una variable de entorno numérica. Regla (unidad 009, R1/R2/R10/R11): variable AUSENTE
+    o presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias) -> el
+    valor por defecto. Si SÍ trae algo, ese valor manda SIEMPRE (R11: no basta con no reventar,
+    hay que respetarlo de verdad) — y si no es un número, la app se niega a arrancar nombrando
+    la variable (mismo patrón que `variable_obligatoria()`, ahí arriba), nunca el `ValueError`
+    en bruto de antes, que no decía cuál de las variables había fallado.
     """
     valor = os.environ.get(nombre, "").strip()
-    return int(valor) if valor else por_defecto
+    if not valor:
+        return por_defecto
+    try:
+        return int(valor)
+    except ValueError:
+        raise ImproperlyConfigured(
+            f"La variable de entorno '{nombre}' vale {valor!r} y no es un número. "
+            "Corrígela en tu .env, o bórrala/déjala vacía para usar el valor por defecto. "
+            "Instrucciones completas en AGENTS.md."
+        ) from None
+
+
+# R8: las formas habituales de decir "sí" y de decir "no" en una variable de entorno, sin
+# mirar mayúsculas ni espacios de más.
+_FORMAS_DE_SI = {"true", "1", "yes", "on", "si", "sí"}
+_FORMAS_DE_NO = {"false", "0", "no", "off"}
 
 
 def _booleano_desde_entorno(nombre, por_defecto):
     """
-    Lee una variable de entorno de sí/no. Misma regla que `_entero_desde_entorno` (ausente o
-    vacía -> el valor por defecto) más una segunda: si SÍ trae algo, "true" cuenta pase lo que
-    pase con mayúsculas o espacios de más (unidad 009, R3/R4) — al revés que antes, que solo
-    aceptaba el texto exacto "True" y cualquier otra cosa (incluida una variable vacía) apagaba
-    el cifrado en silencio, que es el lado inseguro del fallo.
+    Lee una variable de entorno de sí/no. Regla de ausente/vacía igual que
+    `_entero_desde_entorno` (unidad 009, R3/R5/R11): -> el valor por defecto. Si SÍ trae algo,
+    acepta las formas habituales de `_FORMAS_DE_SI`/`_FORMAS_DE_NO` (R4/R8). Un valor que no
+    está en ninguna de las dos listas (un typo como "ture") NUNCA se resuelve como
+    "desactivado" — sería colar el mismo fallo del lado inseguro que R3 cerró para la variable
+    vacía: la app se niega a arrancar y el mensaje nombra la variable (R9).
     """
-    valor = os.environ.get(nombre, "").strip()
-    return valor.lower() == "true" if valor else por_defecto
+    valor_bruto = os.environ.get(nombre, "")
+    valor = valor_bruto.strip().lower()
+    if not valor:
+        return por_defecto
+    if valor in _FORMAS_DE_SI:
+        return True
+    if valor in _FORMAS_DE_NO:
+        return False
+    raise ImproperlyConfigured(
+        f"La variable de entorno '{nombre}' vale {valor_bruto!r} y no se entiende como sí/no. "
+        "Usa uno de estos valores: true/1/yes/on/si/sí (activa) o false/0/no/off (desactiva). "
+        "Instrucciones completas en AGENTS.md."
+    )
 
 
 # Las variables de conexión SMTP (unidad 008). Con el backend de consola de arriba (el valor
