@@ -284,6 +284,33 @@ para nada. Solo entran en juego el día que `DJANGO_EMAIL_BACKEND` apunte al bac
 | `DJANGO_EMAIL_USE_TLS` | `True` | Si la conexión al host SMTP va cifrada con TLS |
 | `DJANGO_EMAIL_TIMEOUT` | `10` (segundos) | Límite al socket SMTP: sin esto, un proveedor lento o caído cuelga la petición entera esperando, sin límite |
 
+**Cómo se leen estas seis variables (unidad 009):** variable AUSENTE, o presente pero VACÍA (o
+compuesta solo de espacios, lo más fácil del mundo al copiar `.env.example` a medias) -> el
+valor por defecto de la tabla de arriba, sin reventar. Si SÍ trae algo, ese valor manda
+siempre — pero solo si tiene sentido:
+
+- `DJANGO_EMAIL_PORT` y `DJANGO_EMAIL_TIMEOUT` tienen que ser un número entero mayor que cero.
+- `DJANGO_EMAIL_USE_TLS` no distingue mayúsculas ni espacios de más, y acepta `true`, `1`,
+  `yes`, `on`, `si`, `sí` para activar el cifrado, y `false`, `0`, `no`, `off` para
+  desactivarlo.
+
+Un valor que no cumple esto (un puerto que no es un número, un timeout de cero o negativo, un
+`USE_TLS` con un typo como `ture`) hace que la app se **niegue a arrancar**, con un mensaje
+que nombra la variable culpable — nunca revienta más tarde, a medias, en plena petición SMTP.
+
+**Ojo con las comillas y los comentarios en la misma línea del `.env`:** el cargador de `.env`
+(`_cargar_dotenv` en `kcalibra/settings.py`) no quita comillas ni recorta un comentario que
+vaya detrás del valor — pasan a formar parte del valor tal cual. Escribir
+`DJANGO_EMAIL_PORT=587  # el puerto de Resend` deja el valor en `'587  # el puerto de
+Resend'` (no es un número): esto YA impedía arrancar antes de la unidad 009 también, pero con
+un `ValueError` en bruto que no decía cuál de las variables había fallado; la 009 no añadió
+la prohibición, solo puso nombre al culpable. Escribir `DJANGO_EMAIL_USE_TLS="True"` es el
+caso peor: antes de la 009 el valor `'"True"'` simplemente no coincidía con `"True"` y la app
+arrancaba igual, pero **sin cifrado y sin avisarlo** — el fallo silencioso que esta unidad vino
+a cerrar. Con la 009, las dos formas paran la app con un mensaje que nombra la variable, en
+vez de fallar a ciegas (el puerto) o fallar en silencio (el cifrado). Cada variable va sola en
+su línea, sin comillas y sin nada detrás del valor.
+
 **Estado real (unidad 008):** el servicio de envío ya está elegido, implementado y en marcha:
 **Resend por SMTP** (`smtp.resend.com:587`), con el dominio `kcalibra.app` verificado en la
 región Ireland (`eu-west-1`) — decisión de ADR-004, sin SDK propio (Django ya habla SMTP de
