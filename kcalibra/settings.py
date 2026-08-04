@@ -302,22 +302,45 @@ EMAIL_BACKEND = os.environ.get(
 )
 DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@kcalibra.app")
 
+
+def _entero_desde_entorno(nombre, por_defecto):
+    """
+    Lee una variable de entorno numérica. Regla única (unidad 009, R1/R2): variable AUSENTE o
+    presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias) —> el valor
+    por defecto, nunca un `ValueError` que tumbe el arranque entero sin decir qué variable fue.
+    """
+    valor = os.environ.get(nombre, "").strip()
+    return int(valor) if valor else por_defecto
+
+
+def _booleano_desde_entorno(nombre, por_defecto):
+    """
+    Lee una variable de entorno de sí/no. Misma regla que `_entero_desde_entorno` (ausente o
+    vacía -> el valor por defecto) más una segunda: si SÍ trae algo, "true" cuenta pase lo que
+    pase con mayúsculas o espacios de más (unidad 009, R3/R4) — al revés que antes, que solo
+    aceptaba el texto exacto "True" y cualquier otra cosa (incluida una variable vacía) apagaba
+    el cifrado en silencio, que es el lado inseguro del fallo.
+    """
+    valor = os.environ.get(nombre, "").strip()
+    return valor.lower() == "true" if valor else por_defecto
+
+
 # Las variables de conexión SMTP (unidad 008). Con el backend de consola de arriba (el valor
 # por defecto en este portátil) `smtp.EmailBackend` ni se importa, así que estas variables no
 # se usan para nada — solo entran en juego el día que `DJANGO_EMAIL_BACKEND` apunte al backend
 # SMTP real. El repo NUNCA trae credenciales (regla de oro): todo sale del entorno, con
 # valores por defecto vacíos o inocuos, nunca con una clave de verdad escrita aquí.
 EMAIL_HOST = os.environ.get("DJANGO_EMAIL_HOST", "")
-EMAIL_PORT = int(os.environ.get("DJANGO_EMAIL_PORT", "587"))
+EMAIL_PORT = _entero_desde_entorno("DJANGO_EMAIL_PORT", 587)
 EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("DJANGO_EMAIL_USE_TLS", "True") == "True"
+EMAIL_USE_TLS = _booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)
 # La deuda que el ADR-004 deja escrita: sin `EMAIL_TIMEOUT`, Django no pone ningún límite al
 # socket SMTP — si el proveedor no contesta, la petición entera (y el hilo que la atiende) se
 # queda colgada esperando, indefinidamente. 10 segundos sobra para un envío SMTP normal (y es
 # justo el tipo de fallo que R5/R6 tienen que sobrevivir sin dar un 500: ver
 # `cuentas/adapters.py`, que captura el `TimeoutError` que esto dispara).
-EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
+EMAIL_TIMEOUT = _entero_desde_entorno("DJANGO_EMAIL_TIMEOUT", 10)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

@@ -11,7 +11,11 @@ suman R2 (R-22), R3, R4, R5, R6 y R7: el correo sale de verdad y, si el envío f
 queda atrapado.
 """
 
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from smtplib import SMTPException
 from unittest import mock
 
@@ -660,6 +664,120 @@ class EnvioDeCorreoTests(PruebaConRegistroAbierto):
                 self.registrar("sin-fallos@example.com")
 
 
+class ConfiguracionDeCorreoTests(TestCase):
+    """
+    Unidad 009 — R1-R5: una variable de entorno del bloque de correo definida pero VACÍA (lo
+    más fácil del mundo al copiar `.env.example` a medias) no puede tumbar el arranque de la
+    app (R1, R2) ni desactivar el cifrado en silencio (R3, R4); sin definir en absoluto, el
+    comportamiento sigue siendo el de siempre (R5, caso límite de no regresión).
+
+    Mismo motivo que `ArranqueSinConfiguracionTests` de `paginas/tests.py`: una vez que ESTE
+    proceso de test ya importó `kcalibra.settings`, no hay forma limpia de "desconfigurarlo" y
+    releer variables de entorno distintas — cada test lanza un PROCESO APARTE y le pregunta a
+    Django, de verdad, qué valor quedó cargado. Así se ejercita la lectura real de la
+    configuración (settings.py), no una copia de la regla escrita aquí (que pasaría siempre y
+    no probaría nada).
+    """
+
+    _RAIZ_PROYECTO = Path(__file__).resolve().parent.parent
+
+    def _leer_configuracion_de_correo(self, entorno):
+        """Lanza `manage.py shell -c` en un subproceso con el entorno dado y devuelve
+        (EMAIL_PORT, EMAIL_TIMEOUT, EMAIL_USE_TLS) tal como Django los cargó de verdad."""
+        resultado = subprocess.run(
+            [
+                sys.executable,
+                "manage.py",
+                "shell",
+                "-c",
+                "from django.conf import settings\n"
+                "print(settings.EMAIL_PORT)\n"
+                "print(settings.EMAIL_TIMEOUT)\n"
+                "print(settings.EMAIL_USE_TLS)\n",
+            ],
+            cwd=str(self._RAIZ_PROYECTO),
+            env=entorno,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            resultado.returncode,
+            0,
+            "la app debe arrancar con esta configuración de correo, y no lo hizo:\n"
+            f"stdout: {resultado.stdout}\nstderr: {resultado.stderr}",
+        )
+        lineas = [linea for linea in resultado.stdout.strip().splitlines() if linea.strip()]
+        # El comando de shell puede imprimir avisos antes de nuestras tres líneas (p. ej. los
+        # objetos que autoimporta django-extensions) — solo las tres últimas son las nuestras.
+        puerto, tiempo_espera, usa_tls = lineas[-3:]
+        return int(puerto), int(tiempo_espera), usa_tls == "True"
+
+    def test_puerto_vacio_arranca_con_el_puerto_por_defecto(self):
+        """R1 — hoy revienta con ValueError; debe arrancar y usar 587."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_PORT"] = ""
+        puerto, _tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(puerto, 587)
+
+    def test_tiempo_de_espera_vacio_arranca_con_el_por_defecto(self):
+        """R2 — hoy revienta con ValueError; debe arrancar y usar 10 segundos."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_TIMEOUT"] = ""
+        _puerto, tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(tiempo_espera, 10)
+
+    def test_use_tls_vacio_deja_el_cifrado_activado(self):
+        """R3 — hoy queda desactivado en silencio; debe quedar ACTIVADO (el valor seguro)."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_USE_TLS"] = ""
+        _puerto, _tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertTrue(usa_tls, "una variable vacía nunca puede apagar el cifrado")
+
+    def test_use_tls_acepta_variantes_de_mayusculas_y_espacios(self):
+        """R4 — hoy cualquiera de estas tres variantes apaga el cifrado; deben activarlo."""
+        for valor in ["true", "TRUE", " True "]:
+            with self.subTest(valor=valor):
+                entorno = os.environ.copy()
+                entorno["DJANGO_EMAIL_USE_TLS"] = valor
+                _puerto, _tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+                self.assertTrue(usa_tls, f"{valor!r} debe activar el cifrado")
+
+    def test_el_tiempo_de_espera_del_correo_queda_clavado(self):
+        """
+        R7 — hoy `EMAIL_TIMEOUT` se puede borrar entero de `settings.py` y la suite sigue en
+        verde (nada afirma sobre su valor). Este test lee la configuración YA cargada en este
+        mismo proceso (la real, la del `.env` de esta rama) y exige el valor concreto: si la
+        línea desaparece, `EMAIL_TIMEOUT` cae al default de Django (`None`) y esto se rompe.
+        """
+        from django.conf import settings
+
+        self.assertEqual(settings.EMAIL_TIMEOUT, 10)
+
+    def test_sin_definir_en_absoluto_se_comporta_como_siempre(self):
+        """
+        R5 (caso límite, no regresión) — con las tres variables ausentes DE VERDAD (ni en el
+        entorno del proceso ni en el `.env` del disco, que si no las rellenaría igual), el
+        resultado tiene que ser el de siempre: 587, 10 segundos, cifrado activado. El `.env`
+        real se aparta un instante (se renombra) y se restaura pase lo que pase.
+        """
+        ruta_env = self._RAIZ_PROYECTO / ".env"
+        ruta_env_temporal = self._RAIZ_PROYECTO / ".env.temporal-009-configuracion-de-correo"
+        entorno = os.environ.copy()
+        for variable in ("DJANGO_EMAIL_PORT", "DJANGO_EMAIL_TIMEOUT", "DJANGO_EMAIL_USE_TLS"):
+            entorno.pop(variable, None)
+
+        ruta_env.rename(ruta_env_temporal)
+        try:
+            puerto, tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+        finally:
+            ruta_env_temporal.rename(ruta_env)
+
+        self.assertEqual(puerto, 587)
+        self.assertEqual(tiempo_espera, 10)
+        self.assertTrue(usa_tls)
+
+
 class RecuperarContrasenaTests(PruebaConRegistroAbierto):
     """
     Unidad 008 — R2 (R-22), R3 y R4: recuperar la contraseña por correo, sin enseñar nunca la
@@ -886,7 +1004,7 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta = self.client.get("/cuentas/email/")
         self.assertEqual(respuesta.status_code, 404)
 
-    def test_las_seis_rutas_declaradas_renderizan_de_verdad(self):
+    def test_las_siete_rutas_explicitas_renderizan_de_verdad(self):
         """
         Control corregido en la 3ª revisión (H4): la versión anterior solo comprobaba que
         estas rutas EXISTÍAN (`status_code != 404`), y así se coló un `500` real —
@@ -895,10 +1013,16 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         reventaba con `NoReverseMatch`: enlazaba a `account_reset_password`, la ruta que H3
         quitó a propósito. Que una URL resuelva no significa que su plantilla renderice.
 
-        Por eso ahora cada una de las SEIS rutas que `kcalibra/urls.py` monta explícitamente
-        se pide de la forma que de verdad la ejercita (con sesión si la necesita, con una
-        clave si la necesita) y se comprueba el CONTENIDO de lo que devuelve, no solo que no
-        sea 404.
+        Renombrado en la unidad 009 (R6): decía "seis" pero `kcalibra/urls.py` monta DIEZ
+        rutas de `allauth`. De las diez, SIETE se ejercitan aquí una a una (con sesión si la
+        necesitan, con una clave si la necesitan), comprobando el CONTENIDO de lo que
+        devuelven, no solo que no sea 404. Las otras tres —`account_reset_password_done`,
+        `account_reset_password_from_key` y `account_reset_password_from_key_done`— YA se
+        pintan de refilón en `RecuperarContrasenaTests` (los `follow=True` del camino feliz
+        las atraviesan de verdad): repetirlas aquí sería duplicar cobertura, no añadirla. La
+        única que se quedó huérfana —ninguna prueba la dibujaba, solo la usaban como destino
+        de un POST— era `password_reset.html`, la pantalla de "¿Has olvidado tu contraseña?":
+        esa es la que se añade abajo.
         """
         # signup y login: SIN sesión, GET, 200 con su formulario pintado. (Con sesión,
         # `RedirectAuthenticatedUserMixin` de allauth las salta — por eso van ANTES de
@@ -931,3 +1055,11 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta_confirmar = self.client.get("/cuentas/confirm-email/una-clave-inventada/")
         self.assertEqual(respuesta_confirmar.status_code, 200)
         self.assertContains(respuesta_confirmar, "ya no vale")
+
+        # password/reset/: la ruta huérfana (R6, unidad 009). SIN sesión, GET, 200 con su
+        # propio formulario pintado — hasta ahora ningún test la pedía así: los once tests de
+        # `RecuperarContrasenaTests` solo hacen POST contra ella, así que `password_reset.html`
+        # nunca se había renderizado de verdad en la suite.
+        respuesta_reset = self.client.get("/cuentas/password/reset/")
+        self.assertEqual(respuesta_reset.status_code, 200)
+        self.assertContains(respuesta_reset, "¿Has olvidado tu contraseña?")
