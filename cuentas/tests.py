@@ -11,7 +11,11 @@ suman R2 (R-22), R3, R4, R5, R6 y R7: el correo sale de verdad y, si el envío f
 queda atrapado.
 """
 
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from smtplib import SMTPException
 from unittest import mock
 
@@ -22,6 +26,7 @@ from django.db import connection
 from django.test import TestCase, override_settings
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, DATOS_FISICOS_POR_DEFECTO, PruebaConRegistroAbierto
+from kcalibra.settings import _booleano_desde_entorno, _entero_desde_entorno
 
 Usuario = get_user_model()
 
@@ -660,6 +665,330 @@ class EnvioDeCorreoTests(PruebaConRegistroAbierto):
                 self.registrar("sin-fallos@example.com")
 
 
+class ConfiguracionDeCorreoTests(TestCase):
+    """
+    Unidad 009 — R1-R11: una variable de entorno del bloque de correo definida pero VACÍA (lo
+    más fácil del mundo al copiar `.env.example` a medias) no puede tumbar el arranque de la
+    app (R1, R2) ni desactivar el cifrado en silencio (R3, R4); sin definir en absoluto, el
+    comportamiento sigue siendo el de siempre (R5, caso límite de no regresión).
+
+    Ampliación de la 2ª ronda (R8-R11), con el principio que decidió el usuario: ante un valor
+    que no se entiende, la app falla RUIDOSAMENTE y nombrando la variable — nunca cae del lado
+    inseguro. `USE_TLS` acepta las formas habituales de sí/no (R8); un valor irreconocible en
+    `USE_TLS`, o uno no numérico en `PORT`/`TIMEOUT`, hace que la app NO arranque y el error
+    nombre la variable (R9, R10); y los ayudantes respetan de verdad el valor cuando SÍ lo hay,
+    no solo cuando falta (R11 — la sexta cara de "un test que no falla cuando debe": la 1ª
+    ronda solo clavó la rama "ausente o vacía", nunca la de "hay un valor y se usa").
+
+    Dos formas de ejercitar la lectura REAL de la configuración (nunca una copia de la regla
+    escrita aquí, que pasaría siempre y no probaría nada — 1ª cara del mismo error):
+
+    - Cuando lo que importa es que Django ARRANQUE (o se niegue a hacerlo) con esa
+      configuración de verdad cargada, cada test lanza un PROCESO APARTE (mismo motivo que
+      `ArranqueSinConfiguracionTests` de `paginas/tests.py`: una vez que ESTE proceso de test
+      ya importó `kcalibra.settings`, no hay forma limpia de "desconfigurarlo").
+    - Cuando lo que importa es el propio ayudante (`_entero_desde_entorno`,
+      `_booleano_desde_entorno`) — R5, R11 — se importa la función de producción DIRECTAMENTE
+      y se llama con `mock.patch.dict(os.environ, ..., clear=True)`: ejercita el código real
+      sin lanzar un subproceso ni tocar el disco. Corregido en la 2ª ronda (bloqueante del
+      revisor): la versión anterior de R5 renombraba el `.env` real del disco para simular
+      "no está definida en absoluto", y eso significaba mover un fichero con la `SECRET_KEY` y
+      las credenciales de la base de datos — un `kill -9` a mitad de esa ventana podía dejarlo
+      escondido bajo un nombre temporal sin que `git status` avisara (lo tapa `.gitignore`), y
+      además petaba con `FileNotFoundError` en cualquier máquina sin `.env` en disco (el día
+      del despliegue, que es justo lo que esta unidad protege). El cableado función ->
+      `EMAIL_PORT`/`EMAIL_TIMEOUT`/`EMAIL_USE_TLS` ya lo demuestran de sobra los subprocesos de
+      R1-R4 de aquí abajo: no hace falta repetirlo para probar el ayudante en sí.
+    """
+
+    _RAIZ_PROYECTO = Path(__file__).resolve().parent.parent
+
+    def _leer_configuracion_de_correo(self, entorno):
+        """Lanza `manage.py shell -c` en un subproceso con el entorno dado y devuelve
+        (EMAIL_PORT, EMAIL_TIMEOUT, EMAIL_USE_TLS) tal como Django los cargó de verdad."""
+        resultado = subprocess.run(
+            [
+                sys.executable,
+                "manage.py",
+                "shell",
+                "-c",
+                "from django.conf import settings\n"
+                "print(settings.EMAIL_PORT)\n"
+                "print(settings.EMAIL_TIMEOUT)\n"
+                "print(settings.EMAIL_USE_TLS)\n",
+            ],
+            cwd=str(self._RAIZ_PROYECTO),
+            env=entorno,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            resultado.returncode,
+            0,
+            "la app debe arrancar con esta configuración de correo, y no lo hizo:\n"
+            f"stdout: {resultado.stdout}\nstderr: {resultado.stderr}",
+        )
+        lineas = [linea for linea in resultado.stdout.strip().splitlines() if linea.strip()]
+        # El comando de shell puede imprimir avisos antes de nuestras tres líneas (p. ej. los
+        # objetos que autoimporta django-extensions) — solo las tres últimas son las nuestras.
+        puerto, tiempo_espera, usa_tls = lineas[-3:]
+        return int(puerto), int(tiempo_espera), usa_tls == "True"
+
+    @staticmethod
+    def _mensaje_final_de(salida_completa):
+        """
+        Aísla la ÚLTIMA línea no vacía de la salida de un subproceso que reventó — la que
+        Python usa para el mensaje real de la excepción ("NombreDeLaExcepcion: mensaje"), no
+        el volcado del traceback entero.
+
+        Bloqueante de la 3ª ronda (R13): comprobar `assertIn(nombre_variable, salida_completa)`
+        contra el volcado COMPLETO es un superviviente — el re-revisor mutiló los dos mensajes
+        para que dejaran de nombrar la variable y la suite se quedó en VERDE, porque cada marco
+        del traceback imprime la LÍNEA DE CÓDIGO FUENTE que lo originó, y esa línea
+        (`EMAIL_USE_TLS = _booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)`) YA contiene
+        el nombre de la variable, gane o pierda el mensaje. Aislar la última línea es la única
+        forma de comprobar el MENSAJE, no el fichero que lo rodea.
+
+        CONTRAINDICACIÓN (léela antes de "arreglar" esto): esto exige que los mensajes de
+        `ImproperlyConfigured` de `settings.py` quepan en una sola línea física — si algún día
+        hace falta partir uno en varias, la solución NO es volver a comprobar el volcado
+        completo (eso reabriría R13, el bloqueante de la 3ª ronda: el volcado siempre contiene
+        el nombre de la variable por la línea de código de la llamada, gane o pierda el
+        mensaje). La solución es, por ejemplo, aislar el bloque completo del mensaje (varias
+        líneas seguidas sin línea en blanco al final del traceback) en vez de una sola línea.
+        """
+        lineas = [linea for linea in salida_completa.strip().splitlines() if linea.strip()]
+        return lineas[-1] if lineas else ""
+
+    def test_puerto_vacio_arranca_con_el_puerto_por_defecto(self):
+        """R1 — hoy revienta con ValueError; debe arrancar y usar 587."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_PORT"] = ""
+        puerto, _tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(puerto, 587)
+
+    def test_tiempo_de_espera_vacio_arranca_con_el_por_defecto(self):
+        """R2 — hoy revienta con ValueError; debe arrancar y usar 10 segundos."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_TIMEOUT"] = ""
+        _puerto, tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(tiempo_espera, 10)
+
+    def test_use_tls_vacio_deja_el_cifrado_activado(self):
+        """R3 — hoy queda desactivado en silencio; debe quedar ACTIVADO (el valor seguro)."""
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_USE_TLS"] = ""
+        _puerto, _tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertTrue(usa_tls, "una variable vacía nunca puede apagar el cifrado")
+
+    def test_use_tls_acepta_formas_habituales_de_decir_si(self):
+        """R4/R8 — variantes de "sí" (incluidas las de la 1ª ronda), sin mirar mayúsculas ni
+        espacios, activan el cifrado."""
+        for valor in ["true", "TRUE", " True ", "1", "yes", "YES", "on", "On", "si", "sí", "Sí"]:
+            with self.subTest(valor=valor):
+                entorno = os.environ.copy()
+                entorno["DJANGO_EMAIL_USE_TLS"] = valor
+                _puerto, _tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+                self.assertTrue(usa_tls, f"{valor!r} debe activar el cifrado")
+
+    def test_use_tls_acepta_formas_habituales_de_decir_no(self):
+        """
+        R8 — "false", "0", "no", "off" desactivan el cifrado EXPLÍCITAMENTE (a diferencia de
+        una variable vacía, que lo deja ACTIVADO por R3: aquí SÍ hay un valor, y ese valor dice
+        que no). Sin mirar mayúsculas ni espacios, igual que la lista de "sí".
+        """
+        for valor in ["false", "FALSE", " False ", "0", "no", "NO", "off", "OFF"]:
+            with self.subTest(valor=valor):
+                entorno = os.environ.copy()
+                entorno["DJANGO_EMAIL_USE_TLS"] = valor
+                _puerto, _tiempo_espera, usa_tls = self._leer_configuracion_de_correo(entorno)
+                self.assertFalse(usa_tls, f"{valor!r} debe desactivar el cifrado")
+
+    def test_use_tls_valor_irreconocible_no_arranca_y_nombra_la_variable(self):
+        """
+        R9 — un valor que no está en NINGUNA de las dos listas de R8 (un typo como "ture", o
+        "xyz") no puede resolverse como "desactivado": eso sería exactamente el mismo fallo del
+        lado inseguro que R3 cerró para la variable vacía. La app se niega a arrancar, y el
+        MENSAJE nombra la variable — se comprueba en la última línea de la salida (el mensaje
+        real de la excepción, ver `_mensaje_final_de`), no en el volcado completo del
+        traceback: R13, unidad 009, 3ª ronda. El volcado completo contiene el nombre de la
+        variable de todos modos (aparece en la línea de código de la llamada,
+        `_booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)`), así que comprobarlo ahí no
+        distingue un mensaje que nombra la variable de uno que no.
+        """
+        for valor in ["ture", "xyz"]:
+            with self.subTest(valor=valor):
+                entorno = os.environ.copy()
+                entorno["DJANGO_EMAIL_USE_TLS"] = valor
+                resultado = subprocess.run(
+                    [sys.executable, "manage.py", "check"],
+                    cwd=str(self._RAIZ_PROYECTO),
+                    env=entorno,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                salida_completa = resultado.stdout + resultado.stderr
+                self.assertNotEqual(
+                    resultado.returncode,
+                    0,
+                    f"la app NO debe arrancar con DJANGO_EMAIL_USE_TLS={valor!r}",
+                )
+                mensaje_final = self._mensaje_final_de(salida_completa)
+                self.assertIn("DJANGO_EMAIL_USE_TLS", mensaje_final)
+                self.assertIn(
+                    "no se entiende como sí/no",
+                    mensaje_final,
+                    "el mensaje debe ser el nuestro, no un ValueError en bruto",
+                )
+
+    def test_puerto_y_tiempo_de_espera_no_numericos_no_arrancan_y_nombran_la_variable(self):
+        """
+        R10 — hoy un valor no numérico en PORT o TIMEOUT revienta con un `ValueError` críptico
+        que no dice cuál de las dos variables falló (la queja con la que nació R1, resuelta en
+        la 1ª ronda solo para el caso vacío). Mismo patrón que `variable_obligatoria()`, diez
+        líneas más arriba en `settings.py`: la app no arranca y el MENSAJE nombra la variable —
+        comprobado en la última línea de la salida (ver `_mensaje_final_de`), no en el volcado
+        completo: R13, unidad 009, 3ª ronda.
+        """
+        for variable in ("DJANGO_EMAIL_PORT", "DJANGO_EMAIL_TIMEOUT"):
+            with self.subTest(variable=variable):
+                entorno = os.environ.copy()
+                entorno[variable] = "abc"
+                resultado = subprocess.run(
+                    [sys.executable, "manage.py", "check"],
+                    cwd=str(self._RAIZ_PROYECTO),
+                    env=entorno,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                salida_completa = resultado.stdout + resultado.stderr
+                self.assertNotEqual(
+                    resultado.returncode, 0, f"la app NO debe arrancar con {variable}='abc'"
+                )
+                mensaje_final = self._mensaje_final_de(salida_completa)
+                self.assertIn(variable, mensaje_final)
+                self.assertIn(
+                    "no es un número",
+                    mensaje_final,
+                    "el mensaje debe ser el nuestro, no un ValueError en bruto",
+                )
+
+    def test_el_tiempo_de_espera_del_correo_queda_clavado(self):
+        """
+        R7 — hoy `EMAIL_TIMEOUT` se puede borrar entero de `settings.py` y la suite sigue en
+        verde (nada afirma sobre su valor). Clava que la LÍNEA
+        `EMAIL_TIMEOUT = _entero_desde_entorno(...)` sigue ahí: si desaparece, `EMAIL_TIMEOUT`
+        cae al default de Django (`None`) SIN IMPORTAR qué diga el entorno, y el test se entera.
+
+        Corregido en la 3ª ronda: la versión anterior comparaba `settings.EMAIL_TIMEOUT` (ya
+        cargado en ESTE proceso desde el `.env` real de la máquina) contra `10` a secas — el
+        re-revisor demostró que con `DJANGO_EMAIL_TIMEOUT=30` en el entorno real (una
+        configuración perfectamente legítima), la suite se ponía roja con `30 != 10`, que no
+        tiene nada que ver con si la línea sigue en `settings.py`. Ahora se fuerza, en el
+        entorno del SUBPROCESO, un valor propio elegido por el test (`"17"`, que no coincide
+        con ningún valor por defecto ni con lo que traiga el `.env` real) — así el test es
+        portable a cualquier máquina, con cualquier `.env`.
+        """
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_TIMEOUT"] = "17"
+        _puerto, tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(tiempo_espera, 17)
+
+    def test_puerto_de_solo_espacios_arranca_con_el_puerto_por_defecto(self):
+        """
+        Superviviente confirmado por el re-revisor (3ª ronda): el `.strip()` de
+        `_entero_desde_entorno` (`kcalibra/settings.py`) no lo clavaba ningún test. Un valor de
+        puros espacios (fácil de meter sin querer al copiar/pegar un `.env`, o si el propio
+        editor añade un espacio de más) debe tratarse como AUSENTE — el valor por defecto —, no
+        como un valor no numérico que tumbe el arranque (R1/R10).
+        """
+        entorno = os.environ.copy()
+        entorno["DJANGO_EMAIL_PORT"] = "   "
+        puerto, _tiempo_espera, _usa_tls = self._leer_configuracion_de_correo(entorno)
+        self.assertEqual(puerto, 587)
+
+    def test_negativo_o_cero_no_arranca_y_nombra_la_variable(self):
+        """
+        R12 (ampliación de la 3ª ronda, la última) — hoy `DJANGO_EMAIL_TIMEOUT=-1` o `=0` se
+        aceptan en silencio: la app arranca y revienta DESPUÉS, en plena petición SMTP, con
+        `ValueError: Timeout value out of range` (Python no acepta un timeout de socket que no
+        sea positivo). Es el último resquicio del lado inseguro: un valor sin sentido no puede
+        colarse hasta la petición — la app se niega a arrancar y el MENSAJE nombra la variable,
+        igual que R10 para los no numéricos.
+
+        Corregido en la 4ª ronda (deuda D1, señalada por el re-revisor): R12 nombra las DOS
+        variables (`DJANGO_EMAIL_PORT` y `DJANGO_EMAIL_TIMEOUT` comparten `_entero_desde_entorno`,
+        y la validación `<= 0` está escrita una sola vez para las dos), pero este test solo
+        ejercitaba `DJANGO_EMAIL_TIMEOUT` — un `PORT` negativo o cero podía dejar de rechazarse
+        sin que la suite se enterara (mutación superviviente confirmada: exentar `PORT` de la
+        validación con `and nombre != "DJANGO_EMAIL_PORT"` dejaba la suite en VERDE). Ahora
+        recorre las dos, mismo patrón que
+        `test_puerto_y_tiempo_de_espera_no_numericos_no_arrancan_y_nombran_la_variable` (R10)
+        diez líneas más arriba — es la tercera vez en esta unidad que aparece "media cláusula
+        clavada, la otra mitad sin test" (ver `hallazgos.md`).
+        """
+        for variable in ("DJANGO_EMAIL_PORT", "DJANGO_EMAIL_TIMEOUT"):
+            for valor in ["-1", "0"]:
+                with self.subTest(variable=variable, valor=valor):
+                    entorno = os.environ.copy()
+                    entorno[variable] = valor
+                    resultado = subprocess.run(
+                        [sys.executable, "manage.py", "check"],
+                        cwd=str(self._RAIZ_PROYECTO),
+                        env=entorno,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    salida_completa = resultado.stdout + resultado.stderr
+                    self.assertNotEqual(
+                        resultado.returncode,
+                        0,
+                        f"la app NO debe arrancar con {variable}={valor!r}",
+                    )
+                    mensaje_final = self._mensaje_final_de(salida_completa)
+                    self.assertIn(variable, mensaje_final)
+                    self.assertIn(
+                        "mayor que cero",
+                        mensaje_final,
+                        "el mensaje debe ser el nuestro, no un ValueError en bruto en plena petición",
+                    )
+
+    def test_sin_definir_en_absoluto_se_comporta_como_siempre(self):
+        """
+        R5 (caso límite, no regresión) — con las tres variables AUSENTES de verdad, el
+        resultado tiene que ser el de siempre: 587, 10 segundos, cifrado activado. Se llama a
+        los ayudantes de producción DIRECTAMENTE con `mock.patch.dict(os.environ, {},
+        clear=True)` — ver el porqué en el docstring de la clase (bloqueante corregido en la
+        2ª ronda: la versión anterior tocaba el `.env` real del disco).
+        """
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_entero_desde_entorno("DJANGO_EMAIL_PORT", 587), 587)
+            self.assertEqual(_entero_desde_entorno("DJANGO_EMAIL_TIMEOUT", 10), 10)
+            self.assertTrue(_booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True))
+
+    def test_los_ayudantes_respetan_el_valor_cuando_si_lo_hay(self):
+        """
+        R11 (la sexta cara de "un test que no falla cuando debe") — la 1ª ronda solo clavó la
+        rama "ausente o vacía -> por defecto" de los dos ayudantes; ninguno de sus tests
+        distinguía un ayudante que LEE el entorno de uno que ignora todo y siempre devuelve el
+        valor por defecto (así se coló: 196 tests en verde con los dos ayudantes ciegos). Se
+        llama a la función de producción DIRECTAMENTE, con un valor DISTINTO del por defecto en
+        cada caso, para que no cuele un ayudante que solo reconozca el valor por defecto mismo.
+        """
+        with mock.patch.dict(os.environ, {"DJANGO_EMAIL_PORT": "2525"}, clear=True):
+            self.assertEqual(_entero_desde_entorno("DJANGO_EMAIL_PORT", 587), 2525)
+
+        with mock.patch.dict(os.environ, {"DJANGO_EMAIL_TIMEOUT": "30"}, clear=True):
+            self.assertEqual(_entero_desde_entorno("DJANGO_EMAIL_TIMEOUT", 10), 30)
+
+        with mock.patch.dict(os.environ, {"DJANGO_EMAIL_USE_TLS": "false"}, clear=True):
+            self.assertFalse(_booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True))
+
+
 class RecuperarContrasenaTests(PruebaConRegistroAbierto):
     """
     Unidad 008 — R2 (R-22), R3 y R4: recuperar la contraseña por correo, sin enseñar nunca la
@@ -886,7 +1215,7 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta = self.client.get("/cuentas/email/")
         self.assertEqual(respuesta.status_code, 404)
 
-    def test_las_seis_rutas_declaradas_renderizan_de_verdad(self):
+    def test_las_siete_rutas_explicitas_renderizan_de_verdad(self):
         """
         Control corregido en la 3ª revisión (H4): la versión anterior solo comprobaba que
         estas rutas EXISTÍAN (`status_code != 404`), y así se coló un `500` real —
@@ -895,10 +1224,16 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         reventaba con `NoReverseMatch`: enlazaba a `account_reset_password`, la ruta que H3
         quitó a propósito. Que una URL resuelva no significa que su plantilla renderice.
 
-        Por eso ahora cada una de las SEIS rutas que `kcalibra/urls.py` monta explícitamente
-        se pide de la forma que de verdad la ejercita (con sesión si la necesita, con una
-        clave si la necesita) y se comprueba el CONTENIDO de lo que devuelve, no solo que no
-        sea 404.
+        Renombrado en la unidad 009 (R6): decía "seis" pero `kcalibra/urls.py` monta DIEZ
+        rutas de `allauth`. De las diez, SIETE se ejercitan aquí una a una (con sesión si la
+        necesitan, con una clave si la necesitan), comprobando el CONTENIDO de lo que
+        devuelven, no solo que no sea 404. Las otras tres —`account_reset_password_done`,
+        `account_reset_password_from_key` y `account_reset_password_from_key_done`— YA se
+        pintan de refilón en `RecuperarContrasenaTests` (los `follow=True` del camino feliz
+        las atraviesan de verdad): repetirlas aquí sería duplicar cobertura, no añadirla. La
+        única que se quedó huérfana —ninguna prueba la dibujaba, solo la usaban como destino
+        de un POST— era `password_reset.html`, la pantalla de "¿Has olvidado tu contraseña?":
+        esa es la que se añade abajo.
         """
         # signup y login: SIN sesión, GET, 200 con su formulario pintado. (Con sesión,
         # `RedirectAuthenticatedUserMixin` de allauth las salta — por eso van ANTES de
@@ -931,3 +1266,15 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta_confirmar = self.client.get("/cuentas/confirm-email/una-clave-inventada/")
         self.assertEqual(respuesta_confirmar.status_code, 200)
         self.assertContains(respuesta_confirmar, "ya no vale")
+
+        # password/reset/: la ruta huérfana (R6, unidad 009) — "la primera pantalla que ve
+        # alguien que NO puede entrar", así que se pide SIN sesión de verdad: la de arriba
+        # (`registrar_y_verificar` en la comprobación de logout) sigue abierta en el cliente de
+        # pruebas, así que hay que cerrarla aquí antes del GET. Un GET, 200 con su propio
+        # formulario pintado — hasta ahora ningún test la pedía así: los once tests de
+        # `RecuperarContrasenaTests` solo hacen POST contra ella, así que `password_reset.html`
+        # nunca se había renderizado de verdad en la suite.
+        self.client.logout()
+        respuesta_reset = self.client.get("/cuentas/password/reset/")
+        self.assertEqual(respuesta_reset.status_code, 200)
+        self.assertContains(respuesta_reset, "¿Has olvidado tu contraseña?")

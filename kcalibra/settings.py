@@ -302,22 +302,86 @@ EMAIL_BACKEND = os.environ.get(
 )
 DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "no-responder@kcalibra.app")
 
+
+def _entero_desde_entorno(nombre, por_defecto):
+    """
+    Lee una variable de entorno numérica. Regla (unidad 009, R1/R2/R10/R11/R12): variable
+    AUSENTE o presente pero VACÍA (lo más fácil del mundo al copiar `.env.example` a medias)
+    -> el valor por defecto. Si SÍ trae algo, ese valor manda SIEMPRE (R11: no basta con no
+    reventar, hay que respetarlo de verdad) — pero solo si tiene sentido: si no es un número
+    (R10), o si es un número que no puede serlo (cero o negativo, R12: un timeout así no
+    revienta al arrancar, sino DESPUÉS, en plena petición SMTP, con
+    `ValueError: Timeout value out of range` — el mismo fallo tardío que R1/R2 cerraron para el
+    caso vacío), la app se niega a arrancar nombrando la variable (mismo patrón que
+    `variable_obligatoria()`, ahí arriba), nunca un `ValueError` en bruto que no dice cuál de
+    las variables había fallado ni cuándo iba a reventar de verdad.
+    """
+    valor = os.environ.get(nombre, "").strip()
+    if not valor:
+        return por_defecto
+    try:
+        numero = int(valor)
+    except ValueError:
+        raise ImproperlyConfigured(
+            f"La variable de entorno '{nombre}' vale {valor!r} y no es un número. "
+            "Corrígela en tu .env, o bórrala/déjala vacía para usar el valor por defecto. "
+            "Instrucciones completas en AGENTS.md."
+        ) from None
+    if numero <= 0:
+        raise ImproperlyConfigured(
+            f"La variable de entorno '{nombre}' vale {valor!r} y tiene que ser mayor que cero. "
+            "Corrígela en tu .env, o bórrala/déjala vacía para usar el valor por defecto. "
+            "Instrucciones completas en AGENTS.md."
+        )
+    return numero
+
+
+# R8: las formas habituales de decir "sí" y de decir "no" en una variable de entorno, sin
+# mirar mayúsculas ni espacios de más.
+_FORMAS_DE_SI = {"true", "1", "yes", "on", "si", "sí"}
+_FORMAS_DE_NO = {"false", "0", "no", "off"}
+
+
+def _booleano_desde_entorno(nombre, por_defecto):
+    """
+    Lee una variable de entorno de sí/no. Regla de ausente/vacía igual que
+    `_entero_desde_entorno` (unidad 009, R3/R5/R11): -> el valor por defecto. Si SÍ trae algo,
+    acepta las formas habituales de `_FORMAS_DE_SI`/`_FORMAS_DE_NO` (R4/R8). Un valor que no
+    está en ninguna de las dos listas (un typo como "ture") NUNCA se resuelve como
+    "desactivado" — sería colar el mismo fallo del lado inseguro que R3 cerró para la variable
+    vacía: la app se niega a arrancar y el mensaje nombra la variable (R9).
+    """
+    valor_bruto = os.environ.get(nombre, "")
+    valor = valor_bruto.strip().lower()
+    if not valor:
+        return por_defecto
+    if valor in _FORMAS_DE_SI:
+        return True
+    if valor in _FORMAS_DE_NO:
+        return False
+    raise ImproperlyConfigured(
+        f"La variable de entorno '{nombre}' vale {valor_bruto!r} y no se entiende como sí/no. "
+        "Usa uno de estos valores: true/1/yes/on/si/sí (activa) o false/0/no/off (desactiva). "
+        "Instrucciones completas en AGENTS.md."
+    )
+
+
 # Las variables de conexión SMTP (unidad 008). Con el backend de consola de arriba (el valor
 # por defecto en este portátil) `smtp.EmailBackend` ni se importa, así que estas variables no
 # se usan para nada — solo entran en juego el día que `DJANGO_EMAIL_BACKEND` apunte al backend
 # SMTP real. El repo NUNCA trae credenciales (regla de oro): todo sale del entorno, con
 # valores por defecto vacíos o inocuos, nunca con una clave de verdad escrita aquí.
 EMAIL_HOST = os.environ.get("DJANGO_EMAIL_HOST", "")
-EMAIL_PORT = int(os.environ.get("DJANGO_EMAIL_PORT", "587"))
+EMAIL_PORT = _entero_desde_entorno("DJANGO_EMAIL_PORT", 587)
 EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("DJANGO_EMAIL_USE_TLS", "True") == "True"
+EMAIL_USE_TLS = _booleano_desde_entorno("DJANGO_EMAIL_USE_TLS", True)
 # La deuda que el ADR-004 deja escrita: sin `EMAIL_TIMEOUT`, Django no pone ningún límite al
 # socket SMTP — si el proveedor no contesta, la petición entera (y el hilo que la atiende) se
 # queda colgada esperando, indefinidamente. 10 segundos sobra para un envío SMTP normal (y es
 # justo el tipo de fallo que R5/R6 tienen que sobrevivir sin dar un 500: ver
 # `cuentas/adapters.py`, que captura el `TimeoutError` que esto dispara).
-EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
+EMAIL_TIMEOUT = _entero_desde_entorno("DJANGO_EMAIL_TIMEOUT", 10)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
