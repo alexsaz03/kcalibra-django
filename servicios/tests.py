@@ -524,7 +524,7 @@ class AgruparEntrenosPorSemanaTests(unittest.TestCase):
             {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},
             {"fecha": date(2026, 8, 2), "minutos": 45, "calorias": 400},
         ]
-        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy)
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
         self.assertEqual(len(semanas), 1)
         self.assertEqual(semanas[0]["entrenos"], 2)
         self.assertEqual(semanas[0]["minutos"], 75)
@@ -538,7 +538,7 @@ class AgruparEntrenosPorSemanaTests(unittest.TestCase):
             {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},  # semana actual (idx 0)
             {"fecha": date(2026, 7, 26), "minutos": 20, "calorias": 200},  # 10 días atrás (idx 1)
         ]
-        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy)
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
         self.assertEqual(len(semanas), 2)
         for semana in semanas:
             self.assertEqual(semana["entrenos"], 1)
@@ -549,11 +549,13 @@ class AgruparEntrenosPorSemanaTests(unittest.TestCase):
             {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},  # más reciente
             {"fecha": date(2026, 7, 20), "minutos": 20, "calorias": 200},  # más antiguo
         ]
-        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy)
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
         self.assertLess(semanas[0]["inicio"], semanas[1]["inicio"])
 
     def test_sin_entrenos_da_una_lista_vacia_sin_reventar(self):
-        self.assertEqual(progreso.agrupar_entrenos_por_semana([], date(2026, 8, 5)), [])
+        self.assertEqual(
+            progreso.agrupar_entrenos_por_semana([], date(2026, 8, 5), semanas=12), []
+        )
 
     def test_la_semana_con_mas_entrenos_llega_al_100_por_cien_de_altura(self):
         hoy = date(2026, 8, 5)
@@ -562,10 +564,54 @@ class AgruparEntrenosPorSemanaTests(unittest.TestCase):
             {"fecha": date(2026, 8, 3), "minutos": 30, "calorias": 300},
             {"fecha": date(2026, 7, 20), "minutos": 30, "calorias": 300},  # semana con 1 solo
         ]
-        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy)
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
         alturas = {semana["entrenos"]: semana["altura_pct"] for semana in semanas}
         self.assertEqual(alturas[2], 100)
         self.assertLess(alturas[1], 100)
+
+
+class AgruparEntrenosPorSemanaPeriodoLlenoTests(unittest.TestCase):
+    """
+    Ronda 2 (hueco de la revisión, `hallazgos.md`) — el caso que ninguno de los tests de arriba
+    cazaba: con un entreno CADA día del periodo (nadie falla ni un día), la barra más antigua NO
+    puede ser un cubo de 1 día disfrazado de semana entera.
+
+    `recortar_por_periodo` usa un límite INCLUSIVO (`hoy - semanas semanas` hasta `hoy`, ambos
+    dentro): el periodo tiene `semanas*7 + 1` días, uno más de los que caben en `semanas`
+    bloques de 7. Por eso el montaje es exactamente ese: un entreno por cada uno de esos
+    `semanas*7 + 1` días, sin huecos — así el día sobrante SIEMPRE está presente y cualquier
+    desbordamiento se nota.
+
+    Se comprueba, para dos periodos distintos (el de 12 semanas por defecto y uno pequeño de 4):
+    que salen EXACTAMENTE `semanas` barras (nunca `semanas + 1`, el síntoma del hueco), que cada
+    barra no miente — su cuenta de entrenos coincide con el número real de días de su propio
+    rango (`fin - inicio + 1`), y que la suma de entrenos de todas las barras es el total del
+    periodo (ni se pierde ni se duplica ninguno).
+    """
+
+    @staticmethod
+    def _entrenos_por_cada_dia_del_periodo(hoy, semanas):
+        dias_del_periodo = semanas * 7 + 1  # el límite de recortar_por_periodo es inclusivo
+        return [
+            {"fecha": hoy - timedelta(days=i), "minutos": 30, "calorias": 300}
+            for i in range(dias_del_periodo)
+        ]
+
+    def _verificar_periodo_lleno(self, hoy, semanas):
+        entrenos = self._entrenos_por_cada_dia_del_periodo(hoy, semanas)
+        semanas_agrupadas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas)
+
+        self.assertEqual(len(semanas_agrupadas), semanas)
+        for semana in semanas_agrupadas:
+            dias_del_rango = (semana["fin"] - semana["inicio"]).days + 1
+            self.assertEqual(semana["entrenos"], dias_del_rango)
+        self.assertEqual(sum(s["entrenos"] for s in semanas_agrupadas), len(entrenos))
+
+    def test_periodo_lleno_con_las_12_semanas_por_defecto(self):
+        self._verificar_periodo_lleno(hoy=date(2026, 8, 5), semanas=12)
+
+    def test_periodo_lleno_con_4_semanas(self):
+        self._verificar_periodo_lleno(hoy=date(2026, 8, 5), semanas=4)
 
 
 class CalcularCumplimientoTests(unittest.TestCase):

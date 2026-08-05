@@ -73,7 +73,7 @@ def ver_progreso(request, usuario_id=None):
     # la clave "fecha", así que sirve tal cual sin escribir una segunda resta de fechas.
     entrenos = list(usuario_objetivo.entrenos.values("fecha", "minutos", "calorias"))
     entrenos_del_periodo = recortar_por_periodo(entrenos, semanas, hoy)
-    semanas_de_entreno = agrupar_entrenos_por_semana(entrenos_del_periodo, hoy)
+    semanas_de_entreno = agrupar_entrenos_por_semana(entrenos_del_periodo, hoy, semanas)
 
     # R-80/R3/R4/R5/R10/C-87 — el cumplimiento de esa persona, y solo de ella (mismo criterio:
     # `usuario_objetivo.cierres_de_dia`, sin mezclar el hogar). El porcentaje se calcula sobre

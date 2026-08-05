@@ -80,7 +80,7 @@ def recortar_por_periodo(mediciones, semanas, hoy):
     )
 
 
-def agrupar_entrenos_por_semana(entrenos_del_periodo, hoy):
+def agrupar_entrenos_por_semana(entrenos_del_periodo, hoy, semanas):
     """
     R-79/R1/C-89 — los `entrenos_del_periodo` (YA recortados con `recortar_por_periodo`, arriba
     — lista de dicts con "fecha", "minutos" y "calorias") agrupados en bloques de 7 días
@@ -96,21 +96,39 @@ def agrupar_entrenos_por_semana(entrenos_del_periodo, hoy):
     calorías, sumados), una `altura_pct` (0-100) para dibujar la barra sin librerías (Cómo,
     punto 4): la altura es relativa al máximo de entrenos de UNA semana dentro de este mismo
     resultado, así que la barra más alta del periodo siempre llega al 100%.
+
+    Ronda 2 (hueco de la revisión, `hallazgos.md`) — `semanas` es NUEVO: hace falta para saber
+    dónde está el borde real del periodo. `recortar_por_periodo` usa un límite INCLUSIVO
+    (`hoy - semanas semanas` hasta `hoy`, ambos dentro), así que el periodo tiene
+    `semanas*7 + 1` días, no `semanas*7`. Teselar en bloques fijos de 7 (`dias_atras // 7`) deja
+    un día suelto que antes desbordaba a un cubo extra de índice `semanas`, con un solo día
+    dentro pero etiquetado con un rango de 7 completos — la barra más antigua mentía sobre lo
+    que cubría. Aquí el índice se recorta a `semanas - 1` (el día sobrante se funde en el cubo
+    más antiguo, nunca abre uno nuevo) y ESE cubo extiende su `inicio` hasta el límite real del
+    periodo (`hoy - semanas*7` días, el mismo que calcula `recortar_por_periodo`): así su
+    etiqueta pasa a cubrir 8 días de verdad, en vez de 7 fingidos. Ni un entreno cambia de
+    bando: solo cambia dónde se traza la frontera del cubo más antiguo y qué dice su etiqueta.
     """
+    ultimo_indice = semanas - 1
     semanas_por_indice = {}
     for entreno in entrenos_del_periodo:
         dias_atras = (hoy - entreno["fecha"]).days
-        indice = dias_atras // 7
-        semana = semanas_por_indice.setdefault(
-            indice,
-            {
-                "inicio": hoy - timedelta(days=indice * 7 + 6),
+        indice = min(dias_atras // 7, ultimo_indice)
+        if indice not in semanas_por_indice:
+            # El cubo más antiguo (índice `ultimo_indice`) no mide 7 días como los demás: mide
+            # lo que de verdad le queda del periodo, `semanas*7` días hacia atrás desde `hoy`
+            # (el límite de `recortar_por_periodo`) — normalmente 8 con el día sobrante fundido.
+            dias_de_inicio = (
+                semanas * 7 if indice == ultimo_indice else indice * 7 + 6
+            )
+            semanas_por_indice[indice] = {
+                "inicio": hoy - timedelta(days=dias_de_inicio),
                 "fin": hoy - timedelta(days=indice * 7),
                 "entrenos": 0,
                 "minutos": 0,
                 "calorias": 0,
-            },
-        )
+            }
+        semana = semanas_por_indice[indice]
         semana["entrenos"] += 1
         semana["minutos"] += entreno["minutos"]
         semana["calorias"] += entreno["calorias"]
