@@ -19,7 +19,9 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from cierres.models import CierreDeDia
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from entrenos.models import Entreno
 from hogares.models import SolicitudEntrada
 from perfiles.models import MedicionPeso
 
@@ -42,6 +44,42 @@ def _fijar_mediciones(usuario, mediciones):
             peso_kg=datos["peso_kg"],
             grasa_pct=datos.get("grasa_pct"),
             cintura_cm=datos.get("cintura_cm"),
+        )
+
+
+def _fijar_entrenos(usuario, entrenos):
+    """
+    Unidad 013 — sustituye TODOS los entrenos de `usuario` por `entrenos`: lista de dicts con
+    "dias_atras" (entero, 0 = hoy), "minutos" y "calorias". Deporte e intensidad son datos de
+    relleno (no afectan a R1: esta unidad AGRUPA entrenos ya existentes, no vuelve a calcular
+    sus calorías — eso ya lo prueban `servicios/tests.py` y `entrenos/tests.py`).
+    """
+    Entreno.objects.filter(usuario=usuario).delete()
+    hoy = timezone.localdate()
+    for datos in entrenos:
+        Entreno.objects.create(
+            usuario=usuario,
+            fecha=hoy - timedelta(days=datos["dias_atras"]),
+            deporte=datos.get("deporte", "correr"),
+            intensidad=datos.get("intensidad", "media"),
+            minutos=datos["minutos"],
+            calorias=datos["calorias"],
+            calorias_manuales=True,
+        )
+
+
+def _fijar_cierres(usuario, cierres):
+    """
+    Unidad 013 — sustituye TODOS los cierres de `usuario` por `cierres`: lista de dicts con
+    "dias_atras" y "respuesta" (`CierreDeDia.LO_SEGUI` / `A_MEDIAS` / `NO_LO_SEGUI`).
+    """
+    CierreDeDia.objects.filter(usuario=usuario).delete()
+    hoy = timezone.localdate()
+    for datos in cierres:
+        CierreDeDia.objects.create(
+            usuario=usuario,
+            fecha=hoy - timedelta(days=datos["dias_atras"]),
+            respuesta=datos["respuesta"],
         )
 
 
@@ -349,3 +387,240 @@ class SinSesionTests(BaseProgresoTests):
         self.client.logout()
         respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
         self.assertEqual(respuesta.status_code, 302)
+
+
+# ==========================================================================================
+# Unidad 013 (completar-progreso.md): entrenos por semanas (R-79) y cumplimiento (R-80).
+# Las clases de arriba son de la 010 y NO se tocan (regla del constructor); todo lo de abajo
+# es nuevo, sobre la MISMA pantalla.
+# ==========================================================================================
+
+
+class EntrenosPorSemanaTests(BaseProgresoTests):
+    """R1/R-79 — los entrenos realizados agrupados por semanas, con sus tres números: cuántos,
+    minutos y calorías, sumados dentro de la misma semana."""
+
+    def test_r1_una_semana_con_dos_entrenos_suma_los_tres_numeros(self):
+        _fijar_entrenos(
+            self.alejandro,
+            [
+                {"dias_atras": 1, "minutos": 30, "calorias": 300},
+                {"dias_atras": 3, "minutos": 45, "calorias": 400},
+            ],
+        )
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        semanas = respuesta.context["semanas_de_entreno"]
+        self.assertEqual(len(semanas), 1)
+        self.assertEqual(semanas[0]["entrenos"], 2)
+        self.assertEqual(semanas[0]["minutos"], 75)
+        self.assertEqual(semanas[0]["calorias"], 700)
+        # Y los tres números también SE VEN (segunda cara: la respuesta se renderiza de verdad).
+        self.assertContains(respuesta, "75 min")
+        self.assertContains(respuesta, "700 kcal")
+
+
+class EntrenosDeVariasSemanasTests(BaseProgresoTests):
+    """R1 — semanas DISTINTAS no se mezclan entre sí (mutación de Verificación #4)."""
+
+    def test_r1_dos_semanas_distintas_quedan_separadas_sin_mezclarse(self):
+        _fijar_entrenos(
+            self.alejandro,
+            [
+                {"dias_atras": 1, "minutos": 30, "calorias": 300},  # semana actual
+                {"dias_atras": 10, "minutos": 20, "calorias": 200},  # semana anterior
+            ],
+        )
+        respuesta = self.client.get("/progreso/?semanas=12")
+        semanas = respuesta.context["semanas_de_entreno"]
+        self.assertEqual(len(semanas), 2)
+        for semana in semanas:
+            self.assertEqual(semana["entrenos"], 1)  # ninguna semana se queda con las dos
+        minutos_por_semana = sorted(s["minutos"] for s in semanas)
+        self.assertEqual(minutos_por_semana, [20, 30])
+
+
+class NuncaSeMezclanEntrenosTests(BaseProgresoTests):
+    """R2/R10/C-89 (el episodio real) — Alejandro entrenó 5 veces esta semana, Euridice 2;
+    mirando el progreso de Euridice se ven 2, nunca los de Alejandro sumados ni mezclados."""
+
+    def test_r2_c89_ve_los_entrenos_de_euridice_no_los_de_alejandro(self):
+        _fijar_entrenos(
+            self.alejandro,
+            [{"dias_atras": d, "minutos": 30, "calorias": 300} for d in range(5)],
+        )
+        _fijar_entrenos(
+            self.euridice,
+            [
+                {"dias_atras": 0, "minutos": 20, "calorias": 150},
+                {"dias_atras": 1, "minutos": 25, "calorias": 180},
+            ],
+        )
+        respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        semanas = respuesta.context["semanas_de_entreno"]
+        self.assertEqual(len(semanas), 1)
+        self.assertEqual(semanas[0]["entrenos"], 2)
+
+
+class CumplimientoTests(BaseProgresoTests):
+    """
+    R3/R-80/C-87 (el episodio real, y el aviso del padre) — cerró 20, cumplió 14, y el
+    porcentaje va sobre los 20 que CERRÓ (70%), nunca sobre el periodo entero.
+    """
+
+    def test_r3_c87_el_porcentaje_es_sobre_los_dias_cerrados_no_sobre_el_periodo(self):
+        cierres = (
+            [{"dias_atras": d, "respuesta": CierreDeDia.LO_SEGUI} for d in range(14)]
+            + [{"dias_atras": d, "respuesta": CierreDeDia.A_MEDIAS} for d in range(14, 18)]
+            + [{"dias_atras": d, "respuesta": CierreDeDia.NO_LO_SEGUI} for d in range(18, 20)]
+        )
+        _fijar_cierres(self.alejandro, cierres)
+        respuesta = self.client.get("/progreso/")  # semanas=12 por defecto -> periodo de 84 días
+        self.assertEqual(respuesta.status_code, 200)
+        cumplimiento = respuesta.context["cumplimiento"]
+        self.assertEqual(cumplimiento["cerrados"], 20)
+        self.assertEqual(cumplimiento["lo_segui"], 14)
+        self.assertEqual(cumplimiento["porcentaje"], 70)
+        # Si alguien calculara sobre el periodo (84 días) saldría 17%, NO 70%.
+        self.assertNotEqual(cumplimiento["porcentaje"], round(14 / 84 * 100))
+        self.assertContains(respuesta, "70%")
+
+
+class CumplimientoCuatroNumerosTests(BaseProgresoTests):
+    """R4/R-80 — los cuatro números que nombra R-80: cerrados, lo_segui, a_medias y
+    no_lo_segui, y los tres últimos suman EXACTAMENTE los cerrados."""
+
+    def test_r4_los_tres_ultimos_suman_exactamente_los_dias_cerrados(self):
+        cierres = (
+            [{"dias_atras": d, "respuesta": CierreDeDia.LO_SEGUI} for d in range(3)]
+            + [{"dias_atras": d, "respuesta": CierreDeDia.A_MEDIAS} for d in range(3, 5)]
+            + [{"dias_atras": 5, "respuesta": CierreDeDia.NO_LO_SEGUI}]
+        )
+        _fijar_cierres(self.alejandro, cierres)
+        respuesta = self.client.get("/progreso/")
+        cumplimiento = respuesta.context["cumplimiento"]
+        self.assertEqual(cumplimiento["cerrados"], 6)
+        self.assertEqual(cumplimiento["lo_segui"], 3)
+        self.assertEqual(cumplimiento["a_medias"], 2)
+        self.assertEqual(cumplimiento["no_lo_segui"], 1)
+        self.assertEqual(
+            cumplimiento["lo_segui"] + cumplimiento["a_medias"] + cumplimiento["no_lo_segui"],
+            cumplimiento["cerrados"],
+        )
+
+
+class CumplimientoSinCierresTests(BaseProgresoTests):
+    """R5, caso límite — sin ningún día cerrado en el periodo, ni porcentaje inventado ni
+    división por cero: la pantalla sigue entera y lo dice con naturalidad."""
+
+    def test_r5_sin_cierres_no_hay_porcentaje_inventado_ni_error(self):
+        CierreDeDia.objects.filter(usuario=self.alejandro).delete()
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        cumplimiento = respuesta.context["cumplimiento"]
+        self.assertEqual(cumplimiento["cerrados"], 0)
+        self.assertIsNone(cumplimiento["porcentaje"])
+        self.assertContains(respuesta, 'id="progreso-cumplimiento"')  # la sección sigue entera
+
+
+class SinEntrenosEnPeriodoTests(BaseProgresoTests):
+    """R6/G-172 — sin entrenos en el periodo, la sección de entrenos NO aparece con huecos
+    vacíos ni reclama nada, mismo trato que ya reciben grasa y cintura en la 010."""
+
+    def test_r6_sin_entrenos_la_seccion_no_aparece(self):
+        Entreno.objects.filter(usuario=self.alejandro).delete()
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotContains(respuesta, 'id="progreso-entrenos"')
+        self.assertEqual(respuesta.context["semanas_de_entreno"], [])
+
+
+class SemanasCambianEntrenosYCumplimientoTests(BaseProgresoTests):
+    """R7 — al cambiar cuántas semanas mira, los entrenos y el cumplimiento cambian con ella
+    (mutación de Verificación #3: ignorar `semanas` y usar siempre el defecto)."""
+
+    def test_r7_cambiar_semanas_cambia_los_entrenos_mostrados(self):
+        _fijar_entrenos(
+            self.alejandro,
+            [
+                {"dias_atras": 1, "minutos": 30, "calorias": 300},
+                {"dias_atras": 40, "minutos": 20, "calorias": 200},  # fuera de 4 sem., dentro de 12
+            ],
+        )
+        respuesta_4 = self.client.get("/progreso/?semanas=4")
+        self.assertEqual(len(respuesta_4.context["semanas_de_entreno"]), 1)
+
+        respuesta_12 = self.client.get("/progreso/?semanas=12")
+        self.assertEqual(len(respuesta_12.context["semanas_de_entreno"]), 2)
+
+    def test_r7_cambiar_semanas_cambia_el_cumplimiento_mostrado(self):
+        _fijar_cierres(
+            self.alejandro,
+            [
+                {"dias_atras": 1, "respuesta": CierreDeDia.LO_SEGUI},
+                {"dias_atras": 40, "respuesta": CierreDeDia.LO_SEGUI},
+            ],
+        )
+        respuesta_4 = self.client.get("/progreso/?semanas=4")
+        self.assertEqual(respuesta_4.context["cumplimiento"]["cerrados"], 1)
+
+        respuesta_12 = self.client.get("/progreso/?semanas=12")
+        self.assertEqual(respuesta_12.context["cumplimiento"]["cerrados"], 2)
+
+
+class OtraPersonaDelHogarEntrenosYCumplimientoTests(BaseProgresoTests):
+    """R8/R-23/G-171 — el hogar ve los entrenos y el cumplimiento de otra persona de casa."""
+
+    def test_r8_ve_los_entrenos_y_cumplimiento_de_euridice(self):
+        _fijar_entrenos(self.euridice, [{"dias_atras": 0, "minutos": 20, "calorias": 150}])
+        _fijar_cierres(self.euridice, [{"dias_atras": 0, "respuesta": CierreDeDia.LO_SEGUI}])
+        respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(len(respuesta.context["semanas_de_entreno"]), 1)
+        self.assertEqual(respuesta.context["cumplimiento"]["cerrados"], 1)
+
+
+class AislamientoEntreHogaresEntrenosYCumplimientoTests(BaseProgresoTests):
+    """
+    R9 — de otro hogar, 404, también para las secciones nuevas (mutación de Verificación #5).
+    Carlos nunca se une a nadie (octava cara de tests-que-no-fallan-cuando-deben.md).
+    """
+
+    def test_r9_el_progreso_de_alguien_de_otro_hogar_da_404_con_entrenos_y_cierres(self):
+        _fijar_entrenos(self.carlos, [{"dias_atras": 0, "minutos": 20, "calorias": 150}])
+        _fijar_cierres(self.carlos, [{"dias_atras": 0, "respuesta": CierreDeDia.LO_SEGUI}])
+        respuesta = self.client.get(f"/progreso/{self.carlos.id}/")
+        self.assertEqual(respuesta.status_code, 404)
+
+
+class NuncaSeMezclanCumplimientoTests(BaseProgresoTests):
+    """R10/G-171 — el cumplimiento de dos personas del hogar nunca se mezcla ni se suma
+    (mutación de Verificación #2, la mitad de cierres — la de entrenos la prueba C-89 arriba)."""
+
+    def test_r10_el_cumplimiento_de_dos_personas_no_se_mezcla(self):
+        _fijar_cierres(self.alejandro, [{"dias_atras": 0, "respuesta": CierreDeDia.LO_SEGUI}])
+        _fijar_cierres(
+            self.euridice,
+            [
+                {"dias_atras": 0, "respuesta": CierreDeDia.LO_SEGUI},
+                {"dias_atras": 1, "respuesta": CierreDeDia.A_MEDIAS},
+            ],
+        )
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.context["cumplimiento"]["cerrados"], 1)
+
+
+class TresSeccionesALaVezTests(BaseProgresoTests):
+    """R11 — nada de la 010 cambia: peso, entrenos y cumplimiento conviven en la misma
+    pantalla, las tres a la vez, sin que unas estorben a las otras."""
+
+    def test_las_tres_secciones_aparecen_juntas_sin_estorbarse(self):
+        _fijar_mediciones(self.alejandro, [{"dias_atras": 0, "peso_kg": 93}])
+        _fijar_entrenos(self.alejandro, [{"dias_atras": 0, "minutos": 30, "calorias": 300}])
+        _fijar_cierres(self.alejandro, [{"dias_atras": 0, "respuesta": CierreDeDia.LO_SEGUI}])
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Peso")  # la 010, intacta
+        self.assertContains(respuesta, 'id="progreso-entrenos"')
+        self.assertContains(respuesta, 'id="progreso-cumplimiento"')

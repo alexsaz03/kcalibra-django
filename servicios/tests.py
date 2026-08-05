@@ -512,6 +512,143 @@ class ConstruirEvolucionTests(unittest.TestCase):
         self.assertIsNotNone(evolucion["cintura_cm"])
 
 
+class AgruparEntrenosPorSemanaTests(unittest.TestCase):
+    """
+    Unidad 013 (completar-progreso.md), R-79/R1 — agrupa entrenos YA recortados por periodo en
+    bloques de 7 días contando hacia atrás desde "hoy", sumando cuántos, minutos y calorías.
+    """
+
+    def test_dos_entrenos_de_la_misma_semana_se_suman_juntos(self):
+        hoy = date(2026, 8, 5)
+        entrenos = [
+            {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},
+            {"fecha": date(2026, 8, 2), "minutos": 45, "calorias": 400},
+        ]
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
+        self.assertEqual(len(semanas), 1)
+        self.assertEqual(semanas[0]["entrenos"], 2)
+        self.assertEqual(semanas[0]["minutos"], 75)
+        self.assertEqual(semanas[0]["calorias"], 700)
+
+    def test_dos_semanas_distintas_no_se_mezclan(self):
+        """R1 — la mutación más literal: agrupar mal metería el entreno de hace 10 días en
+        la semana actual."""
+        hoy = date(2026, 8, 5)
+        entrenos = [
+            {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},  # semana actual (idx 0)
+            {"fecha": date(2026, 7, 26), "minutos": 20, "calorias": 200},  # 10 días atrás (idx 1)
+        ]
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
+        self.assertEqual(len(semanas), 2)
+        for semana in semanas:
+            self.assertEqual(semana["entrenos"], 1)
+
+    def test_sale_ordenado_de_la_semana_mas_antigua_a_la_mas_reciente(self):
+        hoy = date(2026, 8, 5)
+        entrenos = [
+            {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},  # más reciente
+            {"fecha": date(2026, 7, 20), "minutos": 20, "calorias": 200},  # más antiguo
+        ]
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
+        self.assertLess(semanas[0]["inicio"], semanas[1]["inicio"])
+
+    def test_sin_entrenos_da_una_lista_vacia_sin_reventar(self):
+        self.assertEqual(
+            progreso.agrupar_entrenos_por_semana([], date(2026, 8, 5), semanas=12), []
+        )
+
+    def test_la_semana_con_mas_entrenos_llega_al_100_por_cien_de_altura(self):
+        hoy = date(2026, 8, 5)
+        entrenos = [
+            {"fecha": date(2026, 8, 4), "minutos": 30, "calorias": 300},
+            {"fecha": date(2026, 8, 3), "minutos": 30, "calorias": 300},
+            {"fecha": date(2026, 7, 20), "minutos": 30, "calorias": 300},  # semana con 1 solo
+        ]
+        semanas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas=12)
+        alturas = {semana["entrenos"]: semana["altura_pct"] for semana in semanas}
+        self.assertEqual(alturas[2], 100)
+        self.assertLess(alturas[1], 100)
+
+
+class AgruparEntrenosPorSemanaPeriodoLlenoTests(unittest.TestCase):
+    """
+    Ronda 2 (hueco de la revisión, `hallazgos.md`) — el caso que ninguno de los tests de arriba
+    cazaba: con un entreno CADA día del periodo (nadie falla ni un día), la barra más antigua NO
+    puede ser un cubo de 1 día disfrazado de semana entera.
+
+    `recortar_por_periodo` usa un límite INCLUSIVO (`hoy - semanas semanas` hasta `hoy`, ambos
+    dentro): el periodo tiene `semanas*7 + 1` días, uno más de los que caben en `semanas`
+    bloques de 7. Por eso el montaje es exactamente ese: un entreno por cada uno de esos
+    `semanas*7 + 1` días, sin huecos — así el día sobrante SIEMPRE está presente y cualquier
+    desbordamiento se nota.
+
+    Se comprueba, para dos periodos distintos (el de 12 semanas por defecto y uno pequeño de 4):
+    que salen EXACTAMENTE `semanas` barras (nunca `semanas + 1`, el síntoma del hueco), que cada
+    barra no miente — su cuenta de entrenos coincide con el número real de días de su propio
+    rango (`fin - inicio + 1`), y que la suma de entrenos de todas las barras es el total del
+    periodo (ni se pierde ni se duplica ninguno).
+    """
+
+    @staticmethod
+    def _entrenos_por_cada_dia_del_periodo(hoy, semanas):
+        dias_del_periodo = semanas * 7 + 1  # el límite de recortar_por_periodo es inclusivo
+        return [
+            {"fecha": hoy - timedelta(days=i), "minutos": 30, "calorias": 300}
+            for i in range(dias_del_periodo)
+        ]
+
+    def _verificar_periodo_lleno(self, hoy, semanas):
+        entrenos = self._entrenos_por_cada_dia_del_periodo(hoy, semanas)
+        semanas_agrupadas = progreso.agrupar_entrenos_por_semana(entrenos, hoy, semanas)
+
+        self.assertEqual(len(semanas_agrupadas), semanas)
+        for semana in semanas_agrupadas:
+            dias_del_rango = (semana["fin"] - semana["inicio"]).days + 1
+            self.assertEqual(semana["entrenos"], dias_del_rango)
+        self.assertEqual(sum(s["entrenos"] for s in semanas_agrupadas), len(entrenos))
+
+    def test_periodo_lleno_con_las_12_semanas_por_defecto(self):
+        self._verificar_periodo_lleno(hoy=date(2026, 8, 5), semanas=12)
+
+    def test_periodo_lleno_con_4_semanas(self):
+        self._verificar_periodo_lleno(hoy=date(2026, 8, 5), semanas=4)
+
+
+class CalcularCumplimientoTests(unittest.TestCase):
+    """
+    Unidad 013, R-80/R3/R4/R5/Q-153/C-87 — el aviso del padre, hecho test: el porcentaje va
+    sobre los días que la persona CERRÓ, nunca sobre los días del periodo.
+    """
+
+    def test_c87_el_porcentaje_es_sobre_los_cerrados_no_sobre_el_periodo(self):
+        # 20 cerrados: 14 lo_segui, 4 a_medias, 2 no_lo_segui. El periodo podría ser de 30
+        # días, pero esta función ni siquiera los recibe (no puede calcular sobre ellos).
+        cierres = (
+            [{"respuesta": "lo_segui"} for _ in range(14)]
+            + [{"respuesta": "a_medias"} for _ in range(4)]
+            + [{"respuesta": "no_lo_segui"} for _ in range(2)]
+        )
+        cumplimiento = progreso.calcular_cumplimiento(cierres)
+        self.assertEqual(cumplimiento["cerrados"], 20)
+        self.assertEqual(cumplimiento["lo_segui"], 14)
+        self.assertEqual(cumplimiento["porcentaje"], 70)  # 14/20, NO 14/30 (47%)
+
+    def test_r4_los_tres_ultimos_suman_los_cerrados(self):
+        cierres = (
+            [{"respuesta": "lo_segui"} for _ in range(3)]
+            + [{"respuesta": "a_medias"} for _ in range(2)]
+            + [{"respuesta": "no_lo_segui"} for _ in range(1)]
+        )
+        cumplimiento = progreso.calcular_cumplimiento(cierres)
+        suma = cumplimiento["lo_segui"] + cumplimiento["a_medias"] + cumplimiento["no_lo_segui"]
+        self.assertEqual(suma, cumplimiento["cerrados"])
+
+    def test_r5_sin_cierres_no_hay_porcentaje_ni_division_por_cero(self):
+        cumplimiento = progreso.calcular_cumplimiento([])
+        self.assertEqual(cumplimiento["cerrados"], 0)
+        self.assertIsNone(cumplimiento["porcentaje"])
+
+
 class C37_EuridiceCorrerTests(unittest.TestCase):
     """R1/C-37 (unidad 011) — el episodio real de Euridice: 62 kg, 35 min de correr a
     intensidad media, sin escribir calorías. La fórmula la despeja la especificación de la
