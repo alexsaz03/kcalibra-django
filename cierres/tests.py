@@ -496,6 +496,22 @@ class R10_CierreAManoDesdeProgresoTests(BaseCierresTests):
         respuesta = self.client.get("/progreso/")
         self.assertContains(respuesta, f"/cierres/{self.alejandro.id}/")
 
+    def test_un_fecha_param_con_basura_no_rompe_la_pantalla(self):
+        # Ronda 2, hueco 1: `?fecha=pepe` no tiene forma de fecha en absoluto. Mismo
+        # criterio que `servicios/progreso.py:semanas_desde_parametro` — se trata como si
+        # `?fecha=` no hubiera llegado, formulario limpio, pantalla funcionando.
+        respuesta = self.client.get(f"/cierres/{self.alejandro.id}/?fecha=pepe")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIsNone(respuesta.context["form"].instance.pk)
+
+    def test_un_fecha_param_con_formato_valido_pero_fecha_imposible_no_rompe_la_pantalla(self):
+        # Caso distinto del anterior: el formato SÍ es de fecha (AAAA-MM-DD) pero la fecha no
+        # existe (mes 13) — esto revienta por otro sitio del parseo, así que necesita su
+        # propio caso.
+        respuesta = self.client.get(f"/cierres/{self.alejandro.id}/?fecha=2026-13-45")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIsNone(respuesta.context["form"].instance.pk)
+
 
 # ---------------------------------------------------------------------------------------- #
 # R11 — entradas inválidas: no se guardan, y la app lo dice sin romperse.
@@ -511,6 +527,11 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
         )
         self.assertEqual(respuesta.status_code, 200)
         self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        # Ronda 2, hueco 2: R11 dice "no lo guarda Y LO DICE" — no basta con mirar
+        # `form.errors`, el aviso tiene que llegar al HTML que ve la persona (mismo criterio
+        # que `planes/tests.py:test_se_avisa_de_cual_esta_mal`, unidad 005).
+        mensaje = respuesta.context["form"].errors["respuesta"][0]
+        self.assertContains(respuesta, mensaje)
 
     def test_calorias_negativas_no_se_guardan(self):
         respuesta = self.client.post(
@@ -520,6 +541,8 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
         )
         self.assertEqual(respuesta.status_code, 200)
         self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        mensaje = respuesta.context["form"].errors["calorias_comidas"][0]
+        self.assertContains(respuesta, mensaje)
 
     def test_una_fecha_futura_no_se_guarda(self):
         manana = (timezone.localdate() + timedelta(days=1)).isoformat()
@@ -529,6 +552,8 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
         )
         self.assertEqual(respuesta.status_code, 200)
         self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        mensaje = respuesta.context["form"].errors["fecha"][0]
+        self.assertContains(respuesta, mensaje)
 
     def test_ninguna_entrada_invalida_rompe_la_pantalla(self):
         for datos in [

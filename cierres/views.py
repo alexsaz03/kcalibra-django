@@ -11,6 +11,7 @@ está pendiente, la foto del menú) vive en `cierres/logica.py` y `servicios/cie
 
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
 
 from planes.logica import obtener_plan_de
@@ -100,7 +101,18 @@ def cerrar(request, usuario_id):
         instancia = None
         fecha_param = request.GET.get("fecha")
         if fecha_param:
-            instancia = CierreDeDia.objects.filter(usuario=usuario, fecha=fecha_param).first()
+            # Ronda 2, hueco 1: mismo criterio que `servicios/progreso.py:
+            # semanas_desde_parametro` — esto es una persona (o un enlace roto) tecleando
+            # algo en la URL, jamás debe romper la pantalla. `parse_date` devuelve `None`
+            # para lo que no tiene forma de fecha ("pepe") y `ValueError` para lo que SÍ
+            # tiene forma pero no existe ("2026-13-45"); ambos casos se tratan igual que si
+            # `?fecha=` no hubiera llegado.
+            try:
+                fecha = parse_date(fecha_param)
+            except ValueError:
+                fecha = None
+            if fecha is not None:
+                instancia = CierreDeDia.objects.filter(usuario=usuario, fecha=fecha).first()
         form = FormularioCierre(instance=instancia) if instancia else FormularioCierre()
 
     contexto = {
