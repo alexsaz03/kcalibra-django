@@ -92,6 +92,8 @@ urlpatterns = [
     path("progreso/", include("progreso.urls")),
     # Lo que has entrenado, apuntado a mano, y cuánto le suma al objetivo del día (unidad 011).
     path("entrenos/", include("entrenos.urls")),
+    # Cerrar el día: si se siguió el plan, con la pregunta al abrir la app (unidad 012).
+    path("cierres/", include("cierres.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]

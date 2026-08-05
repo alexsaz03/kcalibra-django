@@ -56,6 +56,14 @@
 {# comidas de hoy o el botón para apuntarlas si no hay ninguna (R5).                      #}
 {# ------------------------------------------------------------------------------------ #}
 <div class="mx-auto mt-10 max-w-2xl space-y-6 px-6 pb-16">
+  {# ------------------------------------------------------------------------------------ #}
+  {# R6-R9 (unidad 012, decir-si-cumpliste.md): "lo primero que ve es la pregunta de si    #}
+  {# cumplió ayer" — antes que cualquier tarjeta. Solo aparece si hay un día pendiente      #}
+  {# (paginas/views.py:inicio ya decidió eso); el partial mismo se encarga de no pintar     #}
+  {# nada cuando `dia_pendiente` es None (R9/R13).                                          #}
+  {# ------------------------------------------------------------------------------------ #}
+  {% include "cierres/_pregunta_pendiente.html" %}
+
   {% for tarjeta in tarjetas %}
     {# id único por tarjeta (H1 de la revisión): el email de quien mira YA sale en la barra  #}
     {# de arriba (`templates/base.html`), así que buscar el email a pelo en toda la página   #}

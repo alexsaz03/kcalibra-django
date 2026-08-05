@@ -130,6 +130,14 @@ INSTALLED_APPS = [
     # apuntar, corregir y borrar son siempre sobre uno mismo (R10), sin lectura del hogar sobre
     # entrenos ajenos todavía (R-79 llega con Progreso, otra unidad).
     "entrenos",
+    # cierres: cerrar el día diciendo si se siguió el plan, con la pregunta al abrir la app
+    # para el último día pendiente. Unidad 012 — ver
+    # docs/05-trabajo/012-cerrar-el-dia/especificacion.md del meta-repo. Dato DE LA PERSONA (no
+    # del hogar, mismo criterio que `entrenos`): cerrar y cambiar un cierre son siempre sobre
+    # uno mismo (R12), sin lectura del hogar sobre cierres ajenos. Es el número que dice si el
+    # método funciona (R-80 en Progreso, unidad siguiente): esta unidad genera los DATOS, no
+    # la gráfica.
+    "cierres",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"

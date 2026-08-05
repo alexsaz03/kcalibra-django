@@ -1,0 +1,68 @@
+{% load partials %}
+{# ---------------------------------------------------------------------------------------- #}
+{# R6/Q-140 — la pregunta de si cumplió AYER, en un toque. Este partial se INCLUYE dentro de  #}
+{# paginas/inicio.html (la ruta "", R6 de la especificación de la unidad: "vive en            #}
+{# paginas/views.py:inicio... no la metas en base.html") y también se pide SUELTO, por HTMX,  #}
+{# desde cierres/views.py:responder y cierres/views.py:saltar — mismo mecanismo que           #}
+{# paginas/templates/paginas/inicio.html#hora_servidor (unidad 002).                          #}
+{# ---------------------------------------------------------------------------------------- #}
+{% partialdef pregunta_pendiente %}
+<div id="pregunta-cierre" {% if dia_pendiente %}data-fecha="{{ dia_pendiente|date:'Y-m-d' }}"{% endif %}>
+  {% if dia_pendiente %}
+    <section class="mt-6 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
+      {# El `data-fecha` de arriba, en ISO, es el valor de máquina (para tests y para un       #}
+      {# futuro JS); este texto, con `{{ dia_pendiente }}` sin filtro, es el de la PERSONA:    #}
+      {# con `LANGUAGE_CODE="es"` sale localizado ("4 de agosto de 2026"), como toca leer una  #}
+      {# fecha en la pantalla (la frontera de la séptima cara de                               #}
+      {# conocimiento/tests-que-no-fallan-cuando-deben.md: la coma/localización es un bug SOLO #}
+      {# en un sitio que lee una máquina, nunca en un sitio que lee una persona).              #}
+      <h2 class="text-sm font-semibold text-emerald-900">
+        ¿Cumpliste el plan de ayer ({{ dia_pendiente }})?
+      </h2>
+
+      {# §8 del plano — "Qué ve nada más entrar: qué tenía puesto ayer y las tres respuestas". #}
+      {% if plan_pendiente %}
+        <ul class="mt-2 space-y-1 text-sm text-emerald-800">
+          {% for comida in plan_pendiente.comidas.all %}
+            <li>{{ comida.get_momento_del_dia_display }}: {{ comida.nombre }} ({{ comida.calorias }} kcal)</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="mt-2 text-sm text-emerald-800">No tenías ningún plan puesto ese día.</p>
+      {% endif %}
+
+      <div class="mt-4 flex flex-wrap gap-2">
+        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="respuesta" value="lo_segui">
+          <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
+            Lo seguí
+          </button>
+        </form>
+        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="respuesta" value="a_medias">
+          <button type="submit" class="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600">
+            A medias
+          </button>
+        </form>
+        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+          {% csrf_token %}
+          <input type="hidden" name="respuesta" value="no_lo_segui">
+          <button type="submit" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700">
+            No lo seguí
+          </button>
+        </form>
+        <form hx-post="{% url 'cierres:saltar' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+          {% csrf_token %}
+          <button type="submit" class="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline">
+            Saltar
+          </button>
+        </form>
+      </div>
+    </section>
+  {% endif %}
+</div>
+{% endpartialdef %}
+
+{% partial pregunta_pendiente %}

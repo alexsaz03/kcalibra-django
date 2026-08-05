@@ -466,8 +466,18 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
         respuesta = self.client.get("/")
 
-        self.assertNotContains(respuesta, "Comida de ayer")
-        self.assertContains(respuesta, "Apuntar el plan")  # a ojos de hoy, sigue sin plan
+        # Unidad 012 (decir-si-cumpliste.md, R6) añadió a esta MISMA pantalla la pregunta de
+        # si se cumplió el plan de ayer, que enseña —a propósito— el menú de ayer (§8 del
+        # plano: "qué tenía puesto ayer"). Por eso el texto de "Comida de ayer" SÍ puede
+        # aparecer en la página entera ahora; lo que R11 promete de verdad —que el ANILLO/
+        # tarjeta de HOY no cuenta ni enseña un plan de otro día— sigue intacto y se comprueba
+        # aislando esa comprobación a la TARJETA (id="tarjeta-<id>"), no a la página completa.
+        contenido = respuesta.content.decode()
+        inicio_tarjeta = contenido.index(f'id="tarjeta-{self.alejandro.id}"')
+        fin_tarjeta = contenido.index("</section>", inicio_tarjeta)
+        tarjeta = contenido[inicio_tarjeta:fin_tarjeta]
+        self.assertNotIn("Comida de ayer", tarjeta)
+        self.assertIn("Apuntar el plan", tarjeta)  # a ojos de hoy, sigue sin plan
 
     def test_un_plan_de_manana_no_se_cuenta_en_el_inicio(self):
         manana = PlanDeDia.objects.create(

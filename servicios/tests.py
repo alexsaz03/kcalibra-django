@@ -14,6 +14,7 @@ fecha real de la máquina: así el test no depende de en qué día se ejecute la
 import unittest
 from datetime import date, timedelta
 
+from servicios import cierres
 from servicios import entrenos
 from servicios import metabolismo
 from servicios import planes
@@ -626,6 +627,41 @@ class EscalarMacrosTests(unittest.TestCase):
             metabolismo.escalar_macros(macros_exactos, 1.0),
             {"proteina_g": 100, "grasa_g": 50, "carbos_g": 200},
         )
+
+
+class CalcularDiaPendienteTests(unittest.TestCase):
+    """
+    Unidad 012 (decir-si-cumpliste.md), R6-R9 — la función pura que decide qué día preguntar
+    al abrir la app. `hoy` se fija explícitamente (mismo criterio que el resto de este
+    fichero): el test no depende de en qué día se ejecute la suite.
+    """
+
+    HOY = date(2026, 8, 5)
+    AYER = date(2026, 8, 4)
+
+    def test_r6_sin_cerrar_ni_saltar_el_dia_pendiente_es_ayer(self):
+        dia = cierres.calcular_dia_pendiente(self.HOY, cerrado_ayer=False, saltado_ayer=False)
+        self.assertEqual(dia, self.AYER)
+
+    def test_r9_si_ayer_ya_esta_cerrado_no_hay_nada_pendiente(self):
+        dia = cierres.calcular_dia_pendiente(self.HOY, cerrado_ayer=True, saltado_ayer=False)
+        self.assertIsNone(dia)
+
+    def test_r8_si_ayer_ya_se_salto_no_hay_nada_pendiente(self):
+        dia = cierres.calcular_dia_pendiente(self.HOY, cerrado_ayer=False, saltado_ayer=True)
+        self.assertIsNone(dia)
+
+    def test_cerrado_y_saltado_a_la_vez_tampoco_hay_nada_pendiente(self):
+        dia = cierres.calcular_dia_pendiente(self.HOY, cerrado_ayer=True, saltado_ayer=True)
+        self.assertIsNone(dia)
+
+    def test_r7_nunca_devuelve_un_dia_mas_antiguo_que_ayer(self):
+        # Aunque hubiera cinco días sin cerrar, esta función solo conoce "ayer": no tiene
+        # ningún parámetro por el que pudiera devolver un día más antiguo (R7, el episodio de
+        # Euridice). Se comprueba con la firma: solo entran `cerrado_ayer`/`saltado_ayer`.
+        dia = cierres.calcular_dia_pendiente(self.HOY, cerrado_ayer=False, saltado_ayer=False)
+        self.assertEqual(dia, self.HOY - timedelta(days=1))
+        self.assertNotEqual(dia, self.HOY - timedelta(days=5))
 
 
 if __name__ == "__main__":
