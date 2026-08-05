@@ -94,6 +94,10 @@ urlpatterns = [
     path("entrenos/", include("entrenos.urls")),
     # Cerrar el día: si se siguió el plan, con la pregunta al abrir la app (unidad 012).
     path("cierres/", include("cierres.urls")),
+    # Lo que hay en casa, agrupado por categorías: añadir, corregir y quitar productos a
+    # mano (unidad 014). Es DEL HOGAR entero, no de una persona: sin ningún usuario_id en
+    # sus rutas.
+    path("despensa/", include("despensa.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]

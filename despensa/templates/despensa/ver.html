@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% load partials %}
+{% load l10n %}
+
+{% block titulo %}La despensa{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
+
+  {# ------------------------------------------------------------------------------------ #}
+  {# {% partialdef %} define la pantalla entera (lo que hay + el formulario de añadir) como #}
+  {# un trozo con nombre, para que HTMX pueda pedirlo suelto al añadir, corregir o quitar   #}
+  {# un producto y sustituir SOLO esto, sin recargar nada más — mismo mecanismo que         #}
+  {# planes/templates/planes/apuntar.html y perfiles/templates/perfiles/peso.html.          #}
+  {# ------------------------------------------------------------------------------------ #}
+  {% partialdef despensa_del_hogar %}
+  <div id="despensa-del-hogar">
+    <h1 class="text-2xl font-bold text-slate-900">La despensa</h1>
+    {# G-43/R9: lo que se pinta aquí deja claro que esto es del HOGAR entero — aunque la #}
+    {# comprobación de verdad (R9/R10) vive en el servidor, no en este texto. #}
+    <p class="mt-1 text-sm text-slate-500">
+      Lo que hay en casa, de todo el hogar: cualquiera puede añadir, corregir o quitar, sin
+      pedir permiso a nadie.
+    </p>
+
+    {% if error_correccion %}
+      <div class="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+        {{ error_correccion }}
+      </div>
+    {% endif %}
+
+    {% if categorias_productos %}
+      <div class="mt-6 space-y-6">
+        {% for clave, etiqueta, productos in categorias_productos %}
+          <section>
+            <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">{{ etiqueta }}</h2>
+            <ul class="mt-2 space-y-2">
+              {% for producto in productos %}
+                <li class="rounded-lg border border-slate-200 bg-white p-3 text-sm" data-producto-id="{{ producto.id }}">
+                  <div class="flex items-center justify-between gap-2">
+                    <strong>{{ producto.nombre }}</strong>
+                    <form
+                      hx-post="{% url 'despensa:quitar' producto.id %}"
+                      hx-target="#despensa-del-hogar"
+                      hx-swap="outerHTML"
+                      hx-confirm="¿Quitar {{ producto.nombre }} de la despensa?"
+                      method="post"
+                    >
+                      {% csrf_token %}
+                      <button type="submit" class="font-medium text-red-700 hover:underline">Quitar</button>
+                    </form>
+                  </div>
+
+                  {# R5/§8: "corregir una cantidad tiene que ser cosa de un toque" — la línea #}
+                  {# trae su propio formulario, siempre a la vista, sin ninguna otra pantalla. #}
+                  <form
+                    hx-post="{% url 'despensa:corregir' producto.id %}"
+                    hx-target="#despensa-del-hogar"
+                    hx-swap="outerHTML"
+                    method="post"
+                    class="mt-2 flex flex-wrap items-end gap-2"
+                  >
+                    {% csrf_token %}
+                    <div>
+                      <label class="block text-xs text-slate-500" for="cantidad-{{ producto.id }}">Cantidad</label>
+                      {# Novena/séptima cara de conocimiento/tests-que-no-fallan-cuando-deben.md: #}
+                      {# `producto.cantidad` es un Decimal; con LANGUAGE_CODE="es" Django lo    #}
+                      {# localiza con COMA ("4,00"), que un <input type="number"> no sabe leer  #}
+                      {# y descarta EN SILENCIO (sin error visible). `|unlocalize` fuerza el    #}
+                      {# formato de máquina (punto) en este atributo, que lee el navegador, no  #}
+                      {# una persona — la coma se queda para el texto que sí lee una persona.   #}
+                      <input
+                        id="cantidad-{{ producto.id }}"
+                        type="number" step="0.01" min="0.01" name="cantidad"
+                        value="{{ producto.cantidad|unlocalize }}"
+                        class="w-24 rounded border border-slate-300 px-2 py-1"
+                      >
+                    </div>
+                    <div>
+                      <label class="block text-xs text-slate-500" for="unidad-{{ producto.id }}">Unidad</label>
+                      <select id="unidad-{{ producto.id }}" name="unidad" class="rounded border border-slate-300 px-2 py-1">
+                        {% for valor, texto in unidades %}
+                          <option value="{{ valor }}" {% if valor == producto.unidad %}selected{% endif %}>{{ texto }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs text-slate-500" for="categoria-{{ producto.id }}">Categoría</label>
+                      <select id="categoria-{{ producto.id }}" name="categoria" class="rounded border border-slate-300 px-2 py-1">
+                        {% for valor, texto in categorias %}
+                          <option value="{{ valor }}" {% if valor == producto.categoria %}selected{% endif %}>{{ texto }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700">
+                      Guardar
+                    </button>
+                  </form>
+                </li>
+              {% endfor %}
+            </ul>
+          </section>
+        {% endfor %}
+      </div>
+    {% else %}
+      {# R12 — sin ningún producto todavía, se dice con naturalidad: no parece rota ni da error. #}
+      <p id="despensa-vacia" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+        Todavía no hay nada apuntado en la despensa. Añade el primer producto aquí abajo.
+      </p>
+    {% endif %}
+
+    <form
+      hx-post="{% url 'despensa:anadir' %}"
+      hx-target="#despensa-del-hogar"
+      hx-swap="outerHTML"
+      method="post"
+      class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
+    >
+      {% csrf_token %}
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Añadir un producto</h2>
+      {% if form.non_field_errors %}
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+      {% endif %}
+      {% for field in form.visible_fields %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+            {{ field.label }}
+          </label>
+          {{ field }}
+          {% if field.errors %}
+            <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+      <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
+        Añadir producto
+      </button>
+    </form>
+  </div>
+  {% endpartialdef %}
+
+  {% partial despensa_del_hogar %}
+
+</div>
+{% endblock %}
