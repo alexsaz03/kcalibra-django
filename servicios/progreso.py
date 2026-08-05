@@ -2,6 +2,11 @@
 El cálculo de la unidad 010 (ver-tu-progreso.md): cuántas semanas mirar, qué mediciones caen
 dentro de ese periodo, y cómo convertir una serie de mediciones en los puntos de un SVG.
 
+La unidad 013 (completar-progreso.md) AÑADE aquí mismo el cálculo de los entrenos por semana
+(R-79) y el cumplimiento (R-80): mismo espíritu, funciones puras, mismo módulo — no un tercero,
+porque siguen siendo "el cálculo de la pantalla de Progreso" (Cómo, punto 1: "Ya tienes dos
+módulos hermanos donde mirar el estilo", este es uno de ellos).
+
 Mismo espíritu que `servicios/metabolismo.py` (unidad 004) y `servicios/planes.py` (unidad
 005): funciones PURAS. Reciben números, fechas y listas de diccionarios sencillos, no tocan la
 base de datos, no importan Django y no saben qué es una `MedicionPeso` ni una petición HTTP
@@ -12,9 +17,12 @@ Nada de librerías de gráficos (bias.md, "Cómo" de la especificación de la un
 es SVG generado aquí como texto (una cadena de puntos "x,y"), coherente con el precedente de
 la unidad 005 (el anillo del plan, con "conic-gradient" puro) — aquí, en vez de un donut de
 CSS, hace falta una LÍNEA, así que la pieza que dibuja es un `<polyline>` de SVG servido desde
-la plantilla; este módulo solo calcula sus coordenadas.
+la plantilla; este módulo solo calcula sus coordenadas. Las barras de entrenos por semana (R-79)
+no usan SVG: son divs con una altura porcentual (Cómo, punto 4 — "aquí encaja o SVG o divs con
+altura porcentual"), calculada también aquí, no en la plantilla.
 """
 
+import math
 from datetime import timedelta
 
 # R5: el periodo que se mira, entre 4 y 52 semanas, con 12 de fábrica (§7 del plano).
@@ -55,16 +63,109 @@ def semanas_desde_parametro(valor):
 
 def recortar_por_periodo(mediciones, semanas, hoy):
     """
-    Las `mediciones` (lista de dicts con al menos la clave "fecha") que caen entre
+    Los `mediciones` (lista de dicts con al menos la clave "fecha") que caen entre
     `hoy - semanas` semanas y `hoy`, ambos incluidos (R5). `mediciones` puede llegar en
     cualquier orden; el resultado sale ordenado por fecha ASCENDENTE — el orden que necesita
     una gráfica de evolución (la primera pesada a la izquierda, la última a la derecha).
+
+    Genérica a propósito (unidad 013, Cómo punto 3: "si no te sirve tal cual, generalízala"):
+    solo mira la clave "fecha", así que sirve TAL CUAL para recortar `MedicionPeso` (unidad
+    010), `Entreno` (R-79) o `CierreDeDia` (R-80) — no hizo falta escribir una tercera copia de
+    esta resta de fechas, cada llamador solo pasa sus propios dicts con esa clave.
     """
     limite = hoy - timedelta(weeks=semanas)
     return sorted(
         (m for m in mediciones if limite <= m["fecha"] <= hoy),
         key=lambda m: m["fecha"],
     )
+
+
+def agrupar_entrenos_por_semana(entrenos_del_periodo, hoy):
+    """
+    R-79/R1/C-89 — los `entrenos_del_periodo` (YA recortados con `recortar_por_periodo`, arriba
+    — lista de dicts con "fecha", "minutos" y "calorias") agrupados en bloques de 7 días
+    contando hacia atrás desde `hoy`: el bloque 0 son los últimos 7 días (hoy incluido), el 1
+    los 7 anteriores, etc. — el mismo criterio de "semana" que ya usa el recorte por periodo de
+    arriba (semanas de 7 días desde hoy, no semanas de calendario lunes-domingo).
+
+    Solo aparecen las semanas con AL MENOS un entreno real (mismo espíritu que R2/R11/R6: nunca
+    un hueco vacío inventado). El resultado sale ordenado de la semana MÁS ANTIGUA a la MÁS
+    RECIENTE, igual que `construir_grafica` — mismo orden de lectura que el peso.
+
+    Cada semana trae, además de los tres números que pide R1 (cuántos entrenos, minutos y
+    calorías, sumados), una `altura_pct` (0-100) para dibujar la barra sin librerías (Cómo,
+    punto 4): la altura es relativa al máximo de entrenos de UNA semana dentro de este mismo
+    resultado, así que la barra más alta del periodo siempre llega al 100%.
+    """
+    semanas_por_indice = {}
+    for entreno in entrenos_del_periodo:
+        dias_atras = (hoy - entreno["fecha"]).days
+        indice = dias_atras // 7
+        semana = semanas_por_indice.setdefault(
+            indice,
+            {
+                "inicio": hoy - timedelta(days=indice * 7 + 6),
+                "fin": hoy - timedelta(days=indice * 7),
+                "entrenos": 0,
+                "minutos": 0,
+                "calorias": 0,
+            },
+        )
+        semana["entrenos"] += 1
+        semana["minutos"] += entreno["minutos"]
+        semana["calorias"] += entreno["calorias"]
+
+    semanas = [semanas_por_indice[indice] for indice in sorted(semanas_por_indice, reverse=True)]
+
+    maximo = max((s["entrenos"] for s in semanas), default=0)
+    for semana in semanas:
+        semana["altura_pct"] = round(semana["entrenos"] / maximo * 100) if maximo else 0
+
+    return semanas
+
+
+# R-80/Q-153/C-87 — las tres respuestas de `CierreDeDia.RESPUESTAS` (cierres/models.py),
+# repetidas aquí como cadenas literales a propósito: este módulo es cálculo puro y no importa
+# NADA de Django ni de otra app (mismo criterio que servicios/entrenos.py, que tampoco importa
+# `entrenos.models` para su tabla de kcal/minuto) — quien llama (progreso/views.py) es quien
+# conecta esto con el modelo de verdad.
+_LO_SEGUI = "lo_segui"
+_A_MEDIAS = "a_medias"
+_NO_LO_SEGUI = "no_lo_segui"
+
+
+def calcular_cumplimiento(cierres_del_periodo):
+    """
+    R-80/R3/R4/R5/C-87 — el cumplimiento a partir de los `cierres_del_periodo` (YA recortados
+    con `recortar_por_periodo` — lista de dicts con "respuesta"): cuántos días cerró, cuántos
+    siguió el plan entero, cuántos a medias, cuántos no, y el PORCENTAJE de cumplimiento.
+
+    Q-153/C-87, EL error más fácil de cometer leyendo R-80 deprisa: el porcentaje va sobre los
+    días que la persona CERRÓ, nunca sobre los días del periodo — 14 de 20 cerrados es 70%, no
+    14 de 30. Por eso esta función ni siquiera RECIBE cuántos días tiene el periodo: solo puede
+    calcular sobre lo que sí le llega, que son los cierres.
+
+    R5, caso límite: sin ningún cierre en el periodo, `porcentaje` sale `None` (ni se inventa un
+    número ni se divide entre cero) — la plantilla decide cómo decirlo con naturalidad.
+    """
+    cerrados = len(cierres_del_periodo)
+    lo_segui = sum(1 for c in cierres_del_periodo if c["respuesta"] == _LO_SEGUI)
+    a_medias = sum(1 for c in cierres_del_periodo if c["respuesta"] == _A_MEDIAS)
+    no_lo_segui = sum(1 for c in cierres_del_periodo if c["respuesta"] == _NO_LO_SEGUI)
+
+    porcentaje = None
+    if cerrados:
+        # Mismo criterio de redondeo que servicios/entrenos.py y servicios/metabolismo.py: la
+        # mitad SIEMPRE hacia arriba (Math.round de JS), no el redondeo bancario de round().
+        porcentaje = math.floor((lo_segui / cerrados) * 100 + 0.5)
+
+    return {
+        "cerrados": cerrados,
+        "lo_segui": lo_segui,
+        "a_medias": a_medias,
+        "no_lo_segui": no_lo_segui,
+        "porcentaje": porcentaje,
+    }
 
 
 def _escalar(valor, minimo, maximo, longitud_util, margen, invertir=False):

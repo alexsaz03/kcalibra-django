@@ -1,13 +1,18 @@
 """
 La pantalla de Progreso (R1-R11 de la especificación de la unidad 010, "ver-tu-progreso.md"
 del mapa): la evolución del peso —y, si las hay, de la grasa y la cintura— de la persona
-elegida, en el periodo elegido (R-78, R-81; R-79 "entrenos" y R-80 "cumplimiento" quedan
-fuera, sin modelo de datos que las respalde todavía — ver el "Alcance" de la especificación).
+elegida, en el periodo elegido (R-78, R-81).
+
+Unidad 013 (completar-progreso.md) AÑADE aquí mismo los entrenos por semanas (R-79) y el
+cumplimiento (R-80): la 010 dejó la pantalla parcial a propósito porque `Entreno` y
+`CierreDeDia` no existían todavía (los crearon la 011 y la 012); ahora sí, y con esta unidad
+`ver-tu-progreso` pasa a ENTREGADA.
 
 R8 (ROADMAP: "las vistas no calculan; llaman") — esta vista solo reúne los datos (las
-`MedicionPeso` de la persona elegida) y llama a `servicios.progreso`, que hace TODO el
-cálculo: recortar por periodo y sacar las coordenadas del SVG. Esta vista no suma, no
-promedia, no decide qué semanas caen dentro de nada de eso — vive en `servicios/progreso.py`.
+`MedicionPeso`, `Entreno` y `CierreDeDia` de la persona elegida) y llama a
+`servicios.progreso`, que hace TODO el cálculo: recortar por periodo, agrupar por semana,
+contar el cumplimiento y sacar las coordenadas del SVG. Esta vista no suma, no promedia, no
+decide qué semanas caen dentro de nada de eso — vive en `servicios/progreso.py`.
 """
 
 from django.contrib.auth.decorators import login_required
@@ -17,6 +22,8 @@ from django.utils import timezone
 from servicios.progreso import (
     SEMANAS_MAX,
     SEMANAS_MIN,
+    agrupar_entrenos_por_semana,
+    calcular_cumplimiento,
     construir_evolucion,
     recortar_por_periodo,
     semanas_desde_parametro,
@@ -59,6 +66,23 @@ def ver_progreso(request, usuario_id=None):
     mediciones_del_periodo = recortar_por_periodo(mediciones, semanas, hoy)
     evolucion = construir_evolucion(mediciones_del_periodo)
 
+    # R-79/R1/R2/C-89 — los entrenos REALIZADOS de esa persona, y solo de ella (mismo criterio
+    # que las mediciones de arriba: `usuario_objetivo.entrenos` ya viene filtrado por el
+    # `related_name` de `Entreno`, sin ningún filtro adicional que pudiera mezclar el hogar).
+    # `recortar_por_periodo` es la MISMA función que ya usa el peso (Cómo, punto 3): solo mira
+    # la clave "fecha", así que sirve tal cual sin escribir una segunda resta de fechas.
+    entrenos = list(usuario_objetivo.entrenos.values("fecha", "minutos", "calorias"))
+    entrenos_del_periodo = recortar_por_periodo(entrenos, semanas, hoy)
+    semanas_de_entreno = agrupar_entrenos_por_semana(entrenos_del_periodo, hoy)
+
+    # R-80/R3/R4/R5/R10/C-87 — el cumplimiento de esa persona, y solo de ella (mismo criterio:
+    # `usuario_objetivo.cierres_de_dia`, sin mezclar el hogar). El porcentaje se calcula sobre
+    # los cierres YA recortados por periodo, nunca sobre el número de días del periodo
+    # (Q-153/C-87: es el error que un humano cometería leyendo R-80 deprisa).
+    cierres = list(usuario_objetivo.cierres_de_dia.values("fecha", "respuesta"))
+    cierres_del_periodo = recortar_por_periodo(cierres, semanas, hoy)
+    cumplimiento = calcular_cumplimiento(cierres_del_periodo)
+
     # R81/§8 del plano — "ver el progreso de otra persona de tu casa, una cada vez": el
     # selector ofrece a todo el hogar (la propia primero, mismo criterio de orden que
     # paginas/views.py:inicio, unidad 005). Sin hogar todavía (R14 de la unidad 003,
@@ -84,5 +108,13 @@ def ver_progreso(request, usuario_id=None):
         # periodo": son dos mensajes distintos, ninguno de los dos un error.
         "tiene_alguna_medicion": bool(mediciones),
         "tiene_datos_en_periodo": bool(mediciones_del_periodo),
+        # R-79/R1/R6 — la sección de entrenos entera desaparece si no hay ninguno en el
+        # periodo (G-172: mismo trato que ya reciben grasa y cintura), en vez de enseñar un
+        # hueco vacío o una fila a cero.
+        "semanas_de_entreno": semanas_de_entreno,
+        # R-80/R3/R4/R5 — el cumplimiento SIEMPRE se enseña (a diferencia de los entrenos): con
+        # cero cierres, la plantilla lo dice con naturalidad en vez de esconder la sección
+        # entera (R5 es explícito: "la pantalla sigue entera").
+        "cumplimiento": cumplimiento,
     }
     return render(request, "progreso/ver.html", contexto)
