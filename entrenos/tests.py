@@ -397,6 +397,29 @@ class R10_SoloSobreUnoMismoTests(BaseEntrenosTests):
         )
         self.assertEqual(respuesta.status_code, 404)
 
+    def test_apuntar_para_otra_persona_de_otro_hogar_tambien_da_404(self):
+        """Ronda 2 — la mitad "apuntar x otro hogar" de las seis combinaciones ajenas de R10
+        que faltaba: Carlos (su propio hogar) intentando apuntar un entreno "para" Alejandro."""
+        self.client.logout()
+        self.client.login(username="carlos@example.com", password=CLAVE_VALIDA)
+        respuesta = self.client.post(
+            f"/entrenos/{self.alejandro.id}/apuntar/",
+            {"fecha": timezone.localdate().isoformat(), "deporte": "correr",
+             "intensidad": "media", "minutos": "30", "calorias": ""},
+        )
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_borrar_de_otra_persona_de_otro_hogar_tambien_da_404(self):
+        """Ronda 2 — la mitad "borrar x otro hogar" de las seis combinaciones ajenas de R10 que
+        faltaba: Carlos (su propio hogar) intentando borrar un entreno de Alejandro."""
+        self.client.logout()
+        self.client.login(username="carlos@example.com", password=CLAVE_VALIDA)
+        respuesta = self.client.post(
+            f"/entrenos/{self.alejandro.id}/{self.entreno_de_alejandro.id}/borrar/"
+        )
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertTrue(Entreno.objects.filter(id=self.entreno_de_alejandro.id).exists())
+
     def test_nunca_403_siempre_404(self):
         respuesta = self.client.post(
             f"/entrenos/{self.alejandro.id}/apuntar/",
@@ -419,6 +442,25 @@ class BorrarTests(BaseEntrenosTests):
         respuesta = self.client.post(f"/entrenos/{self.alejandro.id}/{entreno.id}/borrar/")
         self.assertEqual(respuesta.status_code, 302)
         self.assertFalse(Entreno.objects.filter(id=entreno.id).exists())
+
+    def test_borrar_con_hx_request_responde_solo_el_trozo(self):
+        """Ronda 2 (H1) — `ver.html` manda el borrado con `hx-post` + `hx-target` +
+        `hx-swap="outerHTML"` (igual que `apuntar`, ver Q51ActualizaSinRecargarTests): con la
+        cabecera HX-Request que el navegador siempre manda en ese POST, la respuesta tiene que
+        ser el TROZO, no la página entera con <html>/<head> incrustados dentro del div."""
+        entreno = Entreno.objects.create(
+            usuario=self.alejandro, fecha=timezone.localdate(), deporte="correr",
+            intensidad="media", minutos=30, calorias=300, calorias_manuales=True,
+        )
+        respuesta = self.client.post(
+            f"/entrenos/{self.alejandro.id}/{entreno.id}/borrar/",
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(Entreno.objects.filter(id=entreno.id).exists())
+        contenido = respuesta.content.decode()
+        self.assertNotIn("<html", contenido)
+        self.assertIn('id="entrenos-de-hoy"', contenido)
 
 
 class R12_PantallaVaciaTests(BaseEntrenosTests):

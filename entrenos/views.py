@@ -127,8 +127,17 @@ def corregir(request, usuario_id, entreno_id):
 @require_POST
 def borrar(request, usuario_id, entreno_id):
     """§8 del plano ("Qué puede hacer... Borrarlo"). Mismo doble cinturón de R10 que
-    `corregir`, arriba."""
+    `corregir`, arriba.
+
+    Q-51/R12 — igual que `apuntar`: con HTMX (cabecera `HX-Request`) responde SOLO el trozo
+    (mismo patrón que `perfiles/views.py:borrar_peso`), para que `ver.html` pueda sustituir
+    `#entrenos-de-hoy` sin incrustar la página entera dentro de sí misma; sin HTMX, el redirect
+    de siempre.
+    """
     usuario = usuario_propio_o_404(request, usuario_id)
     entreno = get_object_or_404(Entreno, id=entreno_id, usuario=usuario)
     borrar_entreno(entreno)
+
+    if request.headers.get("HX-Request"):
+        return render(request, NOMBRE_DEL_PARTIAL, _contexto(usuario))
     return redirect("entrenos:ver", usuario_id=usuario.id)
