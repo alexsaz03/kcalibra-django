@@ -99,5 +99,18 @@
       {% if es_propio %}Ver tu histórico y apuntar una pesada →{% else %}Ver su histórico →{% endif %}
     </a>
   </p>
+
+  {# -------------------------------------------------------------------------------------- #}
+  {# R10/§8 del plano (unidad 012, decir-si-cumpliste.md): "el cierre a mano desde Progreso". #}
+  {# Solo si es la propia persona (R12: cerrar el día es SIEMPRE de uno mismo, sin lectura ni #}
+  {# escritura del hogar sobre cierres ajenos) — de lo contrario sería un enlace muerto (404). #}
+  {# -------------------------------------------------------------------------------------- #}
+  {% if es_propio %}
+    <p class="mt-3 text-sm">
+      <a href="{% url 'cierres:cerrar' usuario_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+        Cerrar un día (¿cumpliste el plan?) →
+      </a>
+    </p>
+  {% endif %}
 </div>
 {% endblock %}

@@ -35,6 +35,18 @@ def _comidas_como_diccionarios(comidas):
     ]
 
 
+def obtener_plan_de(usuario, fecha):
+    """
+    El plan de `usuario` en `fecha` (cualquiera, no solo hoy), o `None` si no tiene ninguno
+    puesto ese día. Unidad 012 (decir-si-cumpliste.md, R4) — la foto del menú al cerrar el día
+    necesita el plan de ESE día concreto, no el de hoy: `obtener_plan_de_hoy` (abajo) queda
+    como el caso particular con `fecha=timezone.localdate()`, sin cambiar su comportamiento.
+    """
+    return (
+        PlanDeDia.objects.filter(usuario=usuario, fecha=fecha).prefetch_related("comidas").first()
+    )
+
+
 def obtener_plan_de_hoy(usuario):
     """
     R11 — el plan de HOY de `usuario`, o `None` si no tiene ninguno puesto todavía. La fecha
@@ -42,11 +54,7 @@ def obtener_plan_de_hoy(usuario):
     porque la pregunta que responde el Inicio es "¿cuánto puedo comer HOY?", nunca la de otro
     día (un plan de ayer o de mañana, aunque exista, no se ve ni se cuenta aquí).
     """
-    return (
-        PlanDeDia.objects.filter(usuario=usuario, fecha=timezone.localdate())
-        .prefetch_related("comidas")
-        .first()
-    )
+    return obtener_plan_de(usuario, timezone.localdate())
 
 
 def resumen_del_dia(usuario):

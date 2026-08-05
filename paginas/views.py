@@ -1,7 +1,8 @@
 from django.shortcuts import render
 from django.utils import timezone
 
-from planes.logica import resumen_del_dia
+from cierres.logica import dia_pendiente_de_preguntar
+from planes.logica import obtener_plan_de, resumen_del_dia
 
 
 def inicio(request):
@@ -12,6 +13,12 @@ def inicio(request):
     por persona del hogar —la propia SIEMPRE la primera, R4/G-152— con sus calorías, sus
     macros, el anillo de cuánto cubre su plan de HOY (R2/R3/R11) y sus comidas, o el botón de
     apuntarlas si no tiene ninguna (R5).
+
+    R6-R9 (unidad 012, decir-si-cumpliste.md) — "la pregunta al abrir vive en
+    paginas/views.py:inicio... no la metas en base.html", porque el plano dice "al abrir la
+    app" (esta pantalla), no "en todas partes". Es SIEMPRE sobre la propia persona (G-162:
+    "cada persona del hogar con cuenta" contesta la suya, nunca la de otra): por eso se calcula
+    para `request.user`, no para cada tarjeta del hogar.
     """
     if not request.user.is_authenticated:
         return render(request, "paginas/inicio.html")
@@ -42,7 +49,18 @@ def inicio(request):
         for miembro in miembros
     ]
 
-    return render(request, "paginas/inicio.html", {"tarjetas": tarjetas})
+    dia_pendiente = dia_pendiente_de_preguntar(request.user)
+    plan_pendiente = obtener_plan_de(request.user, dia_pendiente) if dia_pendiente else None
+
+    return render(
+        request,
+        "paginas/inicio.html",
+        {
+            "tarjetas": tarjetas,
+            "dia_pendiente": dia_pendiente,
+            "plan_pendiente": plan_pendiente,
+        },
+    )
 
 
 def hora_servidor(request):
