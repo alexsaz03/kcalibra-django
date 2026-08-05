@@ -14,6 +14,7 @@ fecha real de la máquina: así el test no depende de en qué día se ejecute la
 import unittest
 from datetime import date, timedelta
 
+from servicios import entrenos
 from servicios import metabolismo
 from servicios import planes
 from servicios import progreso
@@ -508,6 +509,123 @@ class ConstruirEvolucionTests(unittest.TestCase):
         self.assertIsNotNone(evolucion["peso_kg"])
         self.assertIsNotNone(evolucion["grasa_pct"])
         self.assertIsNotNone(evolucion["cintura_cm"])
+
+
+class C37_EuridiceCorrerTests(unittest.TestCase):
+    """R1/C-37 (unidad 011) — el episodio real de Euridice: 62 kg, 35 min de correr a
+    intensidad media, sin escribir calorías. La fórmula la despeja la especificación de la
+    unidad; este test es el que la clava contra el número exacto del plano."""
+
+    def test_estima_362_kcal(self):
+        # 10 kcal/min * 35 min * (62/60) = 361,6666... -> 362 con el redondeo de Math.round
+        # (la mitad SIEMPRE hacia arriba), no el bancario de round() de Python: es justo el
+        # tipo de número donde se nota la diferencia (conocimiento/round-python-vs-...).
+        kcal = entrenos.estimar_calorias(
+            deporte="correr", intensidad="media", minutos=35, peso_kg=62
+        )
+        self.assertEqual(kcal, 362)
+
+
+class C38_AlejandroHyroxTests(unittest.TestCase):
+    """R3/C-38 (unidad 011) — el episodio real de Alejandro: 93 kg, 60 min de Hyrox a
+    intensidad fuerte, sin escribir calorías."""
+
+    def test_estima_1302_kcal(self):
+        kcal = entrenos.estimar_calorias(
+            deporte="hyrox", intensidad="fuerte", minutos=60, peso_kg=93
+        )
+        self.assertEqual(kcal, 1302)
+
+
+class TablaG71Tests(unittest.TestCase):
+    """R4 — los siete deportes, cada uno con sus tres intensidades, exactamente los números
+    de la tabla G-71 (a peso de referencia 60 kg, sin ajustar)."""
+
+    TABLA_ESPERADA = {
+        "correr": {"suave": 8, "media": 10, "fuerte": 13.5},
+        "bici": {"suave": 6, "media": 8, "fuerte": 10},
+        "nadar": {"suave": 6, "media": 8, "fuerte": 9.5},
+        "fuerza": {"suave": 3.5, "media": 5, "fuerte": 6},
+        "crossfit": {"suave": 6, "media": 9, "fuerte": 12},
+        "hyrox": {"suave": 8, "media": 11, "fuerte": 14},
+        "otro": {"suave": 4, "media": 6, "fuerte": 8},
+    }
+
+    def test_los_siete_deportes_estan_con_sus_tres_intensidades(self):
+        self.assertEqual(set(entrenos.TABLA_KCAL_POR_MINUTO), set(self.TABLA_ESPERADA))
+        for deporte, intensidades in self.TABLA_ESPERADA.items():
+            self.assertEqual(entrenos.TABLA_KCAL_POR_MINUTO[deporte], intensidades)
+
+    def test_a_peso_de_referencia_el_ajuste_no_cambia_nada(self):
+        # A 60 kg exactos, peso_kg/60 = 1: la estimación es EXACTAMENTE el número de la tabla
+        # multiplicado por los minutos, sin ningún ajuste. Con 10 minutos, los siete deportes
+        # y sus tres intensidades dan siempre un entero EXACTO (ninguno cae en ",5"), así que
+        # el test compara contra `int(...)` sin tener que tocar el redondeo privado del módulo.
+        for deporte, intensidades in self.TABLA_ESPERADA.items():
+            for intensidad, kcal_min in intensidades.items():
+                estimado = entrenos.estimar_calorias(
+                    deporte=deporte, intensidad=intensidad, minutos=10, peso_kg=60
+                )
+                self.assertEqual(estimado, int(kcal_min * 10))
+
+
+class AjustePorPesoTests(unittest.TestCase):
+    """G-70 — el ajuste es proporcional al peso de quien entrenó: a más peso, más kcal
+    estimadas para el mismo entreno, y viceversa."""
+
+    def test_mas_peso_da_mas_calorias_para_el_mismo_entreno(self):
+        ligera = entrenos.estimar_calorias(deporte="bici", intensidad="suave", minutos=30, peso_kg=50)
+        pesada = entrenos.estimar_calorias(deporte="bici", intensidad="suave", minutos=30, peso_kg=100)
+        self.assertGreater(pesada, ligera)
+
+
+class CalcularMacrosSinRedondearTests(unittest.TestCase):
+    """
+    `redondear=False` (unidad 011, para escalar los macros de un entreno sin arrastrar el
+    error de haber redondeado antes de tiempo — bias.md): el comportamiento POR DEFECTO
+    (`redondear=True`, sin pasarlo) tiene que seguir siendo EXACTAMENTE el de antes (R8 de la
+    unidad 004): esta clase demuestra las dos cosas, no solo la nueva.
+    """
+
+    def test_por_defecto_sigue_dando_los_mismos_enteros_de_siempre(self):
+        # Mismos datos y mismo resultado que R1_EuridiceTests de la unidad 004: 136/59/205.
+        macros = metabolismo.calcular_macros(objetivo="perder_grasa", calorias=1894.06125, peso_kg=62)
+        self.assertEqual(macros, {"proteina_g": 136, "grasa_g": 59, "carbos_g": 205})
+
+    def test_sin_redondear_devuelve_floats_sin_tocar(self):
+        macros = metabolismo.calcular_macros(
+            objetivo="perder_grasa", calorias=1894.06125, peso_kg=62, redondear=False
+        )
+        self.assertAlmostEqual(macros["proteina_g"], 136.4, places=3)
+        self.assertAlmostEqual(macros["grasa_g"], 58.92635, places=3)
+        self.assertAlmostEqual(macros["carbos_g"], 204.531025, places=3)
+
+
+class EscalarMacrosTests(unittest.TestCase):
+    """
+    R7 de generar-el-plan.md (unidad 011): "sumar las calorías de los entrenos... y escalar
+    sus macros en la misma proporción". El episodio real que fija el número exacto (C-2 de
+    generar-el-plan.md): Euridice, base 1.894 kcal / 136-59-205 g, entrena y su objetivo sube
+    a 2.249 kcal (+355) → los macros escalan a 162-70-243 g. Si `escalar_macros` recibiera los
+    macros YA REDONDEADOS en vez de los exactos, la proteína daría 161 en vez de 162 (probado
+    a mano en hallazgos.md) — por eso esta unidad exige `calcular_macros(..., redondear=False)`
+    como entrada, nunca el diccionario ya redondeado.
+    """
+
+    def test_escala_los_macros_exactos_del_episodio_de_euridice(self):
+        macros_exactos = metabolismo.calcular_macros(
+            objetivo="perder_grasa", calorias=1894.06125, peso_kg=62, redondear=False
+        )
+        factor = (1894 + 355) / 1894
+        escalados = metabolismo.escalar_macros(macros_exactos, factor)
+        self.assertEqual(escalados, {"proteina_g": 162, "grasa_g": 70, "carbos_g": 243})
+
+    def test_escalar_por_1_no_cambia_nada(self):
+        macros_exactos = {"proteina_g": 100.0, "grasa_g": 50.0, "carbos_g": 200.0}
+        self.assertEqual(
+            metabolismo.escalar_macros(macros_exactos, 1.0),
+            {"proteina_g": 100, "grasa_g": 50, "carbos_g": 200},
+        )
 
 
 if __name__ == "__main__":

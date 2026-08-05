@@ -40,6 +40,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import PruebaConRegistroAbierto
+from entrenos.models import Entreno
 from perfiles.forms import FormularioPerfil, FormularioMedicion
 from perfiles.logica import (
     apuntar_medicion,
@@ -49,6 +50,7 @@ from perfiles.logica import (
     ultima_medicion,
 )
 from perfiles.models import MedicionPeso, Perfil
+from perfiles import constantes
 
 Usuario = get_user_model()
 
@@ -1296,3 +1298,197 @@ class LaPantallaDePesoProponeHoyDeFabricaTests(PruebaConRegistroAbierto):
 
         hoy_iso = timezone.localdate().isoformat()
         self.assertIn(f'value="{hoy_iso}"', input_visible.group())
+
+
+class R7_ElObjetivoSubeConLosEntrenosDeHoyTests(PruebaConRegistroAbierto):
+    """
+    R7 (unidad 011, apuntar-un-entreno.md) — con entrenos apuntados HOY, el objetivo del día
+    sube esas calorías y los macros escalan en la misma proporción (R-2 de
+    generar-el-plan.md). Episodio real que fija el número exacto: C-2 de generar-el-plan.md
+    (Euridice, base 1.894 kcal / 136-59-205 g, entrena 355 kcal más -> objetivo 2.249 kcal /
+    162-70-243 g) — el MISMO perfil que ya prueba R1 de la unidad 004 (`DATOS_FISICOS_POR_DEFECTO`
+    son los suyos), para no tener que recalcular la base a mano.
+    """
+
+    def test_con_355_kcal_de_entreno_el_objetivo_sube_a_2249_y_los_macros_escalan(self):
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("euridice@example.com")  # 62 kg, perder_grasa: base 1894
+            usuario = Usuario.objects.get(email="euridice@example.com")
+
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=timezone.localdate(),
+                deporte="correr",
+                intensidad="media",
+                minutos=35,
+                calorias=355,
+                calorias_manuales=True,
+            )
+            resultado = calcular_objetivo_del_dia(usuario)
+
+        self.assertEqual(resultado["calorias"], 2249)
+        self.assertEqual(resultado["proteina_g"], 162)
+        self.assertEqual(resultado["grasa_g"], 70)
+        self.assertEqual(resultado["carbos_g"], 243)
+        self.assertEqual(resultado["entreno_kcal"], 355)
+
+    def test_dos_entrenos_del_mismo_dia_se_suman_los_dos(self):
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("euridice@example.com")
+            usuario = Usuario.objects.get(email="euridice@example.com")
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=timezone.localdate(),
+                deporte="correr",
+                intensidad="media",
+                minutos=35,
+                calorias=200,
+                calorias_manuales=True,
+            )
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=timezone.localdate(),
+                deporte="fuerza",
+                intensidad="suave",
+                minutos=20,
+                calorias=100,
+                calorias_manuales=True,
+            )
+            resultado = calcular_objetivo_del_dia(usuario)
+        self.assertEqual(resultado["entreno_kcal"], 300)
+        self.assertEqual(resultado["calorias"], 1894 + 300)
+
+
+class R8_SinEntrenosNiUnaKcalSeMueveTests(PruebaConRegistroAbierto):
+    """
+    R8 (unidad 011) — la red de seguridad de las siete unidades anteriores: con CERO entrenos
+    ese día, el objetivo es EXACTAMENTE el de antes de esta unidad, sin cambiar ni una kcal.
+    Mismos datos y mismo número que R1_EuridicePorHTTPTests (unidad 004): si este test
+    cambiara de número, alguna promesa anterior se ha roto — "PARA y escala" (aviso del padre).
+    """
+
+    def test_sin_ningun_entreno_el_objetivo_es_el_de_siempre(self):
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("euridice@example.com")
+            usuario = Usuario.objects.get(email="euridice@example.com")
+            self.assertFalse(Entreno.objects.filter(usuario=usuario).exists())
+            resultado = calcular_objetivo_del_dia(usuario)
+
+        self.assertEqual(resultado["calorias"], 1894)
+        self.assertEqual(resultado["proteina_g"], 136)
+        self.assertEqual(resultado["grasa_g"], 59)
+        self.assertEqual(resultado["carbos_g"], 205)
+        self.assertEqual(resultado["entreno_kcal"], 0)
+
+    def test_un_entreno_de_OTRO_dia_no_cuenta_para_hoy(self):
+        """Mutación obligatoria nº4 ("sumar también los entrenos de OTROS días", ver
+        hallazgos.md): tiene que dejar esto en rojo — un entreno de ayer no puede subir el
+        objetivo de HOY."""
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("euridice@example.com")
+            usuario = Usuario.objects.get(email="euridice@example.com")
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=timezone.localdate() - timedelta(days=1),
+                deporte="correr",
+                intensidad="media",
+                minutos=35,
+                calorias=355,
+                calorias_manuales=True,
+            )
+            resultado = calcular_objetivo_del_dia(usuario)
+
+        self.assertEqual(resultado["calorias"], 1894)
+        self.assertEqual(resultado["entreno_kcal"], 0)
+
+
+class CalcularObjetivoDelDiaAceptaFechaTests(PruebaConRegistroAbierto):
+    """
+    R6/C-39 (unidad 011) — "para corregir el histórico, el cálculo tiene que aceptar una
+    fecha" (punto 4 del "Cómo" de la especificación): `calcular_objetivo_del_dia` gana un
+    parámetro `fecha` opcional, con `hoy` por defecto, SIN cambiar a ninguno de sus llamadores
+    actuales (perfiles/views.py, planes/logica.py — ninguno de los dos pasa `fecha`).
+    """
+
+    def test_con_fecha_explicita_suma_los_entrenos_de_ESE_dia_no_los_de_hoy(self):
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("alejandro@example.com", sexo="hombre", peso_kg="93")
+            usuario = Usuario.objects.get(email="alejandro@example.com")
+            ayer = timezone.localdate() - timedelta(days=1)
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=ayer,
+                deporte="hyrox",
+                intensidad="fuerte",
+                minutos=60,
+                calorias=1302,
+                calorias_manuales=True,
+            )
+
+            resultado_de_hoy = calcular_objetivo_del_dia(usuario)
+            resultado_de_ayer = calcular_objetivo_del_dia(usuario, fecha=ayer)
+
+        self.assertEqual(resultado_de_hoy["entreno_kcal"], 0)
+        self.assertEqual(resultado_de_ayer["entreno_kcal"], 1302)
+        self.assertGreater(resultado_de_ayer["calorias"], resultado_de_hoy["calorias"])
+
+    def test_sin_pasar_fecha_sigue_siendo_hoy_por_defecto(self):
+        """Los llamadores existentes siguen sin pasar `fecha`: el comportamiento por defecto
+        no puede cambiar bajo sus pies."""
+        with _con_hoy_fijo():
+            self.registrar_y_verificar("euridice@example.com")
+            usuario = Usuario.objects.get(email="euridice@example.com")
+            Entreno.objects.create(
+                usuario=usuario,
+                fecha=timezone.localdate(),
+                deporte="correr",
+                intensidad="media",
+                minutos=35,
+                calorias=355,
+                calorias_manuales=True,
+            )
+            con_fecha_explicita = calcular_objetivo_del_dia(usuario, fecha=timezone.localdate())
+            sin_pasar_fecha = calcular_objetivo_del_dia(usuario)
+
+        self.assertEqual(con_fecha_explicita["calorias"], sin_pasar_fecha["calorias"])
+
+
+class R11_EtiquetasDeActividadDelDiaADiaTests(PruebaConRegistroAbierto):
+    """
+    R11 (unidad 011) — las CINCO etiquetas del nivel de actividad hablan del día a día SIN
+    contar los entrenos, y NINGUNA menciona días de ejercicio por semana. Coherencia con el
+    plano de `crear-cuenta` ("eligió su nivel de actividad DEL DÍA A DÍA") y con R-2 de
+    `generar-el-plan` (los entrenos se suman aparte, unidad 011 — no deben contarse dos
+    veces, una en la etiqueta y otra en el entreno apuntado).
+    """
+
+    def test_las_cinco_claves_siguen_intactas(self):
+        # R11 cambia el TEXTO, nunca las claves que se guardan en la base de datos.
+        self.assertEqual(
+            set(dict(constantes.ACTIVIDAD_CHOICES)),
+            {"sedentario", "ligero", "moderado", "activo", "muy_activo"},
+        )
+
+    def test_ninguna_etiqueta_menciona_dias_de_ejercicio_por_semana(self):
+        for clave, etiqueta in constantes.ACTIVIDAD_CHOICES:
+            etiqueta_normalizada = etiqueta.lower()
+            self.assertNotIn(
+                "días/semana", etiqueta_normalizada, f"'{clave}' todavía habla de días/semana"
+            )
+            self.assertNotIn(
+                "dias/semana", etiqueta_normalizada, f"'{clave}' todavía habla de dias/semana"
+            )
+            self.assertNotIn(
+                "ejercicio", etiqueta_normalizada, f"'{clave}' todavía menciona 'ejercicio'"
+            )
+            self.assertNotIn(
+                "entreno", etiqueta_normalizada, f"'{clave}' todavía menciona los entrenos"
+            )
+
+    def test_la_pantalla_de_alta_ya_enseña_las_etiquetas_nuevas(self):
+        """La petición LLEGA a donde dice probar (lección de conocimiento/tests-que-no-fallan-
+        cuando-deben.md): no basta con que `constantes.py` esté bien, el `<select>` del
+        formulario de alta tiene que pintar el texto nuevo de verdad."""
+        respuesta = self.client.get("/cuentas/signup/")
+        contenido = respuesta.content.decode()
+        self.assertNotIn("días/semana", contenido)
