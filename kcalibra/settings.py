@@ -138,6 +138,15 @@ INSTALLED_APPS = [
     # método funciona (R-80 en Progreso, unidad siguiente): esta unidad genera los DATOS, no
     # la gráfica.
     "cierres",
+    # despensa: lo que hay en casa, agrupado por categorías; añadir, corregir y quitar
+    # productos a mano. Unidad 014 — ver
+    # docs/05-trabajo/014-la-despensa/especificacion.md del meta-repo. Es DEL HOGAR (G-43,
+    # mismo criterio que `planes`): el segundo modelo que repite el precedente de "el hogar
+    # también ESCRIBE" — cualquiera del hogar añade, corrige y quita sin pedir permiso a
+    # nadie. Entrega PARCIAL a propósito: descontar al cocinar (R-57) y marcar cantidades
+    # aproximadas (R-58) quedan pendientes, sin las piezas de las que dependen (ingredientes
+    # de una receta, "marcar una comida como preparada") todavía construidas.
+    "despensa",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"
