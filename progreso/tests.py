@@ -345,6 +345,11 @@ class NuncaSeMezclanPersonasTests(BaseProgresoTests):
             re.DOTALL,
         )
         zona_de_datos = "".join(graficas)
+        # Si esto falla, NO es que desapareciera el punto de Alejandro: es que el regex de
+        # arriba dejó de casar (p. ej. `_grafica.html` cambió de <section> a otra etiqueta).
+        # Sin este aviso, el rojo de las tres aserciones de abajo sería correcto pero mudo
+        # sobre la causa real — el mismo riesgo que ya nos costó caro en el bug 015.
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
         # Un único punto: el de Alejandro. Si el hogar se mezclara, habría dos.
         self.assertEqual(zona_de_datos.count("<circle"), 1)
         self.assertIn("93", zona_de_datos)
