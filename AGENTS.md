@@ -98,6 +98,13 @@ Para generar el CSS a partir de las plantillas:
 Repite este comando cada vez que uses una clase de Tailwind nueva en una plantilla que antes
 no usabas (o añade `--watch` al final mientras desarrollas, para que se regenere solo).
 
+**Si se te olvida, hay una red de seguridad — pero no confíes en ella para no recompilar.**
+`kcalibra/tests_estilos.py` (dentro de `python manage.py test`) recorre TODAS las plantillas
+del repo, compara sus clases contra `static/css/tailwind.css` y falla nombrando cualquier
+clase que falte, así que un CSS sin recompilar no pasa la suite. Es una defensa, no una excusa:
+sigue siendo tu responsabilidad recompilar antes de dar una plantilla por terminada — el bug
+015 fue la cuarta vez que alguien se olvidó de este paso y el CSS servido se quedó atrás.
+
 ### 1.7. HTMX y Alpine
 
 Ya están vendidos dentro del repo (`static/js/htmx.min.js` y `static/js/alpine.min.js`),
