@@ -56,7 +56,15 @@ def _directorios_de_plantillas():
     """Todas las carpetas `templates/` del repo: `templates/` en la raíz (compartida) y una
     por cada carpeta de primer nivel que tenga su propia `templates/`. Deliberadamente NO lee
     `assets/tailwind/input.css`: si lo hiciera, una app nueva que se olvide de declararse en
-    `@source` desaparecería también de este check, exactamente el fallo que provocó el bug."""
+    `@source` desaparecería también de este check, exactamente el fallo que provocó el bug.
+
+    ASIMETRÍA DE COBERTURA (a propósito, pero hay que saberla): `@source "../../**/templates"`
+    en `assets/tailwind/input.css` cubre plantillas a CUALQUIER profundidad bajo la raíz del
+    repo. Esta función solo mira el PRIMER NIVEL (`<carpeta>/templates`). Una futura carpeta de
+    plantillas anidada (p. ej. `apps/x/templates`) se compilaría igual (el glob de Tailwind la
+    alcanza) pero este check NO la vigilaría: si a esa carpeta anidada le faltara una clase, el
+    CSS compilado la tendría igualmente ausente y nadie se enteraría por aquí. Quien añada
+    plantillas anidadas debe saber que el check no llega ahí."""
     base = settings.BASE_DIR
     directorios = []
     raiz = os.path.join(base, "templates")
@@ -102,16 +110,15 @@ class TailwindCubreTodasLasPlantillasTests(SimpleTestCase):
 
     databases = set()
 
-    def test_descubre_las_diez_carpetas_de_plantillas(self):
+    def test_no_desaparece_ninguna_carpeta_de_plantillas_conocida(self):
         """Comprobación de la propia comprobación: si la búsqueda de carpetas se rompiera (por
         ejemplo, apuntando a un sitio vacío) el test principal pasaría en falso -- "sin
-        plantillas que mirar" es indistinguible de "todo correcto". Fija el suelo conocido:
-        las diez carpetas de plantillas de hoy, incluidas las cuatro que motivaron el bug."""
+        plantillas que mirar" es indistinguible de "todo correcto". NO fija un suelo cerrado
+        (un `assertEqual` contra las diez de hoy pondría la suite en rojo el día que llegue la
+        app nº 11, con un mensaje que diría lo contrario de lo ocurrido): comprueba que las
+        diez carpetas conocidas siguen encontrándose SIEMPRE, sin prohibir que aparezcan más.
+        Lo único que de verdad protege esta comprobación es que ninguna DESAPAREZCA."""
         directorios = _directorios_de_plantillas()
-        nombres = {os.path.basename(os.path.dirname(d)) if os.path.basename(d) == "templates"
-                   else os.path.basename(d) for d in directorios}
-        # La carpeta compartida `templates/` no tiene "app" por encima con ese mismo nombre;
-        # basta con comprobar que aparece como ruta.
         rutas_relativas = {os.path.relpath(d, settings.BASE_DIR) for d in directorios}
         esperadas = {
             "templates",
@@ -125,11 +132,13 @@ class TailwindCubreTodasLasPlantillasTests(SimpleTestCase):
             os.path.join("planes", "templates"),
             os.path.join("progreso", "templates"),
         }
-        self.assertEqual(
-            rutas_relativas,
+        faltantes = esperadas - rutas_relativas
+        self.assertLessEqual(
             esperadas,
-            "la búsqueda de carpetas de plantillas ya no encuentra las diez esperadas -- si "
-            "esto falla, el test de abajo podría estar pasando en falso por no mirar nada",
+            rutas_relativas,
+            "la búsqueda de carpetas de plantillas ha dejado de encontrar carpetas que sí "
+            f"debería (desaparecidas: {sorted(faltantes)}) -- si esto falla, el test de abajo "
+            "podría estar pasando en falso por no mirar todo lo que debería",
         )
 
     def test_todas_las_clases_usadas_existen_en_el_css_compilado(self):
