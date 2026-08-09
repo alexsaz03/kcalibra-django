@@ -317,10 +317,26 @@ class NuncaSeMezclanPersonasTests(BaseProgresoTests):
 
         respuesta = self.client.get("/progreso/")
         contenido = respuesta.content.decode()
+        # Bug 016: la página ENTERA no es el sitio a mirar. `templates/base.html` mete en la
+        # barra de arriba un <form> de "Salir" con {% csrf_token %} — un token ALEATORIO,
+        # distinto en cada carga, que a veces contiene "61" por pura coincidencia (medido: 9
+        # de 300 peticiones idénticas, sin ningún cambio de código — ver
+        # docs/bugs/016-test-de-progreso-intermitente.md del meta-repo). Buscar en la página
+        # entera hace que el test se ponga rojo sin que nada esté mal (décima cara de
+        # tests-que-no-fallan-cuando-deben.md, con una vuelta de tuerca: aquí no caduca por
+        # otra unidad, sino por contenido aleatorio de la propia página).
+        #
+        # El arreglo NO afloja el assert: lo acota a la ZONA DE DATOS (gráficas, resumen,
+        # entrenos, cumplimiento) — todo lo que la plantilla `progreso/ver.html` pinta DESPUÉS
+        # del <form> de "semanas a mirar" (el ÚLTIMO </form> de la página: el de "Salir" va
+        # primero, en la barra de navegación). Antes de ese punto solo vive cabecera y
+        # navegación, nada que R10 prometa. Contraprobado con mutación (misma ficha del bug):
+        # quitar el filtro por persona en progreso/views.py sigue poniendo este test en ROJO.
+        zona_de_datos = contenido.rsplit("</form>", 1)[-1]
         # Un único punto: el de Alejandro. Si el hogar se mezclara, habría dos.
-        self.assertEqual(contenido.count("<circle"), 1)
-        self.assertContains(respuesta, "93")
-        self.assertNotContains(respuesta, "61")
+        self.assertEqual(zona_de_datos.count("<circle"), 1)
+        self.assertIn("93", zona_de_datos)
+        self.assertNotIn("61", zona_de_datos)
 
 
 class SinDatosTests(BaseProgresoTests):
