@@ -119,6 +119,30 @@ def formatear_cantidad(cantidad, unidad):
     return _sin_ceros_de_mas(cantidad), unidad
 
 
+# Unidad 017, corrección tras la revisión (hueco bloqueante H1) — la palabra que acompaña al
+# número en el TEXTO legible (nunca en el `<input>`, que sigue en el código de la unidad:
+# "g", "kg"...). Con plural sencillo para las familias que se cuentan a piezas, porque así lo
+# diría una persona ("2 latas", no "2 lata").
+_PALABRA_DE_UNIDAD = {
+    "g": "g", "kg": "kg", "ml": "ml", "l": "l",
+    "ud": "unidad", "paquete": "paquete", "lata": "lata", "bote": "bote",
+}
+_PLURAL_SI_NO_ES_UNA = {"ud", "paquete", "lata", "bote"}
+
+
+def etiqueta_legible(cantidad_mostrada, unidad_mostrada):
+    """
+    La palabra que va junto al número en el texto de lectura humana (G-194): "kg", "g", "l",
+    "ml" tal cual, y el plural sencillo ("latas", "paquetes"...) para las familias a piezas
+    cuando la cantidad no es exactamente 1. Recibe el PAR que ya devolvió `formatear_cantidad`
+    — no vuelve a calcular nada, solo pone la palabra.
+    """
+    palabra = _PALABRA_DE_UNIDAD[unidad_mostrada]
+    if unidad_mostrada in _PLURAL_SI_NO_ES_UNA and cantidad_mostrada != 1:
+        palabra += "s"
+    return palabra
+
+
 def productos_por_categoria(hogar):
     """
     R8 (§8 del plano, "Qué ve nada más entrar") — todo lo que hay en `hogar`, agrupado por
@@ -127,15 +151,30 @@ def productos_por_categoria(hogar):
     categorías sin ningún producto — una despensa con solo verduras no enseña catorce
     cabeceras vacías detrás.
 
-    Unidad 017 — a cada producto se le añaden `cantidad_mostrada` y `unidad_mostrada` (R-96,
-    G-194): atributos calculados, NO campos del modelo, que la plantilla usa para enseñar la
-    cantidad como la diría una persona sin tocar lo que hay guardado.
+    Unidad 017 (corregido tras la revisión, hueco bloqueante H1 — ver hallazgos.md) — a cada
+    producto se le añaden dos cosas calculadas, NUNCA campos del modelo:
+
+    - `cantidad_mostrada`/`unidad_mostrada`: la lectura G-194 (por debajo de mil, en la unidad
+      pequeña; de mil para arriba, en la grande), más `etiqueta_mostrada` (la palabra que la
+      acompaña, con plural). Las tres se pintan SOLO en el texto que lee una persona — nunca en
+      el `<input>` ni en el `<select>` de corrección.
+    - El `<input>`/`<select>` de corrección de la plantilla siguen usando `producto.cantidad` y
+      `producto.unidad` TAL CUAL (los campos reales, ya en la unidad canónica): así lo que se
+      pinta ahí SIEMPRE cabe en lo que el formulario acepta (`decimal_places=2`), porque nunca
+      se dividió por 1.000 para llegar a la pantalla. Antes de este arreglo, la primera versión
+      de la unidad pintaba `cantidad_mostrada` (con hasta 3+ decimales tras dividir por 1.000,
+      p. ej. "1.383" de 1.383 g) DENTRO del `<input>`, que el propio formulario rechazaba al
+      volver a guardarlo — el bug que cazó la revisión con el "viaje de vuelta" (ver
+      `despensa.tests.ViajeDeVueltaDeLoQueSeEnsenaTests`).
     """
     productos = ProductoDespensa.del_hogar(hogar)
     por_clave = defaultdict(list)
     for producto in productos:
         producto.cantidad_mostrada, producto.unidad_mostrada = formatear_cantidad(
             producto.cantidad, producto.unidad
+        )
+        producto.etiqueta_mostrada = etiqueta_legible(
+            producto.cantidad_mostrada, producto.unidad_mostrada
         )
         por_clave[producto.categoria].append(producto)
     return [

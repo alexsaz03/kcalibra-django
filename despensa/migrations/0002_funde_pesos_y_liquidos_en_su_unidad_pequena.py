@@ -16,9 +16,14 @@ una en "g" por producto (y lo mismo para "l"/"ml"): nunca hace falta fundir más
 la vez para el mismo producto.
 
 **Sobre el rollback (obligatorio en la especificación, R6):** esta migración de datos es
-IRREVERSIBLE a propósito, y se declara así (sin `reverse_code`): una vez que dos líneas se han
-fundido sumando, ya no queda ningún rastro de qué parte del total venía de la que estaba en
-"kg" y cuál de la que estaba en "g" — no hay forma matemática de deshacer una suma. Intentar
+IRREVERSIBLE a propósito, y se declara así CON un `reverse_code` explícito (`_irreversible`,
+más abajo) que LEVANTA `IrreversibleError` a mano en vez de intentar deshacer nada (corregido
+tras la revisión: esta frase decía antes "sin `reverse_code`", que describía el mecanismo al
+revés — la instrucción operativa siempre fue la correcta, escribir la función y pasarla a
+`reverse_code=`, pero el mecanismo que describía esta frase no era ese): una vez que dos
+líneas se han fundido sumando, ya no queda ningún rastro de qué parte del total venía de la
+que estaba en "kg" y cuál de la que estaba en "g" — no hay forma matemática de deshacer una
+suma. Intentar
 `python manage.py migrate despensa 0001_initial` con esta migración ya aplicada lo dice
 explícitamente (Django la marca como no reversible y para con `IrreversibleError`, en vez de
 fingir que deshace algo que no puede deshacer). El rollback real, el que sí funciona, es

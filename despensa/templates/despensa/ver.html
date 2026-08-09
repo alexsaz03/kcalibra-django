@@ -38,7 +38,19 @@
               {% for producto in productos %}
                 <li class="rounded-lg border border-slate-200 bg-white p-3 text-sm" data-producto-id="{{ producto.id }}">
                   <div class="flex items-center justify-between gap-2">
-                    <strong>{{ producto.nombre }}</strong>
+                    <div>
+                      <strong>{{ producto.nombre }}</strong>
+                      {# Unidad 017 (corregido tras la revisión, hueco H1) — TEXTO de lectura  #}
+                      {# humana, G-194: "1,383 kg", con coma, la que lee una persona. Nunca en #}
+                      {# el `<input>` de abajo, que sigue en la unidad CANÓNICA (ver el porqué #}
+                      {# en despensa/logica.py:productos_por_categoria) — cada canal con su    #}
+                      {# formato, la lección de la 014 bien aplicada: máquina con punto en el  #}
+                      {# atributo que lee el navegador, persona con coma en lo que lee ella.   #}
+                      <span
+                        id="cantidad-legible-{{ producto.id }}"
+                        class="ml-1 text-slate-500"
+                      >{{ producto.cantidad_mostrada }} {{ producto.etiqueta_mostrada }}</span>
+                    </div>
                     <form
                       hx-post="{% url 'despensa:quitar' producto.id %}"
                       hx-target="#despensa-del-hogar"
@@ -64,20 +76,23 @@
                     <div>
                       <label class="block text-xs text-slate-500" for="cantidad-{{ producto.id }}">Cantidad</label>
                       {# Novena/séptima cara de conocimiento/tests-que-no-fallan-cuando-deben.md: #}
-                      {# `producto.cantidad_mostrada` es un Decimal; con LANGUAGE_CODE="es"      #}
-                      {# Django lo localiza con COMA ("4,00"), que un <input type="number"> no   #}
-                      {# sabe leer y descarta EN SILENCIO (sin error visible). `|unlocalize`     #}
-                      {# fuerza el formato de máquina (punto) en este atributo, que lee el       #}
-                      {# navegador, no una persona — la coma se queda para el texto que sí lee   #}
-                      {# una persona. `cantidad_mostrada`/`unidad_mostrada` (unidad 017,         #}
-                      {# R-96/G-194, despensa/logica.py:formatear_cantidad) son la cantidad YA   #}
-                      {# convertida a como la diría una persona (gramos por debajo del kilo,     #}
-                      {# kilos de ahí para arriba) — nunca lo que hay guardado por dentro, que   #}
-                      {# sigue siempre en la unidad pequeña sin redondear ni un gramo.           #}
+                      {# `producto.cantidad` es un Decimal; con LANGUAGE_CODE="es" Django lo     #}
+                      {# localiza con COMA ("4,00"), que un <input type="number"> no sabe leer   #}
+                      {# y descarta EN SILENCIO (sin error visible). `|unlocalize` fuerza el     #}
+                      {# formato de máquina (punto) en este atributo, que lee el navegador, no   #}
+                      {# una persona. Unidad 017 (corregido tras la revisión, hueco H1): este    #}
+                      {# `value` es `producto.cantidad` TAL CUAL — el dato guardado, ya en su    #}
+                      {# unidad canónica — NUNCA `cantidad_mostrada` (que puede llevar más       #}
+                      {# decimales tras dividir por 1.000 de los que el formulario acepta,       #}
+                      {# `decimal_places=2`): pintar aquí lo convertido a kg/l fue el bug que    #}
+                      {# cazó el "viaje de vuelta" — guardar una línea de 1,383 kg reventaba      #}
+                      {# con "no haya más de 2 dígitos decimales" en cuanto alguien pulsaba      #}
+                      {# Guardar sin cambiar nada. Aquí SIEMPRE cabe: nunca se dividió para      #}
+                      {# llegar hasta este atributo.                                             #}
                       <input
                         id="cantidad-{{ producto.id }}"
                         type="number" step="0.01" min="0.01" name="cantidad"
-                        value="{{ producto.cantidad_mostrada|unlocalize }}"
+                        value="{{ producto.cantidad|unlocalize }}"
                         class="w-24 rounded border border-slate-300 px-2 py-1"
                       >
                     </div>
@@ -85,7 +100,7 @@
                       <label class="block text-xs text-slate-500" for="unidad-{{ producto.id }}">Unidad</label>
                       <select id="unidad-{{ producto.id }}" name="unidad" class="rounded border border-slate-300 px-2 py-1">
                         {% for valor, texto in unidades %}
-                          <option value="{{ valor }}" {% if valor == producto.unidad_mostrada %}selected{% endif %}>{{ texto }}</option>
+                          <option value="{{ valor }}" {% if valor == producto.unidad %}selected{% endif %}>{{ texto }}</option>
                         {% endfor %}
                       </select>
                     </div>

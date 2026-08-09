@@ -19,12 +19,25 @@ docs/conocimiento/tests-que-no-fallan-cuando-deben.md del meta-repo: la petició
 LLEGAR a lo que dice probar. Las ÚNICAS excepciones a propósito son R4 (la restricción de la
 base de datos: esa SÍ tiene que insertar saltándose la vista, porque lo que demuestra es que
 la base de datos protege aunque la vista no exista o esté rota — verificación de la
-especificación de la 014, mutación obligatoria nº4) y R6 de la 017 (la migración de datos: se
-prueba migrando de verdad con `MigrationExecutor`, no a través de ninguna vista, porque lo que
-demuestra es que datos que YA existían antes de esta unidad se convierten sin romperse).
+especificación de la 014, mutación obligatoria nº4) y R6 de la 017 (la migración de datos:
+`R6_MigracionFundeLoQueYaColisionaTests` inserta con el ORM real —igual que R4, porque lo que
+demuestra es que datos que YA existían antes de esta unidad se convierten sin romperse— y
+llama a la función de la migración directamente, por su nombre de módulo real, con
+`importlib`; solo `R6_RollbackDeLaMigracionEsIrreversibleAPropositoTests`, que prueba el
+ROLLBACK, mueve el puntero de qué migraciones están aplicadas de verdad, con
+`MigrationExecutor` — corregido tras la revisión, que encontró esta frase desalineada con el
+código).
+
+**El viaje de vuelta (hueco bloqueante H1 de la revisión):** enseñar bien una cantidad no
+basta si lo enseñado no se puede volver a guardar. `ViajeDeVueltaDeLoQueSeEnsenaTests` coge
+literalmente lo que la pantalla pinta para corregir una línea (el `value=` del `<input>` y la
+opción `selected` del `<select>`) y lo reenvía por el formulario — la costura entre plantilla
+y formulario que ningún otro test de aquí recorre, porque cada uno prueba su lado por
+separado.
 """
 
 from decimal import Decimal
+import re
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
@@ -103,6 +116,23 @@ class BaseDespensaTests(PruebaConRegistroAbierto):
         """
         marcador = f'id="cantidad-{producto_id}"'
         return contenido.split(marcador, 1)[1].split(">", 1)[0]
+
+    def trozo_select_unidad(self, contenido, producto_id):
+        """Aísla el `<select id="unidad-{id}">...</select>` de UN producto — mismo criterio
+        que `trozo_input_cantidad`: nunca la página entera."""
+        marcador = f'id="unidad-{producto_id}"'
+        return contenido.split(marcador, 1)[1].split("</select>", 1)[0]
+
+    def texto_legible(self, contenido, producto_id):
+        """
+        Unidad 017 (corregido tras la revisión, hueco bloqueante H1) — el texto de LECTURA
+        HUMANA (G-194, con coma) que va junto al nombre del producto: `<span
+        id="cantidad-legible-{id}">…</span>`. Es DISTINTO del `<input>` de corrección (que
+        sigue en la unidad canónica, formato de máquina, punto decimal) — cada uno con su
+        propio helper, para no volver a mezclar los dos canales.
+        """
+        marcador = f'id="cantidad-legible-{producto_id}"'
+        return contenido.split(marcador, 1)[1].split(">", 1)[1].split("</span>", 1)[0]
 
 
 class R1_C57_SumaEnVezDeDuplicarTests(BaseDespensaTests):
@@ -224,33 +254,26 @@ class C106_EnsenaEnGramosOKilosConElCorteEnElKiloTests(BaseDespensaTests):
     """
     Unidad 017, R3 (C-106, R-96, G-194) — por debajo de un kilo se enseña en gramos, de un
     kilo para arriba en kilos (igual con litros); el corte está EN el kilo: 1.000 g clavados
-    se enseñan "1 kg", no "1.000 g". Lo que hay guardado por dentro NUNCA se toca (Q-174): el
-    formateo vive solo en `despensa/logica.py:formatear_cantidad` y solo se ve en el `value`
-    del `<input>` de corrección y en el `<select>` de unidad ("Cómo" punto 6).
-    """
+    se enseñan "1 kg", no "1.000 g". Lo que hay guardado por dentro NUNCA se toca (Q-174).
 
-    def _trozos_mostrados(self, producto_id):
-        """
-        Devuelve `(trozo_input, trozo_select)`: el `<input>` de cantidad y el `<select>` de
-        unidad de ESE producto, cada uno aislado a su propia etiqueta — nunca la página
-        entera (lección del bug 016: un assert sobre el HTML completo puede colar por
-        casualidad con el token CSRF aleatorio; y décima cara de
-        conocimiento/tests-que-no-fallan-cuando-deben.md: acota siempre al `id` de la pieza).
-        """
-        respuesta = self.client.get("/despensa/")
-        contenido = respuesta.content.decode()
-        trozo_input = self.trozo_input_cantidad(contenido, producto_id)
-        trozo_select = contenido.split(f'id="unidad-{producto_id}"')[1].split("</select>")[0]
-        return trozo_input, trozo_select
+    Corregido tras la revisión (hueco bloqueante H1): la lectura G-194 se enseña en el TEXTO
+    junto al nombre (`#cantidad-legible-{id}`, con coma — lo lee una persona), NUNCA en el
+    `<input>`/`<select>` de corrección, que siguen en la unidad CANÓNICA tal cual está
+    guardada (formato de máquina, con punto) — así lo que se pinta en el formulario siempre
+    cabe en lo que el propio formulario acepta al volver a guardarlo. El viaje de vuelta en sí
+    (guardar lo que el `<input>` pinta) se prueba aparte, en `ViajeDeVueltaDeLoQueSeEnsenaTests`.
+    """
 
     def test_500_gramos_se_ensenan_en_gramos(self):
         self.anadir(nombre="arroz", cantidad="500", unidad="g")
         producto = ProductoDespensa.objects.get(
             hogar=self.alejandro.hogar, nombre_normalizado="arroz"
         )
-        trozo_input, trozo_select = self._trozos_mostrados(producto.id)
-        self.assertIn('value="500"', trozo_input)
-        self.assertIn('<option value="g" selected>', trozo_select)
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        self.assertEqual(self.texto_legible(contenido, producto.id), "500 g")
+        trozo_select = self.trozo_select_unidad(contenido, producto.id)
+        self.assertIn('<option value="g" selected>', trozo_select)  # el <select> en canónica
 
     def test_300_mas_200_gramos_se_ensenan_500_gramos_no_0_5_kg(self):
         self.anadir(nombre="arroz", cantidad="300", unidad="g")
@@ -259,10 +282,11 @@ class C106_EnsenaEnGramosOKilosConElCorteEnElKiloTests(BaseDespensaTests):
             hogar=self.alejandro.hogar, nombre_normalizado="arroz"
         )
         self.assertEqual(producto.cantidad, Decimal("500"))
-        trozo_input, trozo_select = self._trozos_mostrados(producto.id)
-        self.assertIn('value="500"', trozo_input)
-        self.assertNotIn('value="0.5"', trozo_input)
-        self.assertIn('<option value="g" selected>', trozo_select)
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        texto = self.texto_legible(contenido, producto.id)
+        self.assertEqual(texto, "500 g")
+        self.assertNotIn("0,5", texto)
 
     def test_1500_gramos_se_ensenan_en_kilos(self):
         self.anadir(nombre="arroz", cantidad="1", unidad="kg")
@@ -270,9 +294,13 @@ class C106_EnsenaEnGramosOKilosConElCorteEnElKiloTests(BaseDespensaTests):
         producto = ProductoDespensa.objects.get(
             hogar=self.alejandro.hogar, nombre_normalizado="arroz"
         )
-        trozo_input, trozo_select = self._trozos_mostrados(producto.id)
-        self.assertIn('value="1.5"', trozo_input)
-        self.assertIn('<option value="kg" selected>', trozo_select)
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        # "1,5 kg" con COMA: es texto para leer, no el `value` de un `<input>` (esa es la
+        # frontera exacta que separó la revisión — cada canal con su formato).
+        self.assertEqual(self.texto_legible(contenido, producto.id), "1,5 kg")
+        trozo_select = self.trozo_select_unidad(contenido, producto.id)
+        self.assertIn('<option value="g" selected>', trozo_select)  # canónica: "g", no "kg"
 
     def test_1000_gramos_clavados_se_ensenan_1_kg_no_1000_g(self):
         self.anadir(nombre="harina", cantidad="1000", unidad="g")
@@ -280,10 +308,26 @@ class C106_EnsenaEnGramosOKilosConElCorteEnElKiloTests(BaseDespensaTests):
             hogar=self.alejandro.hogar, nombre_normalizado="harina"
         )
         self.assertEqual(producto.cantidad, Decimal("1000"))  # guardado intacto, sin redondear
-        trozo_input, trozo_select = self._trozos_mostrados(producto.id)
-        self.assertIn('value="1"', trozo_input)
-        self.assertNotIn('value="1000"', trozo_input)
-        self.assertIn('<option value="kg" selected>', trozo_select)
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        self.assertEqual(self.texto_legible(contenido, producto.id), "1 kg")
+
+    def test_el_input_de_correccion_sigue_en_la_unidad_canonica_no_en_la_mostrada(self):
+        """
+        El hueco bloqueante de la revisión, en negativo: el `<input>` de corrección de una
+        línea de 1,5 kg NO pinta "1.5" (lo mostrado, resultado de dividir entre 1.000) — pinta
+        "1500.00", el dato real guardado. Es justo lo que hace que el "Guardar" no reviente.
+        """
+        self.anadir(nombre="arroz", cantidad="1", unidad="kg")
+        self.anadir(nombre="arroz", cantidad="500", unidad="g")
+        producto = ProductoDespensa.objects.get(
+            hogar=self.alejandro.hogar, nombre_normalizado="arroz"
+        )
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        trozo_input = self.trozo_input_cantidad(contenido, producto.id)
+        self.assertIn('value="1500.00"', trozo_input)
+        self.assertNotIn('value="1.5"', trozo_input)
 
 
 class C108_PaquetesLatasBotesYPiezasNuncaSeFundenTests(BaseDespensaTests):
@@ -341,10 +385,14 @@ class C109_NoSePierdeNiUnGramoAlConvertirTests(BaseDespensaTests):
 
         respuesta = self.client.get("/despensa/")
         contenido = respuesta.content.decode()
-        # Aislado al propio `<input>` de esta línea, nunca a la página entera (bug 016: un
-        # assert sobre el HTML completo puede colar por casualidad con el token CSRF).
+        # El TEXTO de lectura humana muestra "1,383 kg" (con coma, Q-174: no se pierde nada al
+        # convertir para enseñar). El `<input>` de corrección, en cambio, sigue en gramos tal
+        # cual — "1383.00" — porque eso es lo que cabe en `decimal_places=2` al volver a
+        # guardar (hueco bloqueante H1 de la revisión: pintar "1.383" ahí reventaba el
+        # formulario en cuanto alguien pulsaba Guardar sin cambiar nada).
+        self.assertEqual(self.texto_legible(contenido, producto.id), "1,383 kg")
         trozo_input = self.trozo_input_cantidad(contenido, producto.id)
-        self.assertIn('value="1.383"', trozo_input)  # se enseña 1,383 kg, no 1,38 (Q-174)
+        self.assertIn('value="1383.00"', trozo_input)
 
     def test_descontar_los_383g_exactos_deja_1_kg_clavado_sin_perder_nada(self):
         self.anadir(nombre="arroz", cantidad="1", unidad="kg")
@@ -360,6 +408,104 @@ class C109_NoSePierdeNiUnGramoAlConvertirTests(BaseDespensaTests):
         self.corregir(producto.id, cantidad="1000", unidad="g", categoria="cereal_pan")
         producto.refresh_from_db()
         self.assertEqual(producto.cantidad, Decimal("1000"))
+        self.assertEqual(producto.unidad, "g")
+
+
+class ViajeDeVueltaDeLoQueSeEnsenaTests(BaseDespensaTests):
+    """
+    Hueco bloqueante H1 de la revisión: **ningún test anterior hacía el viaje de vuelta.**
+    Todos demostraban que la cantidad se ENSEÑA bien; ninguno que lo enseñado se pudiera VOLVER
+    A GUARDAR. La primera versión de esta unidad pintaba `cantidad_mostrada` (la lectura G-194,
+    que puede llevar más de 2 decimales tras dividir entre 1.000 — 1.383 g -> "1.383")
+    DIRECTAMENTE en el `value` del `<input>` de corrección, que valida contra
+    `decimal_places=2` del modelo: cualquiera que abriera una línea de 1,383 kg y pulsara
+    Guardar SIN TOCAR NADA se encontraba con `ValidationError: "Asegúrese de que no haya más
+    de 2 dígitos decimales."` — una regresión real (antes de la 017, corregir una línea
+    siempre funcionaba) que ningún test cazó porque la plantilla y el formulario se probaron
+    por separado, nunca la costura entre los dos.
+
+    Estos tests cierran esa costura: cogen LITERALMENTE lo que la pantalla acaba de pintar
+    (el `value=` del `<input>` y la opción `selected` del `<select>`, nunca un valor tecleado
+    a mano) y lo reenvían por el formulario de corregir — el camino más simple que existe:
+    abrir la línea y pulsar Guardar sin cambiar nada.
+    """
+
+    def _valor_pintado_y_unidad_seleccionada(self, producto):
+        respuesta = self.client.get("/despensa/")
+        contenido = respuesta.content.decode()
+        trozo_input = self.trozo_input_cantidad(contenido, producto.id)
+        valor_pintado = trozo_input.split('value="', 1)[1].split('"', 1)[0]
+        trozo_select = self.trozo_select_unidad(contenido, producto.id)
+        coincidencia = re.search(r'value="([^"]+)"\s+selected', trozo_select)
+        self.assertIsNotNone(
+            coincidencia, "no se encontró ninguna opción marcada 'selected' en el <select>"
+        )
+        return valor_pintado, coincidencia.group(1)
+
+    def test_viaje_de_vuelta_del_caso_del_contrato_1383_gramos(self):
+        # El caso exacto de R5/C-109: 1 kg + 383 g = 1.383 g, que se enseña "1,383 kg".
+        self.anadir(nombre="arroz", cantidad="1", unidad="kg")
+        self.anadir(nombre="arroz", cantidad="383", unidad="g")
+        producto = ProductoDespensa.objects.get(
+            hogar=self.alejandro.hogar, nombre_normalizado="arroz"
+        )
+        self.assertEqual(producto.cantidad, Decimal("1383"))
+
+        valor_pintado, unidad_seleccionada = self._valor_pintado_y_unidad_seleccionada(producto)
+        self.assertEqual(valor_pintado, "1383.00")  # control: lo que se pinta es lo guardado
+        self.assertEqual(unidad_seleccionada, "g")
+
+        # Pulsa "Guardar" con EXACTAMENTE lo que la pantalla acaba de pintar — nada tecleado.
+        respuesta = self.corregir(
+            producto.id, cantidad=valor_pintado, unidad=unidad_seleccionada,
+            categoria="cereal_pan",
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertNotIn("2 dígitos decimales", contenido)  # no hay error de validación
+        producto.refresh_from_db()
+        self.assertEqual(producto.cantidad, Decimal("1383"))  # ni un gramo perdido (Q-174)
+        self.assertEqual(producto.unidad, "g")
+
+    def test_viaje_de_vuelta_con_otro_decimal_incomodo_1383_01_gramos(self):
+        # Otro caso, distinto del anterior: con la ESCALA de kg puesta directamente en el
+        # `<input>` (el bug original) esto habría pintado "1.38301" — CINCO decimales, ni
+        # siquiera parecido a un número "redondo" — para probar que el arreglo no depende de
+        # que el caso de prueba sea cómodo.
+        self.anadir(nombre="miel", cantidad="1383.01", unidad="g", categoria="dulce_snack")
+        producto = ProductoDespensa.objects.get(
+            hogar=self.alejandro.hogar, nombre_normalizado="miel"
+        )
+        self.assertEqual(producto.cantidad, Decimal("1383.01"))
+
+        valor_pintado, unidad_seleccionada = self._valor_pintado_y_unidad_seleccionada(producto)
+        self.assertEqual(valor_pintado, "1383.01")
+        self.assertEqual(unidad_seleccionada, "g")
+
+        respuesta = self.corregir(
+            producto.id, cantidad=valor_pintado, unidad=unidad_seleccionada,
+            categoria="dulce_snack",
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertNotIn("2 dígitos decimales", contenido)
+        producto.refresh_from_db()
+        self.assertEqual(producto.cantidad, Decimal("1383.01"))  # ni una centésima perdida
+
+    def test_viaje_de_vuelta_cambiando_de_unidad_en_el_desplegable_sigue_fundiendo(self):
+        # R-56/R7: el desplegable sigue permitiendo elegir OTRA unidad de la familia (aquí,
+        # "Kilos") y teclear en ella — eso no es "lo pintado", es una corrección real, y tiene
+        # que seguir guardando canonizado (1,5 kg tecleados -> 1.500 g guardados).
+        self.anadir(nombre="arroz", cantidad="1", unidad="kg")
+        producto = ProductoDespensa.objects.get(
+            hogar=self.alejandro.hogar, nombre_normalizado="arroz"
+        )
+        respuesta = self.corregir(
+            producto.id, cantidad="1.5", unidad="kg", categoria="cereal_pan"
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        producto.refresh_from_db()
+        self.assertEqual(producto.cantidad, Decimal("1500"))
         self.assertEqual(producto.unidad, "g")
 
 
@@ -631,10 +777,11 @@ class R5_CorregirCantidadUnidadYCategoriaTests(BaseDespensaTests):
         descarta EN SILENCIO — el campo se vería vacío al abrir la pantalla, aunque el valor
         SÍ esté en la respuesta (por eso hace falta mirar el HTML crudo, no un assertContains
         cualquiera). `despensa/templates/despensa/ver.html` usa `|unlocalize` para evitarlo.
-        Unidad 017: el `value` ahora es `cantidad_mostrada` (R-96), que además quita los
-        ceros decimales que sobran (1.50 -> 1.5) — se usa "ml" a propósito, para que esta
-        cantidad no cruce el corte del kilo y el test siga aislando SOLO el problema de la
-        coma, no el del formateo de escala (eso ya lo cubre `C106_...`).
+        Unidad 017 (corregido tras la revisión, hueco H1): el `value` es `producto.cantidad`
+        TAL CUAL — el dato guardado en su unidad canónica, sin pasar por `formatear_cantidad`
+        — así que sigue con sus dos decimales completos ("1.50", no "1.5"): la lectura corta
+        para humanos vive aparte, en el texto de `#cantidad-legible-{id}` (con coma, a
+        propósito — ver `C106_...`), nunca en este atributo de máquina.
         """
         self.anadir(nombre="Aceite", cantidad="1.50", unidad="ml", categoria="aceite_grasa")
         producto = ProductoDespensa.objects.get(hogar=self.alejandro.hogar, nombre_normalizado="aceite")
@@ -644,8 +791,8 @@ class R5_CorregirCantidadUnidadYCategoriaTests(BaseDespensaTests):
         # Aislado al propio `<input>`, nunca a la página entera (bug 016: el token CSRF es
         # una cadena aleatoria y por pura coincidencia puede contener la cifra que se busca).
         trozo_input = self.trozo_input_cantidad(contenido, producto.id)
-        self.assertIn('value="1.5"', trozo_input)
-        self.assertNotIn('value="1,5"', trozo_input)
+        self.assertIn('value="1.50"', trozo_input)
+        self.assertNotIn('value="1,50"', trozo_input)
 
 
 class R6_C62_QuitarSinExplicacionTests(BaseDespensaTests):
@@ -803,6 +950,26 @@ class R11_EntradasInvalidasSeRechazanTests(BaseDespensaTests):
         respuesta = self.anadir(cantidad="-3")
         self.assertEqual(respuesta.status_code, 200)
         self.assertFalse(ProductoDespensa.objects.filter(hogar=self.alejandro.hogar).exists())
+
+    def test_tres_decimales_se_rechazan_sea_cual_sea_la_unidad(self):
+        """
+        "Cómo" punto 2 de la especificación: "comprueba que dos decimales bastan [...] y deja
+        escrito en hallazgos.md si encuentras un caso que no entre" (análisis completo en
+        hallazgos.md). Este test clava la mitad estructural del análisis: `cantidad` mapea
+        directo al campo del modelo (`decimal_places=2`), así que el FORMULARIO ya rechaza un
+        tercer decimal ANTES de que exista ninguna conversión de unidad — probado aquí con
+        "kg" a propósito, la unidad donde alguien podría pensar que "1,383" es razonable de
+        teclear tal cual. Como nunca entra un número con más de 2 decimales, la multiplicación
+        por 1.000 (kg->g, l->ml) SOLO puede quitar decimales, nunca añadir ninguno: dos
+        decimales bastan siempre para lo que se guarda (nunca para el TEXTO de lectura, que sí
+        puede necesitar más al dividir para enseñar — eso vive aparte, sin esta restricción).
+        """
+        respuesta = self.anadir(nombre="arroz", cantidad="1.383", unidad="kg")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn("no haya más de 2 dígitos decimales", respuesta.content.decode())
+        self.assertFalse(
+            ProductoDespensa.objects.filter(hogar=self.alejandro.hogar, nombre_normalizado="arroz").exists()
+        )
 
     def test_nombre_vacio_no_se_guarda(self):
         respuesta = self.anadir(nombre="")
