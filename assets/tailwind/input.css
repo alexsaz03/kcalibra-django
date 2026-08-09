@@ -8,15 +8,23 @@ todas las utilidades de Tailwind disponibles.
 /*
 Tailwind v4 detecta solo las plantillas por debajo de donde se ejecuta (heurística sobre el
 árbol de ficheros). Como este proyecto es un worktree de git con el .git señalando fuera del
-propio directorio, se declaran las rutas a mano para no depender de esa heurística y que el
+propio directorio, se declara la ruta a mano para no depender de esa heurística y que el
 resultado sea el mismo lo ejecute quien lo ejecute.
+
+Bug 015: hasta aquí nombraba las seis carpetas de plantillas de entonces una a una
+(`../../templates`, `../../paginas/templates`, ...); cada app nueva con sus propias plantillas
+(cierres, despensa, entrenos, progreso — unidades 010→014) se quedó fuera silenciosamente
+porque nadie tocó esta lista al crearla. Un glob que cubre CUALQUIER carpeta `templates/` bajo
+la raíz del repo, sin enumerar, así una app nueva no vuelve a quedarse fuera por omisión.
+Comprobado (2026-08-09) que Tailwind 4 resuelve este patrón respetando `.gitignore`: aunque
+`.venv/` contiene 13 carpetas `templates/` de dependencias (Django, allauth...), ninguna se
+cuela en el CSS compilado — Tailwind las salta por estar ignoradas en git, igual que haría con
+`node_modules` si este proyecto usara Node. El check de `kcalibra/tests_estilos.py` vigila que
+esto siga siendo cierto: si algún día una carpeta de plantillas se quedara fuera otra vez (por
+ejemplo, porque este glob dejara de resolverse bien), lo detecta el mismo día, sin depender de
+que alguien se acuerde de mirar aquí.
 */
-@source "../../templates";
-@source "../../paginas/templates";
-@source "../../cuentas/templates";
-@source "../../hogares/templates";
-@source "../../perfiles/templates";
-@source "../../planes/templates";
+@source "../../**/templates";
 
 /*
 Estilo base de los formularios (unidad 003, ampliado en la 004): allauth genera sus widgets
