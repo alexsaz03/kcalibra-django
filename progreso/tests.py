@@ -316,11 +316,44 @@ class NuncaSeMezclanPersonasTests(BaseProgresoTests):
         _fijar_mediciones(self.euridice, [{"dias_atras": 0, "peso_kg": 61}])
 
         respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
+        # Bug 016: la página ENTERA no es el sitio a mirar. `templates/base.html` mete en la
+        # barra de arriba un <form> de "Salir" con {% csrf_token %} — un token ALEATORIO,
+        # distinto en cada carga, que a veces contiene "61" por pura coincidencia (medido: 9
+        # de 300 peticiones idénticas, sin ningún cambio de código — ver
+        # docs/bugs/016-test-de-progreso-intermitente.md del meta-repo). Buscar en la página
+        # entera hace que el test se ponga rojo sin que nada esté mal (décima cara de
+        # tests-que-no-fallan-cuando-deben.md, con una vuelta de tuerca: aquí no caduca por
+        # otra unidad, sino por contenido aleatorio de la propia página).
+        #
+        # El arreglo NO afloja el assert: lo acota a la(s) GRÁFICA(S) —
+        # `progreso/templates/progreso/_grafica.html`: el <section> que envuelve el título, el
+        # resumen con el peso legible ("93,0 kg") y el <svg> con los <circle> — que es
+        # exactamente lo que R10 promete. Se ancla al CONTENIDO (el bloque que tiene un <svg>
+        # dentro), no a una POSICIÓN como "el último </form>": esa primera versión dejaba fuera
+        # el CSRF, pero colaba la cola de la plantilla con los enlaces "Ver tu histórico" y
+        # "Cerrar un día", que llevan la PK del usuario en la URL (`ver.html:168,180`) — una
+        # mina latente, porque el día que esa PK contuviera "61" (61, 161, 610-619, 961…)
+        # volvería la misma intermitencia que este bug vino a matar. Anclar al <svg> de la
+        # gráfica no depende de dónde caiga el último `</form>` y no puede colar una PK.
+        # Contraprobado con mutación (misma ficha del bug): quitar el filtro por persona en
+        # progreso/views.py sigue poniendo este test en ROJO.
+        graficas = re.findall(
+            r"<section\b(?:(?!<section\b|</section>).)*?<svg\b.*?</svg>.*?</section>",
+            contenido,
+            re.DOTALL,
+        )
+        zona_de_datos = "".join(graficas)
+        # Si esto falla, NO es que desapareciera el punto de Alejandro: es que el regex de
+        # arriba dejó de casar (p. ej. `_grafica.html` cambió de <section> a otra etiqueta).
+        # Sin este aviso, el rojo de las tres aserciones de abajo sería correcto pero mudo
+        # sobre la causa real — el mismo riesgo que ya nos costó caro en el bug 015.
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
         # Un único punto: el de Alejandro. Si el hogar se mezclara, habría dos.
-        self.assertEqual(contenido.count("<circle"), 1)
-        self.assertContains(respuesta, "93")
-        self.assertNotContains(respuesta, "61")
+        self.assertEqual(zona_de_datos.count("<circle"), 1)
+        self.assertIn("93", zona_de_datos)
+        self.assertNotIn("61", zona_de_datos)
 
 
 class SinDatosTests(BaseProgresoTests):
