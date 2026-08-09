@@ -155,6 +155,6 @@ class TailwindCubreTodasLasPlantillasTests(SimpleTestCase):
             )
             self.fail(
                 "Hay clases de Tailwind usadas en plantillas que NO existen en "
-                "static/css/tailwind.css (falta recompilar el CSS, o falta declarar la "
-                f"carpeta en @source de assets/tailwind/input.css):\n{detalle}"
+                "static/css/tailwind.css: falta recompilar el CSS (ver AGENTS.md §1.6) tras "
+                f"el último cambio de plantillas:\n{detalle}"
             )

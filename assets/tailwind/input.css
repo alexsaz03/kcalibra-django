@@ -6,23 +6,32 @@ todas las utilidades de Tailwind disponibles.
 @import "tailwindcss";
 
 /*
-Tailwind v4 detecta solo las plantillas por debajo de donde se ejecuta (heurística sobre el
-árbol de ficheros). Como este proyecto es un worktree de git con el .git señalando fuera del
-propio directorio, se declara la ruta a mano para no depender de esa heurística y que el
-resultado sea el mismo lo ejecute quien lo ejecute.
+Tailwind v4 detecta automáticamente las plantillas del proyecto por heurística, ADEMÁS de lo
+que se declare aquí con `@source` (el `@source` SUMA a esa detección automática, no la
+sustituye). Bug 015, corregido el 2026-08-09 tras verificarlo dos veces por vías
+independientes: hasta esta unidad, aquí se nombraban a mano seis de las diez carpetas de
+plantillas del repo (`../../templates`, `../../paginas/templates`, ...), y la lectura fácil
+era que las cuatro que faltaban (cierres, despensa, entrenos, progreso — unidades 010→014)
+quedaban invisibles para Tailwind. ESO ERA FALSO: la detección automática ya las cubría a las
+cuatro — recompilar con las seis rutas de siempre generaba igualmente las clases de esas
+cuatro carpetas. La causa real del síntoma del bug (el `.rounded` que faltaba en el CSS
+servido) fue mucho más simple: nadie volvió a ejecutar el comando de compilación después de
+la unidad 014, así que el CSS servido llevaba una plantilla entera sin recompilar. No fue un
+fallo de esta lista.
 
-Bug 015: hasta aquí nombraba las seis carpetas de plantillas de entonces una a una
-(`../../templates`, `../../paginas/templates`, ...); cada app nueva con sus propias plantillas
-(cierres, despensa, entrenos, progreso — unidades 010→014) se quedó fuera silenciosamente
-porque nadie tocó esta lista al crearla. Un glob que cubre CUALQUIER carpeta `templates/` bajo
-la raíz del repo, sin enumerar, así una app nueva no vuelve a quedarse fuera por omisión.
-Comprobado (2026-08-09) que Tailwind 4 resuelve este patrón respetando `.gitignore`: aunque
-`.venv/` contiene 13 carpetas `templates/` de dependencias (Django, allauth...), ninguna se
-cuela en el CSS compilado — Tailwind las salta por estar ignoradas en git, igual que haría con
-`node_modules` si este proyecto usara Node. El check de `kcalibra/tests_estilos.py` vigila que
-esto siga siendo cierto: si algún día una carpeta de plantillas se quedara fuera otra vez (por
-ejemplo, porque este glob dejara de resolverse bien), lo detecta el mismo día, sin depender de
-que alguien se acuerde de mirar aquí.
+El glob de abajo se queda de todos modos, por dos motivos honestos — ninguno de los dos es que
+arreglara el bug 015:
+1. Una lista de rutas que hay que acordarse de ampliar a mano cada vez que nace una app es
+   deuda inútil si un patrón la cubre sola.
+2. Defensa en profundidad: por si algún día la detección automática de Tailwind no bastara (un
+   cambio de versión, un entorno distinto, `.gitignore` distinto), que quede algo explícito
+   escrito aquí.
+Comprobado (2026-08-09) que con este glob ninguna de las 13 carpetas `templates/` que hay
+dentro de `.venv/` (dependencias: Django, allauth...) se cuela en el CSS compilado — eso sí es
+una observación directa. Lo que NO es observación sino inferencia razonable (no demostrada) es
+el mecanismo exacto: que Tailwind las salte por estar ignoradas en `.gitignore`. El check de
+`kcalibra/tests_estilos.py` vigila el resultado final (que el CSS compilado tenga todas las
+clases que usan las plantillas), venga la detección de donde venga.
 */
 @source "../../**/templates";
 
