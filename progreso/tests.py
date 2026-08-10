@@ -261,7 +261,39 @@ class LecturaAjenaTests(BaseProgresoTests):
         _fijar_mediciones(self.euridice, [{"dias_atras": 0, "peso_kg": 61}])
         respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
         self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, "61")
+        contenido = respuesta.content.decode()
+        # Bug 018 (el gemelo del 016, con el signo peligroso): la página ENTERA no es el
+        # sitio a mirar. `templates/base.html` mete en la barra de arriba un <form> de
+        # "Salir" con {% csrf_token %} — un token ALEATORIO, distinto en cada carga, que a
+        # veces contiene "61" por pura coincidencia (medido en el 016: 9 de 300 peticiones
+        # idénticas, sin ningún cambio de código — ver
+        # docs/bugs/016-test-de-progreso-intermitente.md del meta-repo). Un
+        # assertContains(respuesta, "61") sobre la página entera pasaba en VERDE por esa
+        # casualidad aunque la pantalla hubiera DEJADO de pintar el peso de Eurídice —
+        # verificado con mutación en docs/bugs/018-test-que-pasa-aunque-el-dato-no-este.md:
+        # con la pantalla mutada para pintar el peso de quien pregunta en vez del de la
+        # persona pedida, y el token forzado a contener "61", el test ORIGINAL seguía en
+        # verde (la única aparición de "61" en toda la respuesta era el token).
+        #
+        # El arreglo NO afloja el assert: lo acota a la(s) GRÁFICA(S) —
+        # `progreso/templates/progreso/_grafica.html`: el <section> que envuelve el título,
+        # el resumen con el peso legible ("61,0 kg") y el <svg> con los <circle> — que es
+        # exactamente lo que R7 promete (que SE VE el dato). Se ancla al CONTENIDO (el
+        # bloque que tiene un <svg> dentro), no a una POSICIÓN, por la misma razón que el
+        # 016: una posición se desplaza sola el día que alguien añade un formulario o un
+        # enlace nuevo con una PK en la URL, y lo hace en silencio.
+        graficas = re.findall(
+            r"<section\b(?:(?!<section\b|</section>).)*?<svg\b.*?</svg>.*?</section>",
+            contenido,
+            re.DOTALL,
+        )
+        # Si esto falla, NO es que desapareciera el peso de Eurídice: es que el regex de
+        # arriba dejó de casar (p. ej. `_grafica.html` cambió de <section> a otra etiqueta).
+        # Mismo aviso que el 016, para no repetir el error del 015 (un rojo mudo que apunta
+        # al síntoma equivocado).
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
+        zona_de_datos = "".join(graficas)
+        self.assertIn("61", zona_de_datos)
 
 
 class EscrituraAjenaSigueBloqueadaTests(BaseProgresoTests):
