@@ -104,6 +104,22 @@ class BaseRecetasTests(PruebaConRegistroAbierto):
     def borrar(self, receta_id):
         return self.client.post(f"/recetas/{receta_id}/borrar/")
 
+    def trozo_campo(self, contenido, nombre_campo):
+        """
+        Aísla el bloque de UN campo del formulario (`<label for="id_<campo>">` hasta el
+        `</div>` que lo cierra: label + widget + su `<p>` de error si lo hay) — nunca la página
+        entera. Hueco de corrección (revisión de la 021): un `assertIn("nombre", contenido)`
+        sobre TODO el HTML pasa siempre porque la propia etiqueta "Nombre del plato" ya contiene
+        la palabra "nombre" — la misma familia que los bugs 016/018/019 de este repo (un
+        literal corto contra la respuesta completa). Acotar al bloque del campo y comprobar el
+        MENSAJE de error concreto es lo que de verdad distingue "se guardó" de "no se guardó y
+        lo dice".
+        """
+        marcador = f'for="id_{nombre_campo}"'
+        inicio = contenido.index(marcador)
+        fin = contenido.index("</div>", inicio)
+        return contenido[inicio:fin]
+
     def receta_de_alejandro(self, **campos):
         """Crea la receta del episodio real y devuelve la instancia guardada."""
         from recetas.models import Receta
@@ -184,10 +200,23 @@ class R2_ObligatorioYOpcionalTests(BaseRecetasTests):
         self.assertFalse(Receta.objects.filter(hogar=self.alejandro.hogar).exists())
         self.assertIn("Añade al menos un ingrediente", respuesta.content.decode())
 
-    def test_la_pantalla_lo_dice_en_cristiano_cuando_falta_algo(self):
+    def test_la_pantalla_lo_dice_en_cristiano_cuando_falta_el_nombre(self):
+        # Hueco de corrección (revisión de la 021): el mensaje real es el "Este campo es
+        # obligatorio." de Django (`forms.CharField` recorta y dispara `required` ANTES de que
+        # `clean_nombre` llegue a ejecutarse — para un valor vacío o solo espacios,
+        # `clean_nombre` es código muerto), acotado al bloque del campo `nombre`.
         respuesta = self.crear(nombre="")
         contenido = respuesta.content.decode()
-        self.assertIn("nombre", contenido.lower())
+        trozo = self.trozo_campo(contenido, "nombre")
+        self.assertIn("Este campo es obligatorio.", trozo)
+
+    def test_la_pantalla_lo_dice_en_cristiano_cuando_las_raciones_no_son_positivas(self):
+        # Aquí SÍ es `clean_raciones` quien habla: "0" es un entero válido para Django (no está
+        # vacío), así que llega intacto hasta el validador propio de la unidad.
+        respuesta = self.crear(raciones="0")
+        contenido = respuesta.content.decode()
+        trozo = self.trozo_campo(contenido, "raciones")
+        self.assertIn("Las raciones tienen que ser al menos 1.", trozo)
 
     def test_preparacion_y_comidas_vacias_la_receta_se_guarda_con_un_solo_ingrediente(self):
         from recetas.models import Receta
@@ -222,9 +251,14 @@ class R3_PreparacionLiteralTests(BaseRecetasTests):
     saltos de línea, comas y tildes, y al reabrir aparece carácter por carácter igual. Nada de
     recortarla, normalizarla ni reformatearla."""
 
+    # Hueco de corrección (revisión de la 021): el texto original no tenía NINGÚN espacio de
+    # sobra (ni al principio, ni al final, ni doble), así que mutar `strip=False` a `strip=True`
+    # en el formulario no lo tocaba y estos tests seguían en VERDE con el bug puesto. Ahora
+    # lleva un espacio inicial, uno final y un espacio doble en medio — los tres sitios que
+    # `strip=True`/una normalización de espacios se comería.
     TEXTO_DE_CORRIDO = (
-        "pochas el ajo, añades los champiñones y las patatas, echas el vino y dejas que "
-        "evapore,\nviertes el caldo, cueces 20 minutos\ny trituras"
+        " pochas el ajo, añades los champiñones  y las patatas, echas el vino y dejas que "
+        "evapore,\nviertes el caldo, cueces 20 minutos\ny trituras "
     )
 
     def test_la_preparacion_se_guarda_caracter_por_caracter_igual(self):
