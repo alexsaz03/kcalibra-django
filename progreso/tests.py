@@ -83,6 +83,43 @@ def _fijar_cierres(usuario, cierres):
         )
 
 
+# Bugs 016/018/019 — el mismo regex de acotado se necesitaba ya TRES veces (016, 018, y las
+# dos escenas de este bug), así que con estas serían SEIS copias: se extrae aquí, la tercera
+# vez que aparece la misma forma (docs/bugs/019-...md, "Dos cosas que el 018 dejó dichas").
+# Los tests del 016 y del 018 pasan a llamarlo, sin cambiar UNA COMA de lo que comprueban —
+# solo dejan de repetir el regex.
+#
+# Por qué existe: un assert de texto sobre `respuesta.content` ENTERA prueba "existe en algún
+# sitio de la página", no "está donde el criterio promete" (doceava cara de
+# tests-que-no-fallan-cuando-deben.md). La página lleva el
+# `<input type="hidden" name="csrfmiddlewaretoken">` de `templates/base.html`, con un token
+# ALEATORIO en cada carga que a veces contiene por pura coincidencia el literal corto que un
+# test anda buscando (medido en el 016: 9 de 300 peticiones idénticas). El arreglo NO afloja
+# el assert: lo ACOTA a la(s) GRÁFICA(S) — `progreso/templates/progreso/_grafica.html`: el
+# `<section>` que envuelve el título, el resumen con el peso legible ("93,0 kg") y el `<svg>`
+# con los `<circle>` — que es exactamente lo que R1/R10/R11 prometen. Se ancla al CONTENIDO
+# (el bloque que tiene un `<svg>` dentro), no a una POSICIÓN como "lo que hay tras el último
+# `</form>`": una posición se desplaza sola el día que alguien añade un formulario nuevo, y lo
+# hace en silencio.
+_REGEX_ZONA_DE_DATOS = re.compile(
+    r"<section\b(?:(?!<section\b|</section>).)*?<svg\b.*?</svg>.*?</section>",
+    re.DOTALL,
+)
+
+
+def _zona_de_datos(contenido):
+    """
+    Devuelve `(graficas, zona)`: `graficas` es la lista de `<section>` (con su `<svg>` dentro)
+    que el regex de arriba encontró en `contenido` (una por gráfica visible: peso, y grasa/
+    cintura si las hay) — se comprueba con `assertTrue(graficas, ...)` para que un rojo por
+    "el regex dejó de casar" no se confunda con "el dato ya no está" (bug 015: un rojo mudo
+    apunta al síntoma equivocado). `zona` es la concatenación de todas ellas, el único sitio
+    donde un test de esta familia debe buscar un literal corto.
+    """
+    graficas = _REGEX_ZONA_DE_DATOS.findall(contenido)
+    return graficas, "".join(graficas)
+
+
 class BaseProgresoTests(PruebaConRegistroAbierto):
     """
     Alejandro y Euridice, en el MISMO hogar (mismo montaje que
@@ -132,10 +169,22 @@ class EvolucionDePesoTests(BaseProgresoTests):
         respuesta = self.client.get("/progreso/")
         self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
+        # Bug 019: "95" y "93" son literales de DOS caracteres — el mismo defecto que el
+        # 016/018 (ver `_zona_de_datos`, arriba), buscados antes sobre la página ENTERA. Aquí
+        # el escenario tiene TRES mediciones (no una), así que la mina que el 018 dejó
+        # dormida —que las coordenadas del SVG (x∈[12,588], y∈[12,148]) contengan el literal
+        # DENTRO de la zona acotada— está viva en teoría. Medido para este escenario exacto
+        # (docs/bugs/019-...md, sección 2): las coordenadas reales son 12.0/300.0/588.0 (x) y
+        # 12.0/80.0/148.0 (y) — ninguna contiene "95" ni "93"; las dos únicas apariciones en
+        # la zona acotada son el resumen legible ("95,0 kg" y "93,0 kg"). No se ha vuelto a
+        # medir con otros pesos: si algún día este test cambia sus valores, hay que volcar la
+        # zona de nuevo antes de confiar en que sigue sin colisión.
+        graficas, zona_de_datos = _zona_de_datos(contenido)
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
         # Un <circle> por pesada real (progreso/templates/progreso/_grafica.html).
-        self.assertEqual(contenido.count("<circle"), 3)
-        self.assertContains(respuesta, "95")  # la primera pesada real del periodo
-        self.assertContains(respuesta, "93")  # la última
+        self.assertEqual(zona_de_datos.count("<circle"), 3)
+        self.assertIn("95", zona_de_datos)  # la primera pesada real del periodo
+        self.assertIn("93", zona_de_datos)  # la última
 
 
 class GraficasOpcionalesTests(BaseProgresoTests):
@@ -282,17 +331,16 @@ class LecturaAjenaTests(BaseProgresoTests):
         # bloque que tiene un <svg> dentro), no a una POSICIÓN, por la misma razón que el
         # 016: una posición se desplaza sola el día que alguien añade un formulario o un
         # enlace nuevo con una PK en la URL, y lo hace en silencio.
-        graficas = re.findall(
-            r"<section\b(?:(?!<section\b|</section>).)*?<svg\b.*?</svg>.*?</section>",
-            contenido,
-            re.DOTALL,
-        )
+        #
+        # Bug 019: este regex, ya duplicado con el del 016, se extrajo a `_zona_de_datos`
+        # (arriba del fichero) al aparecer una tercera vez — sin cambiar lo que este test
+        # comprueba, solo deja de repetir el patrón.
+        graficas, zona_de_datos = _zona_de_datos(contenido)
         # Si esto falla, NO es que desapareciera el peso de Eurídice: es que el regex de
         # arriba dejó de casar (p. ej. `_grafica.html` cambió de <section> a otra etiqueta).
         # Mismo aviso que el 016, para no repetir el error del 015 (un rojo mudo que apunta
         # al síntoma equivocado).
         self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
-        zona_de_datos = "".join(graficas)
         self.assertIn("61", zona_de_datos)
 
 
@@ -371,12 +419,11 @@ class NuncaSeMezclanPersonasTests(BaseProgresoTests):
         # gráfica no depende de dónde caiga el último `</form>` y no puede colar una PK.
         # Contraprobado con mutación (misma ficha del bug): quitar el filtro por persona en
         # progreso/views.py sigue poniendo este test en ROJO.
-        graficas = re.findall(
-            r"<section\b(?:(?!<section\b|</section>).)*?<svg\b.*?</svg>.*?</section>",
-            contenido,
-            re.DOTALL,
-        )
-        zona_de_datos = "".join(graficas)
+        #
+        # Bug 019: este regex, ya duplicado con el del 018, se extrajo a `_zona_de_datos`
+        # (arriba del fichero) al aparecer una tercera vez — sin cambiar lo que este test
+        # comprueba, solo deja de repetir el patrón.
+        graficas, zona_de_datos = _zona_de_datos(contenido)
         # Si esto falla, NO es que desapareciera el punto de Alejandro: es que el regex de
         # arriba dejó de casar (p. ej. `_grafica.html` cambió de <section> a otra etiqueta).
         # Sin este aviso, el rojo de las tres aserciones de abajo sería correcto pero mudo
@@ -401,8 +448,15 @@ class SinDatosTests(BaseProgresoTests):
         _fijar_mediciones(self.alejandro, [{"dias_atras": 0, "peso_kg": 93}])
         respuesta = self.client.get("/progreso/")
         self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, "93")
-        self.assertEqual(respuesta.content.decode().count("<circle"), 1)
+        contenido = respuesta.content.decode()
+        # Bug 019 (el tercer hermano): mismo defecto que arriba, con una única medición. Aquí
+        # SÍ hay una sola pesada (el escenario del 018), pero se mide igual en vez de suponer
+        # que "una medición" implica "sin mina": medido, la zona acotada contiene "93,0 kg" dos
+        # veces (primero y último son el mismo punto) y la coordenada "300.0,80.0" no colisiona.
+        graficas, zona_de_datos = _zona_de_datos(contenido)
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
+        self.assertIn("93", zona_de_datos)
+        self.assertEqual(zona_de_datos.count("<circle"), 1)
 
     def test_r11_con_pesadas_pero_ninguna_en_el_periodo_elegido_lo_dice_distinto(self):
         """No es lo mismo "nunca ha apuntado nada" que "tiene datos, pero no en estas
