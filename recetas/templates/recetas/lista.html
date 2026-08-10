@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block titulo %}Recetas{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-slate-900">Recetas</h1>
+    <a
+      href="{% url 'recetas:nueva' %}"
+      class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700"
+    >
+      Añadir receta
+    </a>
+  </div>
+  {# G-43/R-70: del hogar entero, y sin dueño — igual que la despensa. #}
+  <p class="mt-1 text-sm text-slate-500">
+    Los platos que ya sabe hacer la casa: cualquiera puede apuntar, ver, corregir o borrar, sin
+    pedir permiso a nadie.
+  </p>
+
+  {% if recetas %}
+    <ul class="mt-6 space-y-2">
+      {% for receta in recetas %}
+        <li class="rounded-lg border border-slate-200 bg-white p-4">
+          <a href="{% url 'recetas:detalle' receta.id %}" class="font-semibold text-slate-900 hover:underline">
+            {{ receta.nombre }}
+          </a>
+          <p class="mt-1 text-sm text-slate-500">
+            {# El plural de "ración" pierde la tilde ("raciones", no "raciónes"). #}
+            {{ receta.raciones }} {% if receta.raciones == 1 %}ración{% else %}raciones{% endif %} · {{ receta.comidas_texto }}
+          </p>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    {# R7 — sin ninguna receta todavía, se dice con naturalidad y se ofrece apuntar la primera. #}
+    <div id="recetas-vacio" class="mt-6 rounded-xl border border-slate-200 bg-white p-6 text-center">
+      <p class="text-sm text-slate-500">
+        Todavía no hay ninguna receta apuntada. Cuando apuntes un plato que ya sabes hacer, lo
+        verás aquí.
+      </p>
+      <a
+        href="{% url 'recetas:nueva' %}"
+        class="mt-4 inline-block rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
+      >
+        Apuntar la primera receta
+      </a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -147,6 +147,15 @@ INSTALLED_APPS = [
     # aproximadas (R-58) quedan pendientes, sin las piezas de las que dependen (ingredientes
     # de una receta, "marcar una comida como preparada") todavía construidas.
     "despensa",
+    # recetas: apuntar los platos que ya sabes hacer, con sus ingredientes y su preparación de
+    # corrido. Unidad 021 — ver docs/05-trabajo/021-guardar-tus-recetas/especificacion.md del
+    # meta-repo. Es DEL HOGAR (G-43, mismo criterio que despensa/planes) y SIN autor (R-70):
+    # cualquiera del hogar apunta, ve, corrige y borra sin pedir permiso a nadie, y no se
+    # guarda quién la escribió. Entrega PARCIAL a propósito: R-68 (trocear la preparación en
+    # pasos con la IA) y la mitad de R-69 que dice "y permitir ordenarla en pasos más tarde"
+    # quedan pendientes — no hay IA en este proyecto todavía. `guardar-tus-recetas` se queda
+    # `en obra`, no pasa a `entregada`.
+    "recetas",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"

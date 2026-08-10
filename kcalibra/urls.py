@@ -98,6 +98,10 @@ urlpatterns = [
     # mano (unidad 014). Es DEL HOGAR entero, no de una persona: sin ningún usuario_id en
     # sus rutas.
     path("despensa/", include("despensa.urls")),
+    # Los platos que ya sabes hacer, con sus ingredientes y su preparación de corrido (unidad
+    # 021). Es DEL HOGAR entero, no de una persona: sin ningún usuario_id en sus rutas, igual
+    # que despensa.
+    path("recetas/", include("recetas.urls")),
     # La portada y sus rutas viven en la app "paginas" (paginas/urls.py).
     path("", include("paginas.urls")),
 ]
