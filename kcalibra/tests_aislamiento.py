@@ -34,6 +34,22 @@ pertenece lo que pide, no que ese "a quién" sea el correcto. `filter(hogar=hoga
 pasaría. Quien decide que el hogar es el bueno es la puerta, y por eso el mensaje de fallo manda
 a la puerta en vez de sugerir un `filter` a mano.
 
+**Y admitir `usuario` ENSANCHA ese hueco, no lo deja igual.** Conviene saberlo con nombres y
+apellidos, porque en abstracto no avisa a nadie: en este repositorio un `hogar` sale casi
+siempre de `request.user.hogar` (lo pone el servidor), mientras que un `usuario_id` sale
+rutinariamente **de la URL** (lo pone quien llama). Una vista que copiara
+`planes/views.py:apuntar_plan` y se saltara `usuario_del_hogar_o_404` —
+
+    def ver_plan(request, usuario_id):
+        plan = PlanDeDia.objects.filter(usuario_id=usuario_id, fecha=hoy).first()
+
+— **pasa este check en VERDE** y sirve el plan de cualquier persona de cualquier hogar a quien
+pruebe ids. Es una fuga real, comprobada en la revisión de la 020, y **no es cazable
+estáticamente**: `usuario_id=usuario_id` es indistinguible de la versión legítima. Lo único que
+la impide sigue siendo la puerta. Si algún día se busca red para esto, la forma que puede
+funcionar no es mirar el `filter`, es exigir que toda vista con un `usuario_id` en su firma
+llame a `usuario_del_hogar_o_404` — otro check, y otra unidad.
+
 ## Excepciones (R4): declaradas una a una, con su motivo, en `EXCEPCIONES`
 
 Nunca en bloque. Y para que ampliar una excepción no pueda dejar el check verde por vacío, hay
@@ -53,6 +69,8 @@ El análisis es **estático y por nombre**: ve `PlanDeDia.objects...` porque el 
 - una variable que se reasigna a OTRA cosa ya acotada dentro del mismo ámbito
   (`qs = ProductoDespensa.objects.all()` y tres líneas después `qs = otra.filter(hogar=h)`):
   el seguimiento de variables es por nombre, no por flujo de datos,
+- **un `usuario_id` que viene de la URL en vez de la puerta** (el caso de arriba,
+  `filter(usuario_id=usuario_id)`): estructuralmente idéntico al legítimo,
 - lo que ocurra dentro de una librería.
 
 Ninguno de esos huecos existe hoy en el repositorio (medido: ver `hallazgos.md` de la unidad
@@ -229,14 +247,31 @@ def _kwargs_que_acotan(llamada):
     return nombres
 
 
+# Las formas con que se puede IDENTIFICAR a quién pertenece lo que se pide. Es una lista
+# blanca a propósito, y la primera versión de esta unidad se equivocó aquí: aceptaba cualquier
+# `campo__<loquesea>` con un `startswith`, y eso deja pasar consultas que devuelven filas de
+# TODOS los hogares porque el lookup no identifica a nadie. Los tres casos que lo destaparon
+# (revisión de la 020, los tres salían VERDE y las tres devuelven todas las casas):
+#
+#   PlanDeDia.objects.filter(usuario__is_active=True, …)     ← "las personas activas"
+#   ProductoDespensa.objects.filter(hogar__isnull=False)     ← "los que tienen hogar"
+#   SolicitudEntrada.objects.filter(resuelta_por__isnull=True)  ← "las que nadie ha resuelto"
+#
+# El tercero es el que más asusta: "las solicitudes sin resolver" es un concepto del dominio
+# que cualquiera escribe sin pensar. Un `__isnull`, un `__gte` o un `__contains` acotan por una
+# PROPIEDAD, no por una identidad; solo lo segundo dice de quién es lo que estás pidiendo.
+_SUFIJOS_DE_IDENTIDAD = ("", "_id", "__id", "__pk", "__codigo", "__in")
+
+
 def _acota(nombres, campos):
-    """`nombres` (los kwargs vistos) contiene algún camino al hogar de `campos`. Admite las tres
-    formas con que Django nombra el mismo campo: `hogar`, `hogar__codigo` y `hogar_id`."""
-    return any(
-        nombre == campo or nombre.startswith(campo + "__") or nombre == campo + "_id"
-        for nombre in nombres
-        for campo in campos
-    )
+    """`nombres` (los kwargs vistos) identifica al dueño de lo que se pide.
+
+    Cada campo que lleva al hogar se admite solo en las formas de `_SUFIJOS_DE_IDENTIDAD`:
+    `hogar`, `hogar_id`, `hogar__id`, `hogar__pk`, `hogar__codigo` y `hogar__in`. Cualquier
+    otro lookup (`hogar__isnull`, `usuario__is_active`…) NO acota: filtra por una propiedad y
+    devuelve filas de todos los hogares."""
+    admitidos = {campo + sufijo for campo in campos for sufijo in _SUFIJOS_DE_IDENTIDAD}
+    return any(nombre in admitidos for nombre in nombres)
 
 
 def _baja_un_eslabon(nodo):
