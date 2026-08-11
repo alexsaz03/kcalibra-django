@@ -8,14 +8,17 @@ Es un dato DE LA PERSONA, no del hogar — mismo criterio que `perfiles.models.M
 cargo, R-26/R-27, sin construir todavía: ni `a_cargo` ni `responsable` existen en `cuentas/` ni
 `hogares/`). Apuntar, corregir y borrar son SIEMPRE sobre uno mismo (R10).
 
-Nota para quien revise esto contra la especificación: el punto 3 de su "Cómo" dice que este
-modelo cuelga de `hogares.models.ModeloDeHogar` "como MedicionPeso y PlanDeDia" — pero
-`MedicionPeso` NO hereda de `ModeloDeHogar` (ver el docstring de `perfiles/models.py`: "Ninguno
-de los dos hereda... son datos DE LA PERSONA, no del hogar"). Entre las dos comparaciones que
-trae la propia frase, se ha seguido la de `MedicionPeso`, que es la que de verdad coincide con
-el resto del contrato de esta unidad (acceso "solo sobre uno mismo", sin lectura de hogar).
-Detalle completo en hallazgos.md — es una desviación de "cómo" (R8 de las reglas del
-constructor), no de contrato: ningún R* de esta unidad pide un campo `hogar`.
+Nota para quien revise esto contra la especificación: `Entreno` NO hereda de
+`hogares.models.ModeloDeHogar` — fijado por
+`kcalibra/tests_aislamiento.py::test_los_modelos_del_hogar_se_descubren_solos` con un
+`assertNotIn` para que nadie lo "arregle" al revés. El punto 3 del "Cómo" de la especificación
+decía que este modelo cuelga de `ModeloDeHogar` "como MedicionPeso y PlanDeDia", pero
+`MedicionPeso` tampoco hereda de `ModeloDeHogar` (ver el docstring de `perfiles/models.py`:
+"Ninguno de los dos hereda... son datos DE LA PERSONA, no del hogar"); de las dos comparaciones
+que trae esa frase, se siguió la de `MedicionPeso`, que es la que coincide con el resto del
+contrato de esta unidad (acceso "solo sobre uno mismo", sin lectura de hogar). Detalle completo
+en hallazgos.md — es una desviación de "cómo" (R8 de las reglas del constructor), no de
+contrato: ningún R* de esta unidad pide un campo `hogar`.
 """
 
 from django.conf import settings

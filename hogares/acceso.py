@@ -1,5 +1,7 @@
 """
-La puerta única del aislamiento por hogar (R9, R14, Q-11, Q-20).
+La puerta única del aislamiento por hogar (R9/R14 — criterios de aceptación de la unidad 003,
+`docs/05-trabajo/archivo/003-cuentas-y-hogares/especificacion.md` — y Q-11/Q-20, del mapa de
+flujos: `crear-cuenta.md` y `darle-cuenta-propia-a-los-de-casa.md`).
 
 Toda vista que necesite un objeto de un `ModeloDeHogar` (la despensa, las recetas, el
 calendario de las unidades futuras; aquí, `SolicitudEntrada`) pasa por AQUÍ, no por su propio
