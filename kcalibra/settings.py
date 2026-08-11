@@ -156,6 +156,15 @@ INSTALLED_APPS = [
     # quedan pendientes — no hay IA en este proyecto todavía. `guardar-tus-recetas` se queda
     # `en obra`, no pasa a `entregada`.
     "recetas",
+    # importacion: trae a la app nueva los datos DE VERDAD (despensa, entrenos, recetas y
+    # pesadas) de la app Node que sigue en uso, sin identidad ni Strava. Unidad 022 — ver
+    # docs/05-trabajo/022-traer-los-datos-de-verdad/especificacion.md del meta-repo. App
+    # propia porque `kcalibra` (kcalibra/) no está en INSTALLED_APPS y un management command
+    # necesita vivir en una app instalada. Sin modelos propios (no trae migraciones): solo
+    # lee la SQLite de Node (de solo lectura, fuera del repo) y escribe a través de las
+    # puertas que ya existen (`despensa.logica.anadir_producto`, `entrenos.logica.
+    # apuntar_entreno`, `recetas.logica.crear_receta`), nunca con un `create()` a pelo.
+    "importacion",
 ]
 
 AUTH_USER_MODEL = "cuentas.Usuario"
