@@ -424,6 +424,66 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
         self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
         self.assertIn("Pesadas: 1 en Node -> 0 nuevos, 1 ya estaban.", salida)
 
+    def test_dos_pesadas_de_node_con_la_misma_fecha_se_salta_la_segunda_y_no_revienta(self):
+        """H1 de la ronda 1 de revisión: el índice único de Node es
+        `(usuario_id, COALESCE(miembro_id, 0), fecha)` -- permite DOS pesadas el mismo día si
+        son de personas distintas de la misma casa (`miembro_id` no se lee, "Fuera de
+        alcance"). Pero aquí las dos cuelgan del MISMO `usuario` de Django, y su restricción
+        'una_medicion_por_persona_y_dia' (unidad 006) no admite dos filas del mismo día. Antes
+        del arreglo, la foto `existentes_al_empezar` se tomaba una sola vez al principio de la
+        pasada: la SEGUNDA fila de Node de ese día no estaba en esa foto (la primera solo se
+        guarda en Django DURANTE esta misma pasada) y llegaba desnuda a
+        `MedicionPeso.objects.create()`, que revienta con `IntegrityError` -- sin atrapar en
+        `handle()`, así que el usuario veía una traza cruda de Python (R7) en vez del 'se
+        salta y lo dice' que pide R4. No es un caso teórico: la base real de Node YA tiene dos
+        pesadas de personas distintas con miembro_id (None, 4)."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            pesos=[
+                {"fecha": "2026-02-14", "peso_kg": 70.3, "grasa_pct": None, "cintura_cm": None},
+                {"fecha": "2026-02-14", "peso_kg": 71.1, "grasa_pct": None, "cintura_cm": None},
+            ],
+        )
+        salida = self._importar()  # no debe reventar con IntegrityError
+
+        # Se queda con la PRIMERA fila de Node de ese día; la segunda se salta, no se sobrescribe.
+        pesada = MedicionPeso.objects.get(usuario=self.usuario, fecha=date(2026, 2, 14))
+        self.assertEqual(pesada.peso_kg, Decimal("70.3"))
+        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
+
+        # Y lo dice: 1 nuevo, 0 "ya estaban" (ninguna existía antes de esta pasada) y la
+        # colisión nombrada aparte, no disfrazada de "ya estaba".
+        self.assertIn("Pesadas: 2 en Node -> 1 nuevos, 0 ya estaban.", salida)
+        self.assertIn(
+            "Pesadas: 1 más se ha saltado por chocar en fecha con otra fila de Node de esta "
+            "misma pasada (una persona no puede tener dos pesadas el mismo día).",
+            salida,
+        )
+
+    def test_dos_pesadas_de_node_con_la_misma_fecha_no_revientan_tampoco_con_dry_run(self):
+        """El mismo caso límite que arriba, pero con `--dry-run` (R3): es el modo pensado para
+        mirar ANTES de tocar la base, así que con más razón no puede reventar con una traza
+        cruda. Antes del arreglo, `--dry-run` reventaba igual porque ejecuta el mismo código de
+        escritura de verdad (ver el docstring del comando, "`--dry-run` no es una simulación
+        paralela")."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            pesos=[
+                {"fecha": "2026-02-14", "peso_kg": 70.3, "grasa_pct": None, "cintura_cm": None},
+                {"fecha": "2026-02-14", "peso_kg": 71.1, "grasa_pct": None, "cintura_cm": None},
+            ],
+        )
+        salida = self._importar(dry_run=True)  # no debe reventar
+
+        # No se escribió nada de verdad.
+        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 0)
+        self.assertIn("Pesadas: 2 en Node -> 1 nuevos, 0 ya estaban.", salida)
+        self.assertIn(
+            "Pesadas: 1 más se ha saltado por chocar en fecha con otra fila de Node de esta "
+            "misma pasada (una persona no puede tener dos pesadas el mismo día).",
+            salida,
+        )
+
 
 # ---------------------------------------------------------------------------------------------
 # R5 — las recetas: ingredientes de JSON a filas, preparación literal, comidas traducidas.

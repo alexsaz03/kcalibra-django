@@ -208,22 +208,61 @@ def _importar_pesadas(conexion, usuario):
     datos_pesada`). Por eso se crea con `MedicionPeso.objects.create(...)` directamente: es la
     misma llamada que hace `apuntar_medicion` en su rama de "no había nada", sin su rama de
     `update_or_create` que aquí sería peligrosa.
+
+    A DIFERENCIA de las otras tres tablas, aquí la comprobación es VIVA, no solo un snapshot
+    tomado al empezar (ronda 1 de revisión, H1). El índice único de Node es
+    `(usuario_id, COALESCE(miembro_id, 0), fecha)`: permite DOS pesadas el mismo día si son de
+    personas distintas de la misma casa (`miembro_id` no se lee, "Fuera de alcance" — cuelga
+    todo del único `usuario` de Django). Con un snapshot congelado, la SEGUNDA fila de Node de
+    ese día no está en `existentes_al_empezar` (la primera solo se guarda en Django DURANTE
+    esta misma pasada) y llegaría desnuda a `MedicionPeso.objects.create()`, que revienta con
+    `IntegrityError` contra `una_medicion_por_persona_y_dia` — justo lo que R4 prohíbe ("no
+    revienta: se salta y lo dice") y con una traza cruda de Python en vez de un aviso (R7). Por
+    eso, además de `existentes_al_empezar` (lo que YA había en Django antes de esta pasada, para
+    R2), se lleva `vistas_en_esta_pasada`: un segundo set que SÍ se actualiza fila a fila.
+
+    Nótese que esto NO se aplica a despensa/entrenos/recetas: en despensa el snapshot congelado
+    es CORRECTO a propósito (es lo que deja que `anadir_producto` funda "1 kg" + "500 g" del
+    mismo producto DENTRO de la misma pasada, R1 — actualizar la foto ahí rompería la fusión);
+    en entrenos, la clave es la tupla completa de valores, así que dos entrenos "iguales" de
+    verdad SON el mismo entreno repetido y fundirse es lo correcto. Pesadas es la única de las
+    cuatro donde dos filas de Node distintas (persona distinta, mismo día) comparten la MISMA
+    clave de idempotencia sin ser la misma fila — de ahí que necesite su propia comprobación,
+    y solo ella.
+
+    Una colisión ENTRE DOS FILAS DE NODE (mismo día, ninguna de las dos existía ya en Django) se
+    cuenta aparte, en `colisiones`, y NO se suma a `ya_estaban`: "ya estaba" es honesto para "esa
+    fecha ya tenía una medición en Django antes de esta pasada", no para "otra fila de Node de
+    esta misma pasada se adelantó". `_imprimir_resumen` lo dice con su propia frase (R4: "se
+    salta y lo dice").
     """
     existentes_al_empezar = set(
         MedicionPeso.objects.filter(usuario=usuario).values_list("fecha", flat=True)
     )
+    vistas_en_esta_pasada = set()
 
     nuevos = 0
     ya_estaban = 0
+    colisiones = 0
     for fila in origen.pesadas(conexion):
         datos = mapeo.datos_pesada(fila)
-        if datos["fecha"] in existentes_al_empezar:
+        fecha = datos["fecha"]
+        if fecha in existentes_al_empezar:
             ya_estaban += 1
             continue
+        if fecha in vistas_en_esta_pasada:
+            colisiones += 1
+            continue
         MedicionPeso.objects.create(usuario=usuario, **datos)
+        vistas_en_esta_pasada.add(fecha)
         nuevos += 1
 
-    return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
+    return {
+        "origen": nuevos + ya_estaban + colisiones,
+        "nuevos": nuevos,
+        "ya_estaban": ya_estaban,
+        "colisiones": colisiones,
+    }
 
 
 def _importar_recetas(conexion, hogar):
@@ -266,5 +305,17 @@ def _imprimir_resumen(stdout, resumen, dry_run):
             f"{etiqueta}: {datos['origen']} en Node -> {datos['nuevos']} nuevos, "
             f"{datos['ya_estaban']} ya estaban."
         )
+        # Solo pesadas puede traer `colisiones` (H1, ronda 1): dos filas de Node del mismo día
+        # que Django no puede guardar las dos porque cuelgan del mismo `usuario`. Se dice aparte
+        # de "ya estaban" a propósito: no es que esa fecha ya existiera en Django, es que otra
+        # fila de Node de ESTA MISMA pasada se adelantó (R4: "se salta y lo dice").
+        colisiones = datos.get("colisiones", 0)
+        if colisiones:
+            verbo = "se ha saltado" if colisiones == 1 else "se han saltado"
+            stdout.write(
+                f"{etiqueta}: {colisiones} más {verbo} por chocar en fecha con otra fila de "
+                "Node de esta misma pasada (una persona no puede tener dos pesadas el mismo "
+                "día)."
+            )
     if dry_run:
         stdout.write("[DRY-RUN] Fin. No se ha escrito ni una fila.")
