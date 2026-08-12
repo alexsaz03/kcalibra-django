@@ -29,9 +29,9 @@ from servicios import metabolismo
 from .models import MedicionPeso, Perfil
 
 
-def crear_perfil_desde_alta(usuario, datos):
+def crear_perfil_desde_alta(persona, datos):
     """
-    Crea el `Perfil` de `usuario` con lo que rellenó en el formulario de alta, y su PRIMERA
+    Crea el `Perfil` de `persona` con lo que rellenó en el formulario de alta, y su PRIMERA
     medición de peso (R7: "el peso que se teclea al crear la cuenta es la primera medición,
     con su fecha"). `datos` es el `cleaned_data` del formulario de alta — ya validado por
     Django antes de llegar aquí (R11: los datos imposibles se rechazan al entrar, no aquí).
@@ -43,7 +43,7 @@ def crear_perfil_desde_alta(usuario, datos):
         ajuste_pct = metabolismo.OBJETIVOS[datos["objetivo"]]["ajuste_pct"]
 
     perfil = Perfil.objects.create(
-        usuario=usuario,
+        persona=persona,
         sexo=datos["sexo"],
         fecha_nacimiento=datos["fecha_nacimiento"],
         altura_cm=datos["altura_cm"],
@@ -56,12 +56,12 @@ def crear_perfil_desde_alta(usuario, datos):
         no_le_gusta=datos.get("no_le_gusta", "") or "",
     )
     MedicionPeso.objects.create(
-        usuario=usuario, fecha=timezone.localdate(), peso_kg=datos["peso_kg"]
+        persona=persona, fecha=timezone.localdate(), peso_kg=datos["peso_kg"]
     )
     return perfil
 
 
-def peso_medio_7_dias(usuario):
+def peso_medio_7_dias(persona):
     """
     R7/G-61 — la MEDIA de las mediciones de los últimos 7 días de esa persona, no la última
     suelta ("el peso de un día concreto oscila por cosas que no son grasa"). Si por lo que
@@ -73,18 +73,18 @@ def peso_medio_7_dias(usuario):
     `days=7` la ventana colaba también el día −7, ocho fechas distintas en vez de siete).
     """
     limite = timezone.localdate() - timedelta(days=6)
-    mediciones_recientes = usuario.mediciones_peso.filter(fecha__gte=limite)
+    mediciones_recientes = persona.mediciones_peso.filter(fecha__gte=limite)
     promedio = mediciones_recientes.aggregate(media=django_models.Avg("peso_kg"))["media"]
     if promedio is not None:
         return float(promedio)
 
-    ultima = usuario.mediciones_peso.order_by("-fecha").first()
+    ultima = persona.mediciones_peso.order_by("-fecha").first()
     return float(ultima.peso_kg) if ultima else None
 
 
-def _calorias_de_entrenos(usuario, fecha):
+def _calorias_de_entrenos(persona, fecha):
     """
-    R7/R8/R71 (unidad 011, apuntar-un-entreno.md) — cuántas kcal ha quemado `usuario` en
+    R7/R8/R71 (unidad 011, apuntar-un-entreno.md) — cuántas kcal ha quemado `persona` en
     `fecha` según sus entrenos apuntados; 0 si no tiene ninguno ese día (R8: "con cero
     entrenos, ni una kcal se mueve").
 
@@ -96,15 +96,15 @@ def _calorias_de_entrenos(usuario, fecha):
     """
     from entrenos.models import Entreno
 
-    total = Entreno.objects.filter(usuario=usuario, fecha=fecha).aggregate(
+    total = Entreno.objects.filter(persona=persona, fecha=fecha).aggregate(
         total=django_models.Sum("calorias")
     )["total"]
     return total or 0
 
 
-def calcular_objetivo_del_dia(usuario, fecha=None):
+def calcular_objetivo_del_dia(persona, fecha=None):
     """
-    Une el perfil de `usuario` con su peso reciente y llama a `servicios.metabolismo` (R8: la
+    Une el perfil de `persona` con su peso reciente y llama a `servicios.metabolismo` (R8: la
     fórmula solo vive ahí, esta función no la repite). Devuelve `None` si a esa persona
     todavía no le corresponde ningún cálculo (sin perfil, o sin ninguna medición de peso —
     ninguno de los dos debería pasar una vez completada el alta, pero se contempla).
@@ -122,11 +122,11 @@ def calcular_objetivo_del_dia(usuario, fecha=None):
     mueve (R8, la red de seguridad de las siete unidades anteriores).
     """
     try:
-        perfil = usuario.perfil
+        perfil = persona.perfil
     except Perfil.DoesNotExist:
         return None
 
-    peso_kg = peso_medio_7_dias(usuario)
+    peso_kg = peso_medio_7_dias(persona)
     if peso_kg is None:
         return None
 
@@ -148,7 +148,7 @@ def calcular_objetivo_del_dia(usuario, fecha=None):
     )
     resultado["peso_kg"] = round(peso_kg, 1)
 
-    entreno_kcal = _calorias_de_entrenos(usuario, fecha)
+    entreno_kcal = _calorias_de_entrenos(persona, fecha)
     resultado["entreno_kcal"] = entreno_kcal
     if entreno_kcal:
         calorias_base = resultado["calorias"]
@@ -180,17 +180,17 @@ def cambiar_objetivo(perfil, objetivo_nuevo):
     return perfil
 
 
-def apuntar_medicion(usuario, datos):
+def apuntar_medicion(persona, datos):
     """
-    R-63/G-130/Q-110 — apunta una medición de `usuario`, SUSTITUYENDO la del mismo día si ya
-    existía: `update_or_create` por (usuario, fecha), nunca un `create` suelto que reventaría
+    R-63/G-130/Q-110 — apunta una medición de `persona`, SUSTITUYENDO la del mismo día si ya
+    existía: `update_or_create` por (persona, fecha), nunca un `create` suelto que reventaría
     contra la restricción `una_medicion_por_persona_y_dia` del modelo (R2: "pesarse dos veces
     la misma mañana no son dos datos, es una corrección", G-130). `datos` es el
     `cleaned_data` de `FormularioMedicion`, ya validado (R10/R11: peso positivo, grasa 0-100,
     fecha no futura, rechazados antes de llegar aquí).
     """
     medicion, _ = MedicionPeso.objects.update_or_create(
-        usuario=usuario,
+        persona=persona,
         fecha=datos["fecha"],
         defaults={
             "peso_kg": datos["peso_kg"],
@@ -201,21 +201,21 @@ def apuntar_medicion(usuario, datos):
     return medicion
 
 
-def ultima_medicion(usuario):
+def ultima_medicion(persona):
     """
-    R6/Q-112 — "lo que marcó la báscula": la medición más reciente de `usuario` (la de fecha
+    R6/Q-112 — "lo que marcó la báscula": la medición más reciente de `persona` (la de fecha
     mayor; `Meta.ordering = ["-fecha"]` del modelo ya deja `.first()` en ese orden), o `None`
     si todavía no tiene ninguna (R9, estado "sin ninguna medición"). Es, a propósito, un
     número DISTINTO de `peso_medio_7_dias`: esta función nunca promedia nada, solo mira la
     última fila.
     """
-    return usuario.mediciones_peso.first()
+    return persona.mediciones_peso.first()
 
 
 def borrar_medicion(medicion):
     """
     R8/R9 (§6 Estados) — borra una medición equivocada. Quien llama es responsable de haber
-    comprobado antes que es del usuario correcto (la puerta de `perfiles/acceso.py`, R7); esta
+    comprobado antes que es de la persona correcta (la puerta de `perfiles/acceso.py`, R7); esta
     función no vuelve a mirarlo, igual que `cambiar_objetivo` confía en quien la llama. Tras
     borrar, el objetivo del día se recalcula solo con lo que quede la próxima vez que se
     llame a `calcular_objetivo_del_dia` (que devuelve `None` sin reventar si ya no queda

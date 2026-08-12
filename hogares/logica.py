@@ -8,7 +8,7 @@ vistas llaman a la capa de lógica, nunca calculan ellas mismas).
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Hogar, SolicitudEntrada, crear_hogar_propio
+from .models import Hogar, SolicitudEntrada, crear_hogar_propio, persona_de
 
 
 def procesar_codigo_al_verificar(usuario) -> None:
@@ -36,7 +36,7 @@ def procesar_codigo_al_verificar(usuario) -> None:
             # El hogar existía al registrarse pero desapareció mientras tanto (no debería
             # pasar en esta unidad, donde los hogares no se borran nunca, pero no dejamos a
             # la persona sin hogar bajo ningún escenario).
-            crear_hogar_propio(usuario)
+            crear_hogar_propio(persona_de(usuario))
             return
 
         SolicitudEntrada.objects.create(
@@ -76,6 +76,6 @@ def resolver_solicitudes_caducadas(*, hogar=None, usuario=None) -> int:
             solicitud.estado = SolicitudEntrada.CADUCADA
             solicitud.resuelta_en = timezone.now()
             solicitud.save(update_fields=["estado", "resuelta_en"])
-            crear_hogar_propio(solicitud.usuario)
+            crear_hogar_propio(persona_de(solicitud.usuario))
         resueltas += 1
     return resueltas

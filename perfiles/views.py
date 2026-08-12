@@ -21,6 +21,8 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
+from hogares.acceso import persona_actual
+
 from .acceso import perfil_propio_o_404, perfil_visible_o_404
 from .forms import FormularioMedicion, FormularioPerfil
 from .logica import (
@@ -37,21 +39,21 @@ NOMBRE_DEL_PARTIAL_DEL_HISTORICO = "perfiles/peso.html#historico_de_peso"
 
 
 @login_required
-def ver_perfil(request, usuario_id=None):
+def ver_perfil(request, persona_id=None):
     """
     R7 (superficie de uso) — "Qué ve nada más entrar: sus datos actuales y, debajo, sus
-    calorías del día y sus macros ya calculados". Sin `usuario_id`, enseña el propio (el
-    enlace de la barra de navegación apunta aquí). Con `usuario_id`, el de cualquier persona
+    calorías del día y sus macros ya calculados". Sin `persona_id`, enseña el propio (el
+    enlace de la barra de navegación apunta aquí). Con `persona_id`, el de cualquier persona
     del MISMO hogar (R9: se ve, pero el formulario de cambiarlo no aparece si no es el suyo).
     """
-    usuario_id = usuario_id if usuario_id is not None else request.user.id
-    perfil = perfil_visible_o_404(request, usuario_id)
-    es_propio = perfil.usuario_id == request.user.id
+    persona_id = persona_id if persona_id is not None else persona_actual(request).id
+    perfil = perfil_visible_o_404(request, persona_id)
+    es_propio = perfil.persona_id == persona_actual(request).id
 
     contexto = {
         "perfil": perfil,
         "es_propio": es_propio,
-        "resultado": calcular_objetivo_del_dia(perfil.usuario),
+        "resultado": calcular_objetivo_del_dia(perfil.persona),
         "form": FormularioPerfil(instance=perfil) if es_propio else None,
     }
     return render(request, "perfiles/ver.html", contexto)
@@ -59,10 +61,10 @@ def ver_perfil(request, usuario_id=None):
 
 @login_required
 @require_POST
-def actualizar_perfil(request, usuario_id):
+def actualizar_perfil(request, persona_id):
     """
     R3/R5/R6 — guarda los cambios y recalcula al momento. `perfil_propio_o_404` es la puerta
-    de R9: si `usuario_id` no es el de quien hace la petición, esto responde 404 ANTES de
+    de R9: si `persona_id` no es el de quien hace la petición, esto responde 404 ANTES de
     mirar siquiera el formulario — no hay forma de cambiar el perfil de otra persona ni
     llamando aquí directamente con su id exacto.
 
@@ -70,7 +72,7 @@ def actualizar_perfil(request, usuario_id):
     aquí se responde SOLO el trozo de la tarjeta (plantillas parciales, como ya hace
     `paginas/views.py:hora_servidor` desde la unidad 002) — nunca la página entera.
     """
-    perfil = perfil_propio_o_404(request, usuario_id)
+    perfil = perfil_propio_o_404(request, persona_id)
     objetivo_antes_de_este_cambio = perfil.objetivo
 
     form = FormularioPerfil(request.POST, instance=perfil)
@@ -89,7 +91,7 @@ def actualizar_perfil(request, usuario_id):
         # ajuste ya resuelto por R5, no lo que se hubiera tecleado y se descartó).
         form = FormularioPerfil(instance=perfil)
 
-    resultado = calcular_objetivo_del_dia(perfil.usuario)
+    resultado = calcular_objetivo_del_dia(perfil.persona)
     contexto = {"perfil": perfil, "es_propio": True, "resultado": resultado, "form": form}
 
     plantilla = (
@@ -100,7 +102,7 @@ def actualizar_perfil(request, usuario_id):
     return render(request, plantilla, contexto)
 
 
-def _contexto_peso(usuario, es_propio, form=None):
+def _contexto_peso(persona, es_propio, form=None):
     """
     Reúne lo que necesita la pantalla del histórico de peso: el formulario (uno nuevo si no
     se pasa uno ya validado/con errores), el histórico completo, la última medición y el
@@ -114,20 +116,20 @@ def _contexto_peso(usuario, es_propio, form=None):
     serlo (`apuntar_peso`/`borrar_peso`, sin cambios).
     """
     return {
-        "usuario_objetivo": usuario,
+        "persona_objetivo": persona,
         "es_propio": es_propio,
         "form": form if form is not None else FormularioMedicion(),
-        "mediciones": usuario.mediciones_peso.all(),
-        "ultima": ultima_medicion(usuario),
-        "resultado": calcular_objetivo_del_dia(usuario),
+        "mediciones": persona.mediciones_peso.all(),
+        "ultima": ultima_medicion(persona),
+        "resultado": calcular_objetivo_del_dia(persona),
     }
 
 
 @login_required
-def ver_peso(request, usuario_id=None):
+def ver_peso(request, persona_id=None):
     """
     R1/R3/R6/R9 (superficie de uso, apuntar-el-peso.md) — el histórico de peso de
-    `usuario_id`, y el formulario para apuntar una pesada nueva. Sin `usuario_id`, el propio
+    `persona_id`, y el formulario para apuntar una pesada nueva. Sin `persona_id`, el propio
     (enlace de la barra de navegación).
 
     Unidad 010, R7/R8 — la LECTURA de esta pantalla ahora es del hogar entero (mismo
@@ -138,15 +140,15 @@ def ver_peso(request, usuario_id=None):
     cuenta propia (R8), eso NO cambia. La plantilla usa `es_propio` para no enseñar el
     formulario ni los botones de borrar cuando se mira el de otra persona.
     """
-    usuario_id = usuario_id if usuario_id is not None else request.user.id
-    perfil = perfil_visible_o_404(request, usuario_id)
-    es_propio = perfil.usuario_id == request.user.id
-    return render(request, "perfiles/peso.html", _contexto_peso(perfil.usuario, es_propio))
+    persona_id = persona_id if persona_id is not None else persona_actual(request).id
+    perfil = perfil_visible_o_404(request, persona_id)
+    es_propio = perfil.persona_id == persona_actual(request).id
+    return render(request, "perfiles/peso.html", _contexto_peso(perfil.persona, es_propio))
 
 
 @login_required
 @require_POST
-def apuntar_peso(request, usuario_id):
+def apuntar_peso(request, persona_id):
     """
     R1/R2/R3/R10 — apunta una medición (o sustituye la de hoy si ya existía, R2/G-130: lo hace
     `apuntar_medicion` con su `update_or_create`). `perfil_propio_o_404` es la puerta de R7:
@@ -154,13 +156,13 @@ def apuntar_peso(request, usuario_id):
     403. Con HTMX, responde solo el trozo del histórico (mismo patrón que
     `actualizar_perfil`); sin HTMX, la página completa.
     """
-    perfil = perfil_propio_o_404(request, usuario_id)
+    perfil = perfil_propio_o_404(request, persona_id)
     form = FormularioMedicion(request.POST)
     if form.is_valid():
-        apuntar_medicion(perfil.usuario, form.cleaned_data)
+        apuntar_medicion(perfil.persona, form.cleaned_data)
         form = FormularioMedicion()  # formulario limpio, listo para la siguiente pesada
 
-    contexto = _contexto_peso(perfil.usuario, es_propio=True, form=form)
+    contexto = _contexto_peso(perfil.persona, es_propio=True, form=form)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")
@@ -171,19 +173,19 @@ def apuntar_peso(request, usuario_id):
 
 @login_required
 @require_POST
-def borrar_peso(request, usuario_id, medicion_id):
+def borrar_peso(request, persona_id, medicion_id):
     """
     R8/R9 — borra una medición equivocada; el objetivo del día se recalcula solo, con las que
     queden (o "sin ninguna", R9, sin reventar). Doble cinturón de R7: `perfil_propio_o_404`
-    comprueba que `usuario_id` es quien pregunta, y el `get_object_or_404` de abajo exige
+    comprueba que `persona_id` es quien pregunta, y el `get_object_or_404` de abajo exige
     ADEMÁS que `medicion_id` sea SUYA — sin esto último, alguien podría apuntarse a sí mismo
-    (pasando su propio `usuario_id`) y colar el id de una medición ajena para borrarla.
+    (pasando su propio `persona_id`) y colar el id de una medición ajena para borrarla.
     """
-    perfil = perfil_propio_o_404(request, usuario_id)
-    medicion = get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)
+    perfil = perfil_propio_o_404(request, persona_id)
+    medicion = get_object_or_404(MedicionPeso, id=medicion_id, persona=perfil.persona)
     borrar_medicion(medicion)
 
-    contexto = _contexto_peso(perfil.usuario, es_propio=True)
+    contexto = _contexto_peso(perfil.persona, es_propio=True)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")

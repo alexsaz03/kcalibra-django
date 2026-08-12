@@ -29,14 +29,16 @@ from servicios.progreso import (
     semanas_desde_parametro,
 )
 
-from .acceso import usuario_visible_o_404
+from hogares.acceso import persona_actual
+
+from .acceso import persona_visible_o_404
 
 
 @login_required
-def ver_progreso(request, usuario_id=None):
+def ver_progreso(request, persona_id=None):
     """
-    R1/R2/R3/R4 — la evolución de peso (y grasa/cintura si las hay) de `usuario_id` en las
-    últimas `?semanas=` semanas. Sin `usuario_id`, la propia (enlace de la barra de
+    R1/R2/R3/R4 — la evolución de peso (y grasa/cintura si las hay) de `persona_id` en las
+    últimas `?semanas=` semanas. Sin `persona_id`, la propia (enlace de la barra de
     navegación, igual que `perfiles:ver_mio`).
 
     R5/R6 — el número de semanas llega por la URL: `semanas_desde_parametro` (servicios/
@@ -45,41 +47,42 @@ def ver_progreso(request, usuario_id=None):
     donde una configuración que no se entiende tumba el arranque a propósito: aquí es
     entrada de una persona por la URL, jamás puede reventar nada.
 
-    R7/R9 — `usuario_visible_o_404` (progreso/acceso.py) deja ver el progreso de cualquiera
+    R7/R9 — `persona_visible_o_404` (progreso/acceso.py) deja ver el progreso de cualquiera
     del MISMO hogar; de otro hogar, 404 (R9), nunca 403. R10/G-171 — se calcula SIEMPRE para
-    una única persona, `usuario_objetivo`: nunca se suman ni se promedian los datos de dos
+    una única persona, `persona_objetivo`: nunca se suman ni se promedian los datos de dos
     personas del hogar entre sí (no hay ninguna consulta que junte a más de una).
     """
-    usuario_id = usuario_id if usuario_id is not None else request.user.id
-    usuario_objetivo = usuario_visible_o_404(request, usuario_id)
-    es_propio = usuario_objetivo.id == request.user.id
+    yo = persona_actual(request)
+    persona_id = persona_id if persona_id is not None else yo.id
+    persona_objetivo = persona_visible_o_404(request, persona_id)
+    es_propio = persona_objetivo.id == yo.id
 
     semanas = semanas_desde_parametro(request.GET.get("semanas"))
     hoy = timezone.localdate()
 
-    # Las mediciones DE ESA PERSONA, y solo de ella (R10/G-171): `usuario_objetivo.
+    # Las mediciones DE ESA PERSONA, y solo de ella (R10/G-171): `persona_objetivo.
     # mediciones_peso` ya viene filtrado por el `related_name` del modelo, sin ningún filtro
     # adicional que pudiera mezclar el hogar entero por error.
     mediciones = list(
-        usuario_objetivo.mediciones_peso.values("fecha", "peso_kg", "grasa_pct", "cintura_cm")
+        persona_objetivo.mediciones_peso.values("fecha", "peso_kg", "grasa_pct", "cintura_cm")
     )
     mediciones_del_periodo = recortar_por_periodo(mediciones, semanas, hoy)
     evolucion = construir_evolucion(mediciones_del_periodo)
 
     # R-79/R1/R2/C-89 — los entrenos REALIZADOS de esa persona, y solo de ella (mismo criterio
-    # que las mediciones de arriba: `usuario_objetivo.entrenos` ya viene filtrado por el
+    # que las mediciones de arriba: `persona_objetivo.entrenos` ya viene filtrado por el
     # `related_name` de `Entreno`, sin ningún filtro adicional que pudiera mezclar el hogar).
     # `recortar_por_periodo` es la MISMA función que ya usa el peso (Cómo, punto 3): solo mira
     # la clave "fecha", así que sirve tal cual sin escribir una segunda resta de fechas.
-    entrenos = list(usuario_objetivo.entrenos.values("fecha", "minutos", "calorias"))
+    entrenos = list(persona_objetivo.entrenos.values("fecha", "minutos", "calorias"))
     entrenos_del_periodo = recortar_por_periodo(entrenos, semanas, hoy)
     semanas_de_entreno = agrupar_entrenos_por_semana(entrenos_del_periodo, hoy, semanas)
 
     # R-80/R3/R4/R5/R10/C-87 — el cumplimiento de esa persona, y solo de ella (mismo criterio:
-    # `usuario_objetivo.cierres_de_dia`, sin mezclar el hogar). El porcentaje se calcula sobre
+    # `persona_objetivo.cierres_de_dia`, sin mezclar el hogar). El porcentaje se calcula sobre
     # los cierres YA recortados por periodo, nunca sobre el número de días del periodo
     # (Q-153/C-87: es el error que un humano cometería leyendo R-80 deprisa).
-    cierres = list(usuario_objetivo.cierres_de_dia.values("fecha", "respuesta"))
+    cierres = list(persona_objetivo.cierres_de_dia.values("fecha", "respuesta"))
     cierres_del_periodo = recortar_por_periodo(cierres, semanas, hoy)
     cumplimiento = calcular_cumplimiento(cierres_del_periodo)
 
@@ -87,15 +90,15 @@ def ver_progreso(request, usuario_id=None):
     # selector ofrece a todo el hogar (la propia primero, mismo criterio de orden que
     # paginas/views.py:inicio, unidad 005). Sin hogar todavía (R14 de la unidad 003,
     # "esperando que le acepten") no hay nadie más que ofrecer: solo la propia.
-    hogar = request.user.hogar
+    hogar = yo.hogar
     if hogar is None:
-        miembros_del_hogar = [request.user]
+        miembros_del_hogar = [yo]
     else:
-        todos = list(hogar.miembros.order_by("date_joined"))
-        miembros_del_hogar = [request.user] + [m for m in todos if m.id != request.user.id]
+        todos = list(hogar.miembros.select_related("usuario").order_by("usuario__date_joined"))
+        miembros_del_hogar = [yo] + [m for m in todos if m.id != yo.id]
 
     contexto = {
-        "usuario_objetivo": usuario_objetivo,
+        "persona_objetivo": persona_objetivo,
         "es_propio": es_propio,
         "miembros_del_hogar": miembros_del_hogar,
         "semanas": semanas,

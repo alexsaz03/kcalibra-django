@@ -21,7 +21,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
-from hogares.models import SolicitudEntrada
+from hogares.models import Persona, SolicitudEntrada
 from planes.models import ComidaDelPlan, PlanDeDia
 
 Usuario = get_user_model()
@@ -71,18 +71,18 @@ class BaseConHogarDeDosPersonas(PruebaConRegistroAbierto):
             actividad="ligero",
             objetivo="recomposicion_corporal",
         )
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         # Euridice pide entrar en el hogar de Alejandro con su código, y él la acepta.
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.client.logout()
         self.euridice.refresh_from_db()
@@ -90,7 +90,7 @@ class BaseConHogarDeDosPersonas(PruebaConRegistroAbierto):
 
         # Berta: un hogar totalmente aparte, para los tests de aislamiento (R7).
         self.registrar_y_verificar("berta@example.com")
-        self.berta = Usuario.objects.get(email="berta@example.com")
+        self.berta = Persona.objects.get(usuario__email="berta@example.com")
         self.client.logout()
 
     def apuntar(self, usuario_objetivo, **campos):
@@ -125,7 +125,7 @@ class R1_ApuntarComidaApareceEnLaTarjetaTests(BaseConHogarDeDosPersonas):
             carbos_g="20",
         )
 
-        plan = PlanDeDia.objects.get(usuario=self.alejandro, fecha=timezone.localdate())
+        plan = PlanDeDia.objects.get(persona=self.alejandro, fecha=timezone.localdate())
         comida = plan.comidas.get()
         self.assertEqual(comida.nombre, "Tortilla de claras")
         self.assertEqual(comida.momento_del_dia, "desayuno")
@@ -150,8 +150,8 @@ class R1_ApuntarComidaApareceEnLaTarjetaTests(BaseConHogarDeDosPersonas):
         self.apuntar(self.alejandro, nombre="Desayuno", momento_del_dia="desayuno")
         self.apuntar(self.alejandro, nombre="Cena", momento_del_dia="cena")
 
-        self.assertEqual(PlanDeDia.objects.filter(usuario=self.alejandro).count(), 1)
-        plan = PlanDeDia.objects.get(usuario=self.alejandro)
+        self.assertEqual(PlanDeDia.objects.filter(persona=self.alejandro).count(), 1)
+        plan = PlanDeDia.objects.get(persona=self.alejandro)
         self.assertEqual(plan.comidas.count(), 2)
 
 
@@ -224,7 +224,7 @@ class R5_SinPlanElInicioSigueSirviendoTests(BaseConHogarDeDosPersonas):
 
         self.assertContains(respuesta, "1894 kcal")  # su objetivo (unidad 004, datos de fábrica)
         self.assertContains(respuesta, "Apuntar el plan")
-        self.assertFalse(PlanDeDia.objects.filter(usuario=self.euridice).exists())
+        self.assertFalse(PlanDeDia.objects.filter(persona=self.euridice).exists())
 
     def test_el_boton_lleva_a_la_pantalla_de_apuntar_su_propio_plan(self):
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
@@ -255,7 +255,7 @@ class H2_EsperandoAceptacionNoOfreceEnlaceMuertoTests(PruebaConRegistroAbierto):
         self.addCleanup(parche_de_hoy.stop)
 
         self.registrar_y_verificar("alejandro@example.com")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         # Euridice pide entrar con el código de Alejandro, pero NADIE la acepta todavía: se
@@ -263,7 +263,7 @@ class H2_EsperandoAceptacionNoOfreceEnlaceMuertoTests(PruebaConRegistroAbierto):
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNone(self.euridice.hogar_id)  # control: sigue esperando, no aceptada
 
     def test_no_ofrece_el_enlace_muerto_de_apuntar_el_plan(self):
@@ -314,7 +314,7 @@ class R6_CualquieraDelHogarApuntaAOtroSinPedirPermisoTests(BaseConHogarDeDosPers
         )
 
         self.assertEqual(respuesta.status_code, 200)
-        plan_de_euridice = PlanDeDia.objects.get(usuario=self.euridice, fecha=timezone.localdate())
+        plan_de_euridice = PlanDeDia.objects.get(persona=self.euridice, fecha=timezone.localdate())
         comida = plan_de_euridice.comidas.get()
         self.assertEqual(comida.nombre, "Cena que le puso Alejandro")
 
@@ -421,7 +421,7 @@ class R10_ValoresImposiblesSeRechazanTests(BaseConHogarDeDosPersonas):
         respuesta = self.apuntar(self.alejandro, calorias="-100")
 
         self.assertEqual(respuesta.status_code, 200)  # re-muestra el formulario, no revienta
-        self.assertFalse(ComidaDelPlan.objects.filter(plan__usuario=self.alejandro).exists())
+        self.assertFalse(ComidaDelPlan.objects.filter(plan__persona=self.alejandro).exists())
 
     def test_macro_negativo_se_rechaza(self):
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -429,7 +429,7 @@ class R10_ValoresImposiblesSeRechazanTests(BaseConHogarDeDosPersonas):
         respuesta = self.apuntar(self.alejandro, proteina_g="-5")
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(ComidaDelPlan.objects.filter(plan__usuario=self.alejandro).exists())
+        self.assertFalse(ComidaDelPlan.objects.filter(plan__persona=self.alejandro).exists())
 
     def test_una_comida_sin_nombre_se_rechaza(self):
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -437,7 +437,7 @@ class R10_ValoresImposiblesSeRechazanTests(BaseConHogarDeDosPersonas):
         respuesta = self.apuntar(self.alejandro, nombre="")
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(ComidaDelPlan.objects.filter(plan__usuario=self.alejandro).exists())
+        self.assertFalse(ComidaDelPlan.objects.filter(plan__persona=self.alejandro).exists())
 
     def test_se_avisa_de_cual_esta_mal(self):
         """R10 — "se avisa de cuál está mal": el mensaje de error tiene que salir en la
@@ -457,7 +457,7 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_un_plan_de_ayer_no_se_cuenta_en_el_inicio(self):
         ayer = PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
+            persona=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
         )
         ComidaDelPlan.objects.create(
             plan=ayer, nombre="Comida de ayer", momento_del_dia="comida", calorias=999
@@ -481,7 +481,7 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_un_plan_de_manana_no_se_cuenta_en_el_inicio(self):
         manana = PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() + timedelta(days=1)
+            persona=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() + timedelta(days=1)
         )
         ComidaDelPlan.objects.create(
             plan=manana, nombre="Comida de mañana", momento_del_dia="comida", calorias=999
@@ -494,17 +494,17 @@ class R11_SoloCuentaElPlanDeHoyTests(BaseConHogarDeDosPersonas):
 
     def test_apuntar_una_comida_hoy_cuelga_del_plan_de_hoy_no_del_de_ayer_ni_manana(self):
         PlanDeDia.objects.create(
-            usuario=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
+            persona=self.alejandro, hogar=self.alejandro.hogar, fecha=timezone.localdate() - timedelta(days=1)
         )
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
 
         self.apuntar(self.alejandro, nombre="Comida de hoy")
 
-        plan_de_hoy = PlanDeDia.objects.get(usuario=self.alejandro, fecha=timezone.localdate())
+        plan_de_hoy = PlanDeDia.objects.get(persona=self.alejandro, fecha=timezone.localdate())
         self.assertEqual(plan_de_hoy.comidas.get().nombre, "Comida de hoy")
         # El de ayer sigue existiendo, intacto y sin la comida de hoy dentro.
         plan_de_ayer = PlanDeDia.objects.get(
-            usuario=self.alejandro, fecha=timezone.localdate() - timedelta(days=1)
+            persona=self.alejandro, fecha=timezone.localdate() - timedelta(days=1)
         )
         self.assertEqual(plan_de_ayer.comidas.count(), 0)
 
@@ -516,14 +516,15 @@ class UnPlanPorPersonaYDiaTests(TestCase):
     def test_la_base_de_datos_impide_dos_planes_del_mismo_dia_para_la_misma_persona(self):
         from django.db import IntegrityError, transaction
 
-        usuario = Usuario.objects.create_user(email="x@example.com", password="x")
+        cuenta = Usuario.objects.create_user(email="x@example.com", password="x")
         from hogares.models import crear_hogar_propio
 
-        crear_hogar_propio(usuario)
-        PlanDeDia.objects.create(usuario=usuario, hogar=usuario.hogar, fecha=timezone.localdate())
+        persona = Persona.objects.get(usuario=cuenta)
+        crear_hogar_propio(persona)
+        PlanDeDia.objects.create(persona=persona, hogar=persona.hogar, fecha=timezone.localdate())
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 PlanDeDia.objects.create(
-                    usuario=usuario, hogar=usuario.hogar, fecha=timezone.localdate()
+                    persona=persona, hogar=persona.hogar, fecha=timezone.localdate()
                 )

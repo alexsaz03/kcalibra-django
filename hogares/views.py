@@ -14,16 +14,17 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from .acceso import obtener_de_mi_hogar_o_404
+from .acceso import obtener_de_mi_hogar_o_404, persona_actual
 from .logica import crear_hogar_propio, resolver_solicitudes_caducadas
-from .models import SolicitudEntrada
+from .models import SolicitudEntrada, persona_de
 
 
 @login_required
 def mi_hogar(request):
     usuario = request.user
+    persona = persona_actual(request)
 
-    if usuario.hogar_id is None:
+    if persona is None or persona.hogar_id is None:
         # Está "sola": o bien pidió entrar en un hogar con código y sigue esperando, o su
         # petición se acaba de resolver y todavía no se le ha asignado nada (transitorio,
         # el middleware lo cierra en la siguiente petición). R5, R14.
@@ -36,13 +37,16 @@ def mi_hogar(request):
         )
         return render(request, "hogares/esperando_aceptacion.html", {"solicitud": solicitud})
 
-    hogar = usuario.hogar
+    hogar = persona.hogar
     # Antes de enseñar la lista de pendientes, se cierran las que ya cumplieron su hora
     # (Q-10, G-34): así quien mira esta pantalla nunca ve (ni puede aceptar) una petición que
     # ya debería estar caducada.
     resolver_solicitudes_caducadas(hogar=hogar)
 
-    miembros = hogar.miembros.order_by("date_joined")
+    # Unidad 023 — `hogar.miembros` son ahora `Persona`, no cuentas. El orden sigue siendo
+    # el mismo dato de siempre (cuándo se dio de alta esa cuenta), leído a través de ella;
+    # `select_related` lo trae en la misma consulta, sin una por miembro para pintar su correo.
+    miembros = hogar.miembros.select_related("usuario").order_by("usuario__date_joined")
     pendientes = (
         SolicitudEntrada.del_hogar(hogar)
         .filter(estado=SolicitudEntrada.PENDIENTE)
@@ -75,8 +79,9 @@ def aceptar_solicitud(request, pk):
     solicitud.save(update_fields=["estado", "resuelta_en", "resuelta_por"])
 
     solicitante = solicitud.usuario
-    solicitante.hogar = solicitud.hogar
-    solicitante.save(update_fields=["hogar"])
+    persona_solicitante = persona_de(solicitante)
+    persona_solicitante.hogar = solicitud.hogar
+    persona_solicitante.save(update_fields=["hogar"])
 
     messages.success(request, f"{solicitante.email} ya está dentro del hogar.")
     return redirect("hogares:mi_hogar")
@@ -98,7 +103,7 @@ def rechazar_solicitud(request, pk):
         solicitud.resuelta_en = timezone.now()
         solicitud.resuelta_por = request.user
         solicitud.save(update_fields=["estado", "resuelta_en", "resuelta_por"])
-        crear_hogar_propio(solicitud.usuario)
+        crear_hogar_propio(persona_de(solicitud.usuario))
 
     messages.success(request, "Petición rechazada.")
     return redirect("hogares:mi_hogar")
@@ -112,4 +117,4 @@ def _cerrar_como_caducada_si_hace_falta(solicitud):
         solicitud.estado = SolicitudEntrada.CADUCADA
         solicitud.resuelta_en = timezone.now()
         solicitud.save(update_fields=["estado", "resuelta_en"])
-        crear_hogar_propio(solicitud.usuario)
+        crear_hogar_propio(persona_de(solicitud.usuario))

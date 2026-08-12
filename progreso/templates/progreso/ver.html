@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block titulo %}
-  {% if es_propio %}Tu progreso{% else %}Progreso de {{ usuario_objetivo.email }}{% endif %}
+  {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.usuario.email }}{% endif %}
 {% endblock %}
 
 {% block content %}
 <div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
   <h1 class="text-2xl font-bold text-slate-900">
-    {% if es_propio %}Tu progreso{% else %}Progreso de {{ usuario_objetivo.email }}{% endif %}
+    {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.usuario.email }}{% endif %}
   </h1>
   <p class="mt-1 text-sm text-slate-500">
     Cómo ha ido {% if es_propio %}tu{% else %}su{% endif %} peso — y, si {% if es_propio %}las tienes apuntadas,{% else %}las tiene apuntadas,{% endif %}
@@ -25,7 +25,7 @@
         <a
           href="{% url 'progreso:ver' miembro.id %}?semanas={{ semanas }}"
           class="rounded-lg px-3 py-1.5 text-sm font-medium
-            {% if miembro.id == usuario_objetivo.id %}bg-emerald-600 text-white{% else %}bg-white text-slate-700 border border-slate-200 hover:border-emerald-300{% endif %}"
+            {% if miembro.id == persona_objetivo.id %}bg-emerald-600 text-white{% else %}bg-white text-slate-700 border border-slate-200 hover:border-emerald-300{% endif %}"
         >
           {% if miembro.id == request.user.id %}Tú{% else %}{{ miembro.email }}{% endif %}
         </a>
@@ -65,14 +65,14 @@
         Todavía no tienes ninguna pesada apuntada. En cuanto apuntes la primera, aquí
         aparecerá su evolución.
       {% else %}
-        {{ usuario_objetivo.email }} todavía no tiene ninguna pesada apuntada.
+        {{ persona_objetivo.usuario.email }} todavía no tiene ninguna pesada apuntada.
       {% endif %}
     </p>
   {% elif not tiene_datos_en_periodo %}
     {# Tiene mediciones, pero ninguna cae en las semanas elegidas: no es "sin datos", es #}
     {# "sin datos EN ESTE periodo" — mensajes distintos para no confundir. #}
     <p id="progreso-sin-datos-en-periodo" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-      {% if es_propio %}No tienes{% else %}{{ usuario_objetivo.email }} no tiene{% endif %}
+      {% if es_propio %}No tienes{% else %}{{ persona_objetivo.usuario.email }} no tiene{% endif %}
       ninguna pesada en las últimas {{ semanas }} semanas. Prueba a ampliar el periodo.
     </p>
   {% else %}
@@ -141,7 +141,7 @@
         </p>
       {% else %}
         <p class="mt-2 text-sm text-slate-700">
-          {{ usuario_objetivo.email }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
+          {{ persona_objetivo.usuario.email }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
           día{{ cumplimiento.cerrados|pluralize }} en este periodo:
           <strong>{{ cumplimiento.lo_segui }}</strong> lo siguió entero,
           <strong>{{ cumplimiento.a_medias }}</strong> a medias y
@@ -158,14 +158,14 @@
           Todavía no has cerrado ningún día en este periodo. En cuanto cierres el primero,
           aquí verás tu cumplimiento.
         {% else %}
-          {{ usuario_objetivo.email }} todavía no ha cerrado ningún día en este periodo.
+          {{ persona_objetivo.usuario.email }} todavía no ha cerrado ningún día en este periodo.
         {% endif %}
       </p>
     {% endif %}
   </section>
 
   <p class="mt-6 text-sm">
-    <a href="{% url 'perfiles:peso' usuario_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+    <a href="{% url 'perfiles:peso' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
       {% if es_propio %}Ver tu histórico y apuntar una pesada →{% else %}Ver su histórico →{% endif %}
     </a>
   </p>
@@ -177,7 +177,7 @@
   {# -------------------------------------------------------------------------------------- #}
   {% if es_propio %}
     <p class="mt-3 text-sm">
-      <a href="{% url 'cierres:cerrar' usuario_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+      <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
         Cerrar un día (¿cumpliste el plan?) →
       </a>
     </p>

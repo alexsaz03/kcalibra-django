@@ -37,7 +37,7 @@ una fila SIN un campo propio que lo diga (Node no numera "esta fila viene de tal
   completa sí es única en los 16 (comprobado: `COUNT(*) == COUNT(DISTINCT ...)`) y sigue
   cumpliendo R2 (una repetición exacta de una fila ya importada se reconoce como "ya estaba").
   Ver `clave_entreno()`.
-- **Pesadas**: `(usuario, fecha)` — es LITERALMENTE la restricción `una_medicion_por_persona_y_
+- **Pesadas**: `(persona, fecha)` — es LITERALMENTE la restricción `una_medicion_por_persona_y_
   dia` que la unidad 006 puso en la base de datos. Y no es solo la clave de idempotencia: es la
   MISMA pregunta que R4 exige responder para el caso límite ("si choca, se salta y lo dice"), así
   que una sola comprobación sirve para las dos cosas a la vez.
@@ -151,7 +151,7 @@ def traducir_intensidad(intensidad_node):
 
 def clave_entreno(datos):
     """La identidad de un entreno YA TRADUCIDO (ver el porqué de esta clave, y no 'fecha+tipo',
-    en el docstring del módulo): la tupla completa de sus valores, sin el `usuario` (quien
+    en el docstring del módulo): la tupla completa de sus valores, sin la `persona` (quien
     llama ya sabe de quién está comparando)."""
     return (datos["fecha"], datos["deporte"], datos["intensidad"], datos["minutos"], datos["calorias"])
 
@@ -159,7 +159,7 @@ def clave_entreno(datos):
 def datos_entreno(fila):
     """
     A partir de una fila de `entrenos` de Node, los `datos` que espera `entrenos.logica.
-    apuntar_entreno(usuario, datos)`: fecha (ya como `date`, no como texto ISO), deporte (el
+    apuntar_entreno(persona, datos)`: fecha (ya como `date`, no como texto ISO), deporte (el
     'tipo' de Node: las claves coinciden 1:1 con `entrenos.models.DEPORTES`, sin traducir),
     intensidad (traducida, ver `traducir_intensidad`) y minutos. `calorias` SIEMPRE viene
     puesta (Node no permite NULL en esa columna): así `apuntar_entreno` nunca entra en su rama
@@ -186,7 +186,7 @@ def datos_pesada(fila):
     """
     A partir de una fila de `pesos` de Node, los datos para crear una `perfiles.models.
     MedicionPeso` (fecha, peso, grasa y cintura opcionales). NO pasa por `perfiles.logica.
-    apuntar_medicion`: esa función hace `update_or_create` por (usuario, fecha) — la puerta
+    apuntar_medicion`: esa función hace `update_or_create` por (persona, fecha) — la puerta
     correcta para que UNA PERSONA corrija su propia pesada del día, pero PELIGROSA para un
     import repetible, porque SOBRESCRIBIRÍA en silencio una medición que ya estuviera en Django
     (importada antes, o apuntada a mano por la persona) en vez de reconocerla y saltarse la

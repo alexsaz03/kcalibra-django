@@ -17,7 +17,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
-from hogares.models import SolicitudEntrada
+from hogares.models import Persona, SolicitudEntrada
 from perfiles.logica import calcular_objetivo_del_dia
 
 from .models import Entreno
@@ -37,17 +37,17 @@ class BaseEntrenosTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre", peso_kg="93")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -55,7 +55,7 @@ class BaseEntrenosTests(PruebaConRegistroAbierto):
 
         # Carlos, en SU PROPIO hogar (nunca se une a nadie): el tercero de R10.
         self.registrar_y_verificar("carlos@example.com", sexo="hombre")
-        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.carlos = Persona.objects.get(usuario__email="carlos@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -78,7 +78,7 @@ class R1_C37_EstimarSinCaloriasTests(BaseEntrenosTests):
         )
         self.assertEqual(respuesta.status_code, 200)
 
-        entreno = Entreno.objects.get(usuario=self.euridice)
+        entreno = Entreno.objects.get(persona=self.euridice)
         self.assertEqual(entreno.calorias, 362)
         self.assertFalse(entreno.calorias_manuales)
         self.assertContains(respuesta, "362")
@@ -97,7 +97,7 @@ class R2_C37_GuardaLasEscritasSinDiscutirlasTests(BaseEntrenosTests):
             {"fecha": timezone.localdate().isoformat(), "deporte": "correr",
              "intensidad": "media", "minutos": "35", "calorias": "355"},
         )
-        entreno = Entreno.objects.get(usuario=self.euridice)
+        entreno = Entreno.objects.get(persona=self.euridice)
         self.assertEqual(entreno.calorias, 355)
         self.assertTrue(entreno.calorias_manuales)
 
@@ -118,7 +118,7 @@ class R3_C38_HyroxSumaAlObjetivoTests(BaseEntrenosTests):
              "intensidad": "fuerte", "minutos": "60", "calorias": ""},
         )
 
-        entreno = Entreno.objects.get(usuario=self.alejandro)
+        entreno = Entreno.objects.get(persona=self.alejandro)
         self.assertEqual(entreno.calorias, 1302)
 
         objetivo_despues = calcular_objetivo_del_dia(self.alejandro)
@@ -155,8 +155,8 @@ class R4_LosSieteDeportesTests(BaseEntrenosTests):
             {"fecha": timezone.localdate().isoformat(), "deporte": "hyrox",
              "intensidad": "media", "minutos": "30", "calorias": ""},
         )
-        crossfit = Entreno.objects.get(usuario=self.alejandro, deporte="crossfit")
-        hyrox = Entreno.objects.get(usuario=self.alejandro, deporte="hyrox")
+        crossfit = Entreno.objects.get(persona=self.alejandro, deporte="crossfit")
+        hyrox = Entreno.objects.get(persona=self.alejandro, deporte="hyrox")
         self.assertNotEqual(crossfit.calorias, hyrox.calorias)
         self.assertGreater(hyrox.calorias, crossfit.calorias)  # 11 > 9 kcal/min
 
@@ -176,7 +176,7 @@ class R5_CorregirRecalculaSolasTests(BaseEntrenosTests):
         }
         base.update(campos)
         self.client.post(f"/entrenos/{usuario.id}/apuntar/", base)
-        return Entreno.objects.get(usuario=usuario)
+        return Entreno.objects.get(persona=usuario)
 
     def test_corregir_los_minutos_rehace_las_calorias_solas(self):
         entreno = self._apuntar_estimado(self.alejandro, deporte="correr", intensidad="media",
@@ -216,7 +216,7 @@ class R5_CorregirRecalculaSolasTests(BaseEntrenosTests):
             {"fecha": entreno.fecha.isoformat(), "deporte": "bici", "intensidad": "suave",
              "minutos": "20", "calorias": ""},
         )
-        self.assertEqual(Entreno.objects.filter(usuario=self.alejandro).count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=self.alejandro).count(), 1)
         self.assertEqual(Entreno.objects.get().id, id_antes)
 
     def test_corregir_escribiendo_calorias_a_mano_las_respeta(self):
@@ -267,7 +267,7 @@ class R6_C39_CorregirElHistoricoEnSilencioTests(BaseEntrenosTests):
     def test_corregir_un_entreno_pasado_no_deja_ningun_mensaje(self):
         ayer = timezone.localdate() - timedelta(days=1)
         entreno = Entreno.objects.create(
-            usuario=self.alejandro, fecha=ayer, deporte="hyrox", intensidad="fuerte",
+            persona=self.alejandro, fecha=ayer, deporte="hyrox", intensidad="fuerte",
             minutos=45, calorias=977, calorias_manuales=False,
         )
         respuesta = self.client.post(
@@ -283,7 +283,7 @@ class R6_C39_CorregirElHistoricoEnSilencioTests(BaseEntrenosTests):
     def test_el_objetivo_de_aquel_dia_pasado_refleja_la_correccion(self):
         ayer = timezone.localdate() - timedelta(days=1)
         entreno = Entreno.objects.create(
-            usuario=self.alejandro, fecha=ayer, deporte="hyrox", intensidad="fuerte",
+            persona=self.alejandro, fecha=ayer, deporte="hyrox", intensidad="fuerte",
             minutos=45, calorias=977, calorias_manuales=True,
         )
         self.client.post(
@@ -306,7 +306,7 @@ class R9_EntradasInvalidasSeRechazanTests(BaseEntrenosTests):
              "intensidad": "media", "minutos": "0", "calorias": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
 
     def test_minutos_negativos_no_se_guarda(self):
         respuesta = self.client.post(
@@ -315,7 +315,7 @@ class R9_EntradasInvalidasSeRechazanTests(BaseEntrenosTests):
              "intensidad": "media", "minutos": "-5", "calorias": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
 
     def test_deporte_que_no_esta_en_la_lista_no_se_guarda(self):
         respuesta = self.client.post(
@@ -324,7 +324,7 @@ class R9_EntradasInvalidasSeRechazanTests(BaseEntrenosTests):
              "intensidad": "media", "minutos": "30", "calorias": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
 
     def test_intensidad_que_no_esta_en_la_lista_no_se_guarda(self):
         respuesta = self.client.post(
@@ -333,7 +333,7 @@ class R9_EntradasInvalidasSeRechazanTests(BaseEntrenosTests):
              "intensidad": "extrema", "minutos": "30", "calorias": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
 
     def test_calorias_negativas_no_se_guarda(self):
         respuesta = self.client.post(
@@ -342,7 +342,7 @@ class R9_EntradasInvalidasSeRechazanTests(BaseEntrenosTests):
              "intensidad": "media", "minutos": "30", "calorias": "-10"},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
 
 
 class R10_SoloSobreUnoMismoTests(BaseEntrenosTests):
@@ -356,7 +356,7 @@ class R10_SoloSobreUnoMismoTests(BaseEntrenosTests):
     def setUp(self):
         super().setUp()
         self.entreno_de_alejandro = Entreno.objects.create(
-            usuario=self.alejandro, fecha=timezone.localdate(), deporte="hyrox",
+            persona=self.alejandro, fecha=timezone.localdate(), deporte="hyrox",
             intensidad="fuerte", minutos=60, calorias=1302, calorias_manuales=False,
         )
         self.client.logout()
@@ -436,7 +436,7 @@ class BorrarTests(BaseEntrenosTests):
 
     def test_borrar_el_propio_lo_quita_de_la_lista(self):
         entreno = Entreno.objects.create(
-            usuario=self.alejandro, fecha=timezone.localdate(), deporte="correr",
+            persona=self.alejandro, fecha=timezone.localdate(), deporte="correr",
             intensidad="media", minutos=30, calorias=300, calorias_manuales=True,
         )
         respuesta = self.client.post(f"/entrenos/{self.alejandro.id}/{entreno.id}/borrar/")
@@ -449,7 +449,7 @@ class BorrarTests(BaseEntrenosTests):
         cabecera HX-Request que el navegador siempre manda en ese POST, la respuesta tiene que
         ser el TROZO, no la página entera con <html>/<head> incrustados dentro del div."""
         entreno = Entreno.objects.create(
-            usuario=self.alejandro, fecha=timezone.localdate(), deporte="correr",
+            persona=self.alejandro, fecha=timezone.localdate(), deporte="correr",
             intensidad="media", minutos=30, calorias=300, calorias_manuales=True,
         )
         respuesta = self.client.post(
@@ -498,11 +498,11 @@ class SinPesoNoRevientaTests(BaseEntrenosTests):
     def test_sin_ninguna_medicion_de_peso_pide_las_calorias_en_vez_de_reventar(self):
         from perfiles.models import MedicionPeso
 
-        MedicionPeso.objects.filter(usuario=self.alejandro).delete()
+        MedicionPeso.objects.filter(persona=self.alejandro).delete()
         respuesta = self.client.post(
             f"/entrenos/{self.alejandro.id}/apuntar/",
             {"fecha": timezone.localdate().isoformat(), "deporte": "correr",
              "intensidad": "media", "minutos": "30", "calorias": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(Entreno.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())

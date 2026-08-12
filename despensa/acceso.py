@@ -6,7 +6,7 @@ llamando al servidor con el id exacto de un producto (404, nunca 403).
 Mismo mecanismo que `planes/acceso.py` (el precedente exacto de "el hogar también ESCRIBE"),
 pero sin la parte de "¿a qué PERSONA del hogar te refieres?": la despensa no cuelga de una
 persona —no hay "la despensa DE alguien"—, cuelga directamente del hogar entero. Por eso aquí
-no hace falta `usuario_del_hogar_o_404`: basta con `hogares.acceso.hogar_actual` (para
+no hace falta `persona_del_hogar_o_404`: basta con `hogares.acceso.hogar_actual` (para
 listar/añadir, sin ningún id de por medio) y `hogares.acceso.obtener_de_mi_hogar_o_404` (para
 tocar un producto concreto por su id, filtrando siempre por el hogar de quien pregunta).
 """

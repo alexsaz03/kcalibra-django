@@ -15,9 +15,10 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from hogares.acceso import persona_actual
 from perfiles.logica import calcular_objetivo_del_dia
 
-from .acceso import usuario_propio_o_404
+from .acceso import persona_propia_o_404
 from .forms import FormularioEntreno
 from .logica import (
     SinPesoParaEstimar,
@@ -34,56 +35,56 @@ from .models import Entreno
 NOMBRE_DEL_PARTIAL = "entrenos/ver.html#entrenos_de_hoy"
 
 
-def _contexto(usuario, form=None):
+def _contexto(persona, form=None):
     return {
-        "usuario_objetivo": usuario,
+        "persona_objetivo": persona,
         "form": form if form is not None else FormularioEntreno(),
-        "entrenos": todos_los_entrenos(usuario),
-        "calorias_hoy": calorias_de_hoy(usuario),
-        "objetivo": calcular_objetivo_del_dia(usuario),
+        "entrenos": todos_los_entrenos(persona),
+        "calorias_hoy": calorias_de_hoy(persona),
+        "objetivo": calcular_objetivo_del_dia(persona),
     }
 
 
 @login_required
-def ver_entrenos(request, usuario_id=None):
+def ver_entrenos(request, persona_id=None):
     """
     §8 del plano — "Qué ve nada más entrar: sus entrenos y cuántas calorías lleva quemadas
-    hoy". Sin `usuario_id`, el propio (mismo patrón que `perfiles:ver_mio`,
+    hoy". Sin `persona_id`, el propio (mismo patrón que `perfiles:ver_mio`,
     `progreso:ver_mio`...). R12 — sin ningún entreno todavía, la plantilla lo dice con
     naturalidad (ver entrenos/ver.html): esta vista no distingue el caso, simplemente pasa una
     lista vacía.
     """
-    usuario_id = usuario_id if usuario_id is not None else request.user.id
-    usuario = usuario_propio_o_404(request, usuario_id)
-    return render(request, "entrenos/ver.html", _contexto(usuario))
+    persona_id = persona_id if persona_id is not None else persona_actual(request).id
+    persona = persona_propia_o_404(request, persona_id)
+    return render(request, "entrenos/ver.html", _contexto(persona))
 
 
 @login_required
 @require_POST
-def apuntar(request, usuario_id):
+def apuntar(request, persona_id):
     """
-    R-36/R-37 — apunta un entreno nuevo. `usuario_propio_o_404` es la puerta de R10: nadie
+    R-36/R-37 — apunta un entreno nuevo. `persona_propia_o_404` es la puerta de R10: nadie
     apunta un entreno "para" otra persona, tampoco llamando aquí con su id exacto.
 
     Q-51 — con HTMX (cabecera `HX-Request`), responde SOLO el trozo con las calorías de hoy y
     el formulario, para que la pantalla se actualice sin recargar; sin HTMX, la página entera.
     """
-    usuario = usuario_propio_o_404(request, usuario_id)
+    persona = persona_propia_o_404(request, persona_id)
     form = FormularioEntreno(request.POST)
     if form.is_valid():
         try:
-            apuntar_entreno(usuario, form.cleaned_data)
+            apuntar_entreno(persona, form.cleaned_data)
             form = FormularioEntreno()
         except SinPesoParaEstimar as error:
             form.add_error("calorias", str(error))
 
-    contexto = _contexto(usuario, form=form)
+    contexto = _contexto(persona, form=form)
     plantilla = NOMBRE_DEL_PARTIAL if request.headers.get("HX-Request") else "entrenos/ver.html"
     return render(request, plantilla, contexto)
 
 
 @login_required
-def corregir(request, usuario_id, entreno_id):
+def corregir(request, persona_id, entreno_id):
     """
     R-38/G-72 — corrige cualquiera de sus datos sin borrarlo (R5) y recalcula sus calorías
     igual que al crearlo. R6/C-39 — sea el día que sea el entreno (de hoy o de uno pasado), NO
@@ -93,18 +94,18 @@ def corregir(request, usuario_id, entreno_id):
     entrenos previstos están fuera de alcance).
 
     Doble cinturón de R10 (mismo patrón que `perfiles/views.py:borrar_peso`):
-    `usuario_propio_o_404` comprueba que `usuario_id` es quien pregunta, y el
+    `persona_propia_o_404` comprueba que `persona_id` es quien pregunta, y el
     `get_object_or_404` de abajo exige ADEMÁS que `entreno_id` sea SUYO.
     """
-    usuario = usuario_propio_o_404(request, usuario_id)
-    entreno = get_object_or_404(Entreno, id=entreno_id, usuario=usuario)
+    persona = persona_propia_o_404(request, persona_id)
+    entreno = get_object_or_404(Entreno, id=entreno_id, persona=persona)
 
     if request.method == "POST":
         form = FormularioEntreno(request.POST, instance=entreno)
         if form.is_valid():
             try:
                 corregir_entreno(entreno, form.cleaned_data)
-                return redirect("entrenos:ver", usuario_id=usuario.id)
+                return redirect("entrenos:ver", persona_id=persona.id)
             except SinPesoParaEstimar as error:
                 form.add_error("calorias", str(error))
     else:
@@ -119,13 +120,13 @@ def corregir(request, usuario_id, entreno_id):
     return render(
         request,
         "entrenos/corregir.html",
-        {"usuario_objetivo": usuario, "entreno": entreno, "form": form},
+        {"persona_objetivo": persona, "entreno": entreno, "form": form},
     )
 
 
 @login_required
 @require_POST
-def borrar(request, usuario_id, entreno_id):
+def borrar(request, persona_id, entreno_id):
     """§8 del plano ("Qué puede hacer... Borrarlo"). Mismo doble cinturón de R10 que
     `corregir`, arriba.
 
@@ -134,10 +135,10 @@ def borrar(request, usuario_id, entreno_id):
     `#entrenos-de-hoy` sin incrustar la página entera dentro de sí misma; sin HTMX, el redirect
     de siempre.
     """
-    usuario = usuario_propio_o_404(request, usuario_id)
-    entreno = get_object_or_404(Entreno, id=entreno_id, usuario=usuario)
+    persona = persona_propia_o_404(request, persona_id)
+    entreno = get_object_or_404(Entreno, id=entreno_id, persona=persona)
     borrar_entreno(entreno)
 
     if request.headers.get("HX-Request"):
-        return render(request, NOMBRE_DEL_PARTIAL, _contexto(usuario))
-    return redirect("entrenos:ver", usuario_id=usuario.id)
+        return render(request, NOMBRE_DEL_PARTIAL, _contexto(persona))
+    return redirect("entrenos:ver", persona_id=persona.id)

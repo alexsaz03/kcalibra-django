@@ -40,6 +40,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import PruebaConRegistroAbierto
+from hogares.models import Persona
 from entrenos.models import Entreno
 from perfiles.forms import FormularioPerfil, FormularioMedicion
 from perfiles.logica import (
@@ -79,16 +80,16 @@ class AltaConDatosFisicosTests(PruebaConRegistroAbierto):
 
     def test_el_alta_crea_perfil_y_primera_medicion_de_peso(self):
         self.registrar_y_verificar("alejandro@example.com")
-        usuario = Usuario.objects.get(email="alejandro@example.com")
+        usuario = Persona.objects.get(usuario__email="alejandro@example.com")
 
-        self.assertTrue(Perfil.objects.filter(usuario=usuario).exists())
+        self.assertTrue(Perfil.objects.filter(persona=usuario).exists())
         perfil = usuario.perfil
         # Los valores de fábrica de `DATOS_FISICOS_POR_DEFECTO` (los de Euridice, C-13).
         self.assertEqual(perfil.sexo, "mujer")
         self.assertEqual(perfil.altura_cm, 167)
         self.assertEqual(perfil.objetivo, "perder_grasa")
 
-        mediciones = MedicionPeso.objects.filter(usuario=usuario)
+        mediciones = MedicionPeso.objects.filter(persona=usuario)
         self.assertEqual(mediciones.count(), 1)
         self.assertEqual(mediciones.first().peso_kg, 62)
         self.assertEqual(mediciones.first().fecha, timezone.localdate())
@@ -96,13 +97,13 @@ class AltaConDatosFisicosTests(PruebaConRegistroAbierto):
     def test_sin_ajuste_manual_el_perfil_usa_el_de_fabrica_del_objetivo(self):
         # DATOS_FISICOS_POR_DEFECTO trae objetivo=perder_grasa y ajuste_pct="" (en blanco).
         self.registrar_y_verificar("alejandro@example.com")
-        perfil = Usuario.objects.get(email="alejandro@example.com").perfil
+        perfil = Persona.objects.get(usuario__email="alejandro@example.com").perfil
         self.assertEqual(perfil.ajuste_pct, -10)  # de fábrica de "perder_grasa" (G-60)
 
     def test_con_ajuste_manual_en_el_alta_se_respeta_el_suyo(self):
         # "Cómo" de crear-cuenta.md: "si quiso ajustó a mano su porcentaje".
         self.registrar_y_verificar("alejandro@example.com", ajuste_pct="-15")
-        perfil = Usuario.objects.get(email="alejandro@example.com").perfil
+        perfil = Persona.objects.get(usuario__email="alejandro@example.com").perfil
         self.assertEqual(perfil.ajuste_pct, -15)
 
     def test_las_manias_se_guardan_aunque_nada_las_lea_todavia(self):
@@ -113,7 +114,7 @@ class AltaConDatosFisicosTests(PruebaConRegistroAbierto):
             intolerancias="lactosa",
             no_le_gusta="brócoli",
         )
-        perfil = Usuario.objects.get(email="alejandro@example.com").perfil
+        perfil = Persona.objects.get(usuario__email="alejandro@example.com").perfil
         self.assertEqual(perfil.dieta, "vegetariana")
         self.assertEqual(perfil.alergias, "frutos secos")
         self.assertEqual(perfil.intolerancias, "lactosa")
@@ -154,13 +155,13 @@ class R1_EuridicePorHTTPTests(PruebaConRegistroAbierto):
         """
         with _con_hoy_fijo():
             self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-            alejandro = Usuario.objects.get(email="alejandro@example.com")
+            alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
             self.client.logout()
 
             self.registrar_y_verificar(
                 "euridice@example.com", codigo_hogar=alejandro.hogar.codigo
             )
-            euridice = Usuario.objects.get(email="euridice@example.com")
+            euridice = Persona.objects.get(usuario__email="euridice@example.com")
             self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
 
             respuesta = self.client.get("/perfiles/")
@@ -202,20 +203,20 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com")
-        self.usuario = Usuario.objects.get(email="alejandro@example.com")
+        self.usuario = Persona.objects.get(usuario__email="alejandro@example.com")
         # El alta ya dejó una medición de 62 kg hoy; la sustituimos por un histórico a medida
         # para controlar exactamente qué entra en la media.
-        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        MedicionPeso.objects.filter(persona=self.usuario).delete()
 
     def test_la_media_solo_cuenta_los_ultimos_7_dias(self):
         hoy = timezone.localdate()
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=60)
+        MedicionPeso.objects.create(persona=self.usuario, fecha=hoy, peso_kg=60)
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=3), peso_kg=62
+            persona=self.usuario, fecha=hoy - timedelta(days=3), peso_kg=62
         )
         # Esta, de hace 10 días, NO debe entrar en la media (fuera de la ventana de 7 días).
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=10), peso_kg=100
+            persona=self.usuario, fecha=hoy - timedelta(days=10), peso_kg=100
         )
 
         media = peso_medio_7_dias(self.usuario)
@@ -231,10 +232,10 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         """
         hoy = timezone.localdate()
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=6), peso_kg=70
+            persona=self.usuario, fecha=hoy - timedelta(days=6), peso_kg=70
         )
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=7), peso_kg=200
+            persona=self.usuario, fecha=hoy - timedelta(days=7), peso_kg=200
         )
 
         media = peso_medio_7_dias(self.usuario)
@@ -242,7 +243,7 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         self.assertEqual(media, 70)  # SOLO la de hace 6 días; la de hace 7 queda fuera
 
     def test_una_sola_medicion_reciente_es_su_propia_media(self):
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=timezone.localdate(), peso_kg=75)
+        MedicionPeso.objects.create(persona=self.usuario, fecha=timezone.localdate(), peso_kg=75)
         self.assertEqual(peso_medio_7_dias(self.usuario), 75)
 
     def test_apuntar_un_peso_nuevo_cambia_las_calorias_sin_tocar_el_perfil(self):
@@ -261,12 +262,12 @@ class PesoMedio7DiasTests(PruebaConRegistroAbierto):
         """
         with _con_hoy_fijo():
             hoy = timezone.localdate()
-            MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=61)
+            MedicionPeso.objects.create(persona=self.usuario, fecha=hoy, peso_kg=61)
             objetivo_original = self.usuario.perfil.objetivo
             resultado_antes = calcular_objetivo_del_dia(self.usuario)
 
             MedicionPeso.objects.create(
-                usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=59
+                persona=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=59
             )
             resultado_despues = calcular_objetivo_del_dia(self.usuario)
 
@@ -292,7 +293,7 @@ class RecalculoAlMomentoTests(PruebaConRegistroAbierto):
         super().setUp()
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")
-        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        self.usuario = Persona.objects.get(usuario__email="euridice@example.com")
 
     def _payload_base(self):
         perfil = self.usuario.perfil
@@ -352,7 +353,7 @@ class CambiarObjetivoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", ajuste_pct="-15")  # a mano
-        self.usuario = Usuario.objects.get(email="alejandro@example.com")
+        self.usuario = Persona.objects.get(usuario__email="alejandro@example.com")
         self.assertEqual(self.usuario.perfil.ajuste_pct, -15)  # control: quedó su ajuste manual
 
     def _payload_base(self):
@@ -412,13 +413,13 @@ class AislamientoDePerfilesTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         # Alejandro la acepta: quedan en el MISMO hogar (necesario para que R9 tenga sentido:
@@ -426,7 +427,7 @@ class AislamientoDePerfilesTests(PruebaConRegistroAbierto):
         self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
         from hogares.models import SolicitudEntrada
 
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -533,7 +534,7 @@ class DatosImposiblesAlCambiarElPerfilTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com")
-        self.usuario = Usuario.objects.get(email="alejandro@example.com")
+        self.usuario = Persona.objects.get(usuario__email="alejandro@example.com")
 
     def test_poner_la_altura_a_cero_no_cambia_nada(self):
         altura_original = self.usuario.perfil.altura_cm
@@ -569,11 +570,11 @@ class ApuntarPesoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("euridice@example.com")
-        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        self.usuario = Persona.objects.get(usuario__email="euridice@example.com")
         # El alta ya dejó una medición (62 kg, hoy); se limpia para partir de un histórico
         # controlado en cada escenario, sin que la del alta interfiera con las fechas exactas
         # que arma cada test.
-        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        MedicionPeso.objects.filter(persona=self.usuario).delete()
 
     def _apuntar(self, **campos):
         payload = {
@@ -591,7 +592,7 @@ class ApuntarPesoTests(PruebaConRegistroAbierto):
         respuesta = self._apuntar(peso_kg="61.4")
 
         self.assertEqual(respuesta.status_code, 200)
-        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+        medicion = MedicionPeso.objects.get(persona=self.usuario)
         self.assertEqual(medicion.peso_kg, Decimal("61.4"))
         self.assertIsNone(medicion.grasa_pct)
         self.assertIsNone(medicion.cintura_cm)
@@ -604,7 +605,7 @@ class ApuntarPesoTests(PruebaConRegistroAbierto):
         respuesta = self._apuntar(peso_kg="70.5", grasa_pct="18.2", cintura_cm="82.3")
         self.assertEqual(respuesta.status_code, 200)
 
-        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+        medicion = MedicionPeso.objects.get(persona=self.usuario)
         self.assertEqual(medicion.peso_kg, Decimal("70.5"))
         self.assertEqual(medicion.grasa_pct, Decimal("18.2"))
         self.assertEqual(medicion.cintura_cm, Decimal("82.3"))
@@ -641,8 +642,8 @@ class SustituirMedicionDelMismoDiaTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-        self.usuario = Usuario.objects.get(email="alejandro@example.com")
-        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        self.usuario = Persona.objects.get(usuario__email="alejandro@example.com")
+        MedicionPeso.objects.filter(persona=self.usuario).delete()
 
     def test_apuntar_dos_veces_el_mismo_dia_deja_una_sola_medicion_la_de_la_tarde(self):
         hoy = timezone.localdate().isoformat()
@@ -655,7 +656,7 @@ class SustituirMedicionDelMismoDiaTests(PruebaConRegistroAbierto):
             {"fecha": hoy, "peso_kg": "94.1", "grasa_pct": "", "cintura_cm": ""},
         )
 
-        mediciones = MedicionPeso.objects.filter(usuario=self.usuario)
+        mediciones = MedicionPeso.objects.filter(persona=self.usuario)
         self.assertEqual(mediciones.count(), 1)
         self.assertEqual(mediciones.first().peso_kg, Decimal("94.1"))
 
@@ -664,16 +665,16 @@ class SustituirMedicionDelMismoDiaTests(PruebaConRegistroAbierto):
         completo) también tiene que reventar: la garantía es de la base de datos, con su
         `UniqueConstraint`, no una comprobación que solo vive en Python."""
         hoy = timezone.localdate()
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=Decimal("93.2"))
+        MedicionPeso.objects.create(persona=self.usuario, fecha=hoy, peso_kg=Decimal("93.2"))
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 MedicionPeso.objects.create(
-                    usuario=self.usuario, fecha=hoy, peso_kg=Decimal("94.1")
+                    persona=self.usuario, fecha=hoy, peso_kg=Decimal("94.1")
                 )
 
         # Y sigue habiendo solo una, la primera (el `create` que revienta no deja nada a medias).
-        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
 
 
 class UnMalDiaDeBasculaNoDescolocaElPlanTests(PruebaConRegistroAbierto):
@@ -686,13 +687,13 @@ class UnMalDiaDeBasculaNoDescolocaElPlanTests(PruebaConRegistroAbierto):
     ):
         with _con_hoy_fijo():
             self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-            usuario = Usuario.objects.get(email="alejandro@example.com")
-            MedicionPeso.objects.filter(usuario=usuario).delete()
+            usuario = Persona.objects.get(usuario__email="alejandro@example.com")
+            MedicionPeso.objects.filter(persona=usuario).delete()
 
             hoy = timezone.localdate()
             for delta in range(1, 7):  # los 6 días anteriores, toda la semana sobre 93 kg
                 MedicionPeso.objects.create(
-                    usuario=usuario, fecha=hoy - timedelta(days=delta), peso_kg=Decimal("93.0")
+                    persona=usuario, fecha=hoy - timedelta(days=delta), peso_kg=Decimal("93.0")
                 )
             resultado_antes = calcular_objetivo_del_dia(usuario)  # media de 93 kg (6 días)
 
@@ -729,7 +730,7 @@ class UnaSolaMedicionEsLaQueSeUsaTests(PruebaConRegistroAbierto):
 
     def test_con_una_sola_medicion_de_verdad_el_calculo_usa_esa(self):
         self.registrar_y_verificar("euridice@example.com")  # 62 kg de fábrica, hoy
-        usuario = Usuario.objects.get(email="euridice@example.com")
+        usuario = Persona.objects.get(usuario__email="euridice@example.com")
 
         # Su primera pesada de verdad, el mismo día que el alta: sustituye a la de 62 kg
         # ("solo se ha pesado una vez", el criterio).
@@ -743,7 +744,7 @@ class UnaSolaMedicionEsLaQueSeUsaTests(PruebaConRegistroAbierto):
             },
         )
 
-        self.assertEqual(MedicionPeso.objects.filter(usuario=usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=usuario).count(), 1)
         resultado = calcular_objetivo_del_dia(usuario)
         self.assertEqual(resultado["peso_kg"], 61.4)
 
@@ -759,17 +760,17 @@ class DosNumerosDistintosTests(PruebaConRegistroAbierto):
 
     def test_la_pantalla_distingue_la_ultima_pesada_de_la_media_con_la_que_se_calcula(self):
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-        usuario = Usuario.objects.get(email="alejandro@example.com")
-        MedicionPeso.objects.filter(usuario=usuario).delete()
+        usuario = Persona.objects.get(usuario__email="alejandro@example.com")
+        MedicionPeso.objects.filter(persona=usuario).delete()
 
         hoy = timezone.localdate()
         # Ayer 92,8 kg, hace dos días 94,0 kg → media de la semana: 93,4 kg (los números del
         # criterio C-72, tal cual).
         MedicionPeso.objects.create(
-            usuario=usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
+            persona=usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
         )
         MedicionPeso.objects.create(
-            usuario=usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
+            persona=usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
         )
 
         respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
@@ -803,13 +804,13 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         # Alejandro la acepta: quedan en el MISMO hogar (R7 presupone que comparten hogar; si
@@ -817,7 +818,7 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
         from hogares.models import SolicitudEntrada
 
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -828,7 +829,7 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         # más "mismo hogar", y esta clase solo montaba DOS personas, las dos del MISMO hogar
         # (mismo patrón que `progreso.tests.BaseProgresoTests`, `progreso/tests.py:74-77`).
         self.registrar_y_verificar("carlos@example.com", sexo="hombre")
-        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.carlos = Persona.objects.get(usuario__email="carlos@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password="una-clave-de-verdad-2026")
@@ -868,7 +869,7 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.assertIn("Peso de euridice@example.com", h1_ajeno.group(1))
 
     def test_alejandro_no_puede_apuntar_peso_a_euridice_llamando_al_servidor(self):
-        mediciones_antes = MedicionPeso.objects.filter(usuario=self.euridice).count()
+        mediciones_antes = MedicionPeso.objects.filter(persona=self.euridice).count()
 
         respuesta = self.client.post(
             f"/perfiles/{self.euridice.id}/peso/apuntar/",
@@ -882,11 +883,11 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
 
         self.assertEqual(respuesta.status_code, 404)
         self.assertEqual(
-            MedicionPeso.objects.filter(usuario=self.euridice).count(), mediciones_antes
+            MedicionPeso.objects.filter(persona=self.euridice).count(), mediciones_antes
         )
 
     def test_alejandro_no_puede_borrar_una_medicion_de_euridice_llamando_al_servidor(self):
-        medicion = MedicionPeso.objects.filter(usuario=self.euridice).first()  # la del alta
+        medicion = MedicionPeso.objects.filter(persona=self.euridice).first()  # la del alta
         self.assertIsNotNone(medicion)  # control
 
         respuesta = self.client.post(f"/perfiles/{self.euridice.id}/peso/{medicion.id}/borrar/")
@@ -898,7 +899,7 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         respuesta_inexistente = self.client.post(
             f"/perfiles/{self.euridice.id}/peso/999999/borrar/"
         )
-        medicion_ajena = MedicionPeso.objects.filter(usuario=self.euridice).first()
+        medicion_ajena = MedicionPeso.objects.filter(persona=self.euridice).first()
         respuesta_ajena = self.client.post(
             f"/perfiles/{self.euridice.id}/peso/{medicion_ajena.id}/borrar/"
         )
@@ -923,13 +924,13 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         a mirar `medicion_id`): es Alejandro llamando con SU PROPIO `usuario_id` —de verdad
         el suyo, pasa la primera puerta sin problema— pero colando el `medicion_id` de
         Euridice en la URL. Sin el segundo cinturón de `borrar_peso`
-        (`get_object_or_404(MedicionPeso, id=medicion_id, usuario=perfil.usuario)`, que exige
+        (`get_object_or_404(MedicionPeso, id=medicion_id, persona=perfil.usuario)`, que exige
         que la medición sea TAMBIÉN suya) esto borraría una medición ajena. Se comprobó a
         mano que si ese filtro se cambia por `get_object_or_404(MedicionPeso, id=medicion_id)`
         a secas, este test se pone en rojo (y la suite entera seguía en verde sin él antes de
         este arreglo — el hueco que delató la revisión).
         """
-        medicion_de_euridice = MedicionPeso.objects.filter(usuario=self.euridice).first()
+        medicion_de_euridice = MedicionPeso.objects.filter(persona=self.euridice).first()
         self.assertIsNotNone(medicion_de_euridice)  # control
 
         respuesta = self.client.post(
@@ -964,14 +965,14 @@ class BorrarMedicionTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("euridice@example.com")
-        self.usuario = Usuario.objects.get(email="euridice@example.com")
-        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        self.usuario = Persona.objects.get(usuario__email="euridice@example.com")
+        MedicionPeso.objects.filter(persona=self.usuario).delete()
         hoy = timezone.localdate()
         self.buena = MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy, peso_kg=Decimal("62.0")
+            persona=self.usuario, fecha=hoy, peso_kg=Decimal("62.0")
         )
         self.equivocada = MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("99.9")
+            persona=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("99.9")
         )
 
     def test_borrar_una_medicion_la_quita_del_historico(self):
@@ -1003,21 +1004,21 @@ class SinNingunaMedicionTests(PruebaConRegistroAbierto):
 
     def test_borrar_la_ultima_medicion_deja_sin_ninguna_y_no_revienta(self):
         self.registrar_y_verificar("euridice@example.com")
-        usuario = Usuario.objects.get(email="euridice@example.com")
-        medicion = MedicionPeso.objects.get(usuario=usuario)  # la única, la del alta
+        usuario = Persona.objects.get(usuario__email="euridice@example.com")
+        medicion = MedicionPeso.objects.get(persona=usuario)  # la única, la del alta
 
         respuesta = self.client.post(f"/perfiles/{usuario.id}/peso/{medicion.id}/borrar/")
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(MedicionPeso.objects.filter(usuario=usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=usuario).exists())
         self.assertIsNone(calcular_objetivo_del_dia(usuario))  # no revienta, no inventa nada
         self.assertIsNone(ultima_medicion(usuario))
         self.assertContains(respuesta, "ninguna medici")  # el mensaje del estado, en pantalla
 
     def test_la_pantalla_de_peso_sin_mediciones_no_revienta_al_entrar(self):
         self.registrar_y_verificar("euridice@example.com")
-        usuario = Usuario.objects.get(email="euridice@example.com")
-        MedicionPeso.objects.get(usuario=usuario).delete()
+        usuario = Persona.objects.get(usuario__email="euridice@example.com")
+        MedicionPeso.objects.get(persona=usuario).delete()
 
         respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
 
@@ -1039,8 +1040,8 @@ class DatosImposiblesAlApuntarPesoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("euridice@example.com")
-        self.usuario = Usuario.objects.get(email="euridice@example.com")
-        MedicionPeso.objects.filter(usuario=self.usuario).delete()
+        self.usuario = Persona.objects.get(usuario__email="euridice@example.com")
+        MedicionPeso.objects.filter(persona=self.usuario).delete()
 
     def _apuntar(self, **campos):
         payload = {
@@ -1054,28 +1055,28 @@ class DatosImposiblesAlApuntarPesoTests(PruebaConRegistroAbierto):
 
     def test_peso_cero_se_rechaza_sin_llegar_a_la_base_de_datos(self):
         respuesta = self._apuntar(peso_kg="0")
-        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=self.usuario).exists())
         self.assertIn("peso_kg", respuesta.context["form"].errors)
 
     def test_peso_negativo_se_rechaza_sin_llegar_a_la_base_de_datos(self):
         respuesta = self._apuntar(peso_kg="-5")
-        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=self.usuario).exists())
         self.assertIn("peso_kg", respuesta.context["form"].errors)
 
     def test_grasa_por_encima_de_cien_se_rechaza(self):
         respuesta = self._apuntar(grasa_pct="101")
-        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=self.usuario).exists())
         self.assertIn("grasa_pct", respuesta.context["form"].errors)
 
     def test_grasa_negativa_se_rechaza(self):
         respuesta = self._apuntar(grasa_pct="-1")
-        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=self.usuario).exists())
         self.assertIn("grasa_pct", respuesta.context["form"].errors)
 
     def test_fecha_futura_se_rechaza(self):
         fecha_futura = (timezone.localdate() + timedelta(days=1)).isoformat()
         respuesta = self._apuntar(fecha=fecha_futura)
-        self.assertFalse(MedicionPeso.objects.filter(usuario=self.usuario).exists())
+        self.assertFalse(MedicionPeso.objects.filter(persona=self.usuario).exists())
         self.assertIn("fecha", respuesta.context["form"].errors)
 
     def test_el_error_senala_el_campo_concreto_que_esta_mal(self):
@@ -1095,16 +1096,17 @@ class LogicaDeMedicionesTests(TestCase):
     """
 
     def setUp(self):
-        self.usuario = Usuario.objects.create_user(
+        cuenta = Usuario.objects.create_user(
             email="directo@example.com", password="una-clave-de-verdad-2026"
         )
+        self.usuario = Persona.objects.get(usuario=cuenta)
 
     def test_apuntar_medicion_dos_veces_el_mismo_dia_actualiza_en_vez_de_duplicar(self):
         hoy = timezone.localdate()
         apuntar_medicion(self.usuario, {"fecha": hoy, "peso_kg": Decimal("80.0")})
         apuntar_medicion(self.usuario, {"fecha": hoy, "peso_kg": Decimal("81.5")})
 
-        mediciones = MedicionPeso.objects.filter(usuario=self.usuario)
+        mediciones = MedicionPeso.objects.filter(persona=self.usuario)
         self.assertEqual(mediciones.count(), 1)
         self.assertEqual(mediciones.first().peso_kg, Decimal("81.5"))
 
@@ -1123,8 +1125,8 @@ class LogicaDeMedicionesTests(TestCase):
 
     def test_ultima_medicion_es_la_mas_reciente_por_fecha_no_la_de_mayor_peso(self):
         hoy = timezone.localdate()
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy - timedelta(days=5), peso_kg=Decimal("99.0"))
-        reciente = MedicionPeso.objects.create(usuario=self.usuario, fecha=hoy, peso_kg=Decimal("80.0"))
+        MedicionPeso.objects.create(persona=self.usuario, fecha=hoy - timedelta(days=5), peso_kg=Decimal("99.0"))
+        reciente = MedicionPeso.objects.create(persona=self.usuario, fecha=hoy, peso_kg=Decimal("80.0"))
 
         self.assertEqual(ultima_medicion(self.usuario), reciente)
 
@@ -1133,7 +1135,7 @@ class LogicaDeMedicionesTests(TestCase):
 
     def test_borrar_medicion_la_elimina_de_verdad(self):
         medicion = MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=timezone.localdate(), peso_kg=Decimal("80.0")
+            persona=self.usuario, fecha=timezone.localdate(), peso_kg=Decimal("80.0")
         )
         borrar_medicion(medicion)
         self.assertFalse(MedicionPeso.objects.filter(id=medicion.id).exists())
@@ -1144,10 +1146,10 @@ class LogicaDeMedicionesTests(TestCase):
         casualidad de la implementación)."""
         hoy = timezone.localdate()
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
+            persona=self.usuario, fecha=hoy - timedelta(days=1), peso_kg=Decimal("92.8")
         )
         MedicionPeso.objects.create(
-            usuario=self.usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
+            persona=self.usuario, fecha=hoy - timedelta(days=2), peso_kg=Decimal("94.0")
         )
 
         self.assertEqual(ultima_medicion(self.usuario).peso_kg, Decimal("92.8"))
@@ -1167,7 +1169,7 @@ class RespuestaHTMXDelHistoricoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("euridice@example.com")
-        self.usuario = Usuario.objects.get(email="euridice@example.com")
+        self.usuario = Persona.objects.get(usuario__email="euridice@example.com")
 
     def _payload(self):
         return {
@@ -1195,7 +1197,7 @@ class RespuestaHTMXDelHistoricoTests(PruebaConRegistroAbierto):
         self.assertContains(respuesta, "<!DOCTYPE html>", status_code=200)
 
     def test_borrar_con_htmx_tambien_devuelve_solo_el_trozo_del_historico(self):
-        medicion = MedicionPeso.objects.get(usuario=self.usuario)
+        medicion = MedicionPeso.objects.get(persona=self.usuario)
 
         respuesta = self.client.post(
             f"/perfiles/{self.usuario.id}/peso/{medicion.id}/borrar/",
@@ -1284,7 +1286,7 @@ class LaPantallaDePesoProponeHoyDeFabricaTests(PruebaConRegistroAbierto):
 
     def test_la_pagina_de_peso_trae_el_campo_dia_ya_relleno_con_hoy(self):
         self.registrar_y_verificar("euridice@example.com")
-        usuario = Usuario.objects.get(email="euridice@example.com")
+        usuario = Persona.objects.get(usuario__email="euridice@example.com")
 
         respuesta = self.client.get(f"/perfiles/{usuario.id}/peso/")
         contenido = respuesta.content.decode()
@@ -1313,10 +1315,10 @@ class R7_ElObjetivoSubeConLosEntrenosDeHoyTests(PruebaConRegistroAbierto):
     def test_con_355_kcal_de_entreno_el_objetivo_sube_a_2249_y_los_macros_escalan(self):
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")  # 62 kg, perder_grasa: base 1894
-            usuario = Usuario.objects.get(email="euridice@example.com")
+            usuario = Persona.objects.get(usuario__email="euridice@example.com")
 
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=timezone.localdate(),
                 deporte="correr",
                 intensidad="media",
@@ -1335,9 +1337,9 @@ class R7_ElObjetivoSubeConLosEntrenosDeHoyTests(PruebaConRegistroAbierto):
     def test_dos_entrenos_del_mismo_dia_se_suman_los_dos(self):
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")
-            usuario = Usuario.objects.get(email="euridice@example.com")
+            usuario = Persona.objects.get(usuario__email="euridice@example.com")
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=timezone.localdate(),
                 deporte="correr",
                 intensidad="media",
@@ -1346,7 +1348,7 @@ class R7_ElObjetivoSubeConLosEntrenosDeHoyTests(PruebaConRegistroAbierto):
                 calorias_manuales=True,
             )
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=timezone.localdate(),
                 deporte="fuerza",
                 intensidad="suave",
@@ -1370,8 +1372,8 @@ class R8_SinEntrenosNiUnaKcalSeMueveTests(PruebaConRegistroAbierto):
     def test_sin_ningun_entreno_el_objetivo_es_el_de_siempre(self):
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")
-            usuario = Usuario.objects.get(email="euridice@example.com")
-            self.assertFalse(Entreno.objects.filter(usuario=usuario).exists())
+            usuario = Persona.objects.get(usuario__email="euridice@example.com")
+            self.assertFalse(Entreno.objects.filter(persona=usuario).exists())
             resultado = calcular_objetivo_del_dia(usuario)
 
         self.assertEqual(resultado["calorias"], 1894)
@@ -1386,9 +1388,9 @@ class R8_SinEntrenosNiUnaKcalSeMueveTests(PruebaConRegistroAbierto):
         objetivo de HOY."""
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")
-            usuario = Usuario.objects.get(email="euridice@example.com")
+            usuario = Persona.objects.get(usuario__email="euridice@example.com")
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=timezone.localdate() - timedelta(days=1),
                 deporte="correr",
                 intensidad="media",
@@ -1413,10 +1415,10 @@ class CalcularObjetivoDelDiaAceptaFechaTests(PruebaConRegistroAbierto):
     def test_con_fecha_explicita_suma_los_entrenos_de_ESE_dia_no_los_de_hoy(self):
         with _con_hoy_fijo():
             self.registrar_y_verificar("alejandro@example.com", sexo="hombre", peso_kg="93")
-            usuario = Usuario.objects.get(email="alejandro@example.com")
+            usuario = Persona.objects.get(usuario__email="alejandro@example.com")
             ayer = timezone.localdate() - timedelta(days=1)
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=ayer,
                 deporte="hyrox",
                 intensidad="fuerte",
@@ -1437,9 +1439,9 @@ class CalcularObjetivoDelDiaAceptaFechaTests(PruebaConRegistroAbierto):
         no puede cambiar bajo sus pies."""
         with _con_hoy_fijo():
             self.registrar_y_verificar("euridice@example.com")
-            usuario = Usuario.objects.get(email="euridice@example.com")
+            usuario = Persona.objects.get(usuario__email="euridice@example.com")
             Entreno.objects.create(
-                usuario=usuario,
+                persona=usuario,
                 fecha=timezone.localdate(),
                 deporte="correr",
                 intensidad="media",

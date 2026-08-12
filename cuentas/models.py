@@ -48,8 +48,12 @@ class UsuarioManager(BaseUserManager):
 
 class Usuario(AbstractUser):
     """
-    `AbstractUser` de Django, con dos cambios: sin `username` (el correo hace ese papel) y con
-    la pertenencia a un hogar.
+    `AbstractUser` de Django, con un cambio: sin `username` — el correo hace ese papel.
+
+    Unidad 023 — este modelo YA NO sabe de qué hogar es nadie. La pertenencia al hogar se
+    mudó a `hogares.Persona`, porque vivir en una casa es cosa de una persona, no de un
+    correo con contraseña. Aquí queda solo lo que el docstring del módulo prometía desde el
+    principio: quién eres y cómo entras.
     """
 
     # Fuera el username: nadie en KCalibra va a teclear un nombre de usuario, todo el mundo
@@ -61,19 +65,6 @@ class Usuario(AbstractUser):
     REQUIRED_FIELDS = []  # createsuperuser ya pide el email por ser USERNAME_FIELD
 
     objects = UsuarioManager()
-
-    # El hogar de esta persona. Puede estar VACÍO (`null`) en un único momento del ciclo de
-    # vida: mientras espera que alguien del hogar al que pidió entrar la acepte (R5, estado
-    # "esperando que le acepten" del mapa) — antes de eso no tiene ninguno, y en cuanto se
-    # resuelve (aceptada, rechazada o caducada) siempre vuelve a tener uno. `PROTECT` porque
-    # un hogar con gente dentro no se puede borrar por accidente al borrar a alguien más.
-    hogar = models.ForeignKey(
-        "hogares.Hogar",
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="miembros",
-    )
 
     # Código de hogar que se metió al registrarse, SOLO si ese código existía (R5/R6). Se
     # guarda aquí porque la petición de entrada no se crea hasta que la persona verifica su

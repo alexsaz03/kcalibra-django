@@ -33,7 +33,7 @@
     </section>
 
     <form
-      hx-post="{% url 'entrenos:apuntar' usuario_objetivo.id %}"
+      hx-post="{% url 'entrenos:apuntar' persona_objetivo.id %}"
       hx-target="#entrenos-de-hoy"
       hx-swap="outerHTML"
       method="post"
@@ -77,13 +77,13 @@
               </span>
               <span class="flex shrink-0 items-center gap-3">
                 <a
-                  href="{% url 'entrenos:corregir' usuario_objetivo.id entreno.id %}"
+                  href="{% url 'entrenos:corregir' persona_objetivo.id entreno.id %}"
                   class="font-medium text-emerald-700 hover:underline"
                 >
                   Corregir
                 </a>
                 <form
-                  hx-post="{% url 'entrenos:borrar' usuario_objetivo.id entreno.id %}"
+                  hx-post="{% url 'entrenos:borrar' persona_objetivo.id entreno.id %}"
                   hx-target="#entrenos-de-hoy"
                   hx-swap="outerHTML"
                   hx-confirm="¿Borrar este entreno?"

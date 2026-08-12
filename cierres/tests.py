@@ -25,7 +25,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
-from hogares.models import SolicitudEntrada
+from hogares.models import Persona, SolicitudEntrada
 from planes.models import ComidaDelPlan, PlanDeDia
 
 from .logica import cerrar_dia, dia_pendiente_de_preguntar, saltar_dia_pendiente
@@ -38,7 +38,7 @@ def _crear_plan(usuario, fecha, comidas):
     """Crea un `PlanDeDia` de `usuario` en `fecha` con las `comidas` dadas (lista de dicts con
     nombre/momento_del_dia/calorias/macros). Ayuda a montar el escenario de R4/R5 sin pasar
     por la pantalla de "apuntar el plan" (eso ya lo prueba `planes/tests.py`)."""
-    plan = PlanDeDia.objects.create(usuario=usuario, fecha=fecha, hogar=usuario.hogar)
+    plan = PlanDeDia.objects.create(persona=usuario, fecha=fecha, hogar=usuario.hogar)
     for datos in comidas:
         ComidaDelPlan.objects.create(plan=plan, **datos)
     return plan
@@ -54,17 +54,17 @@ class BaseCierresTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -72,7 +72,7 @@ class BaseCierresTests(PruebaConRegistroAbierto):
 
         # Carlos, en SU PROPIO hogar (nunca se une a nadie): el tercero de R12.
         self.registrar_y_verificar("carlos@example.com", sexo="hombre")
-        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.carlos = Persona.objects.get(usuario__email="carlos@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -94,7 +94,7 @@ class R1_CierreAMediasSinCaloriasNiNotaTests(BaseCierresTests):
              "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro)
         self.assertEqual(cierre.respuesta, CierreDeDia.A_MEDIAS)
         self.assertIsNone(cierre.calorias_comidas)
         self.assertEqual(cierre.nota, "")
@@ -123,7 +123,7 @@ class R2_TresRespuestasYCamposOpcionalesTests(BaseCierresTests):
                 {"fecha": fecha, "respuesta": respuesta, "calorias_comidas": "", "nota": ""},
             )
             self.assertEqual(respuesta_http.status_code, 200)
-        self.assertEqual(CierreDeDia.objects.filter(usuario=self.alejandro).count(), 3)
+        self.assertEqual(CierreDeDia.objects.filter(persona=self.alejandro).count(), 3)
 
     def test_calorias_y_nota_son_opcionales_se_puede_omitir_solo_una(self):
         respuesta = self.client.post(
@@ -132,7 +132,7 @@ class R2_TresRespuestasYCamposOpcionalesTests(BaseCierresTests):
              "calorias_comidas": "1800", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro)
         self.assertEqual(cierre.calorias_comidas, 1800)
         self.assertEqual(cierre.nota, "")
 
@@ -153,8 +153,8 @@ class R3_SustituirNoDuplicarTests(BaseCierresTests):
             f"/cierres/{self.alejandro.id}/",
             {"fecha": fecha, "respuesta": "lo_segui", "calorias_comidas": "2000", "nota": "ok"},
         )
-        self.assertEqual(CierreDeDia.objects.filter(usuario=self.alejandro).count(), 1)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro)
+        self.assertEqual(CierreDeDia.objects.filter(persona=self.alejandro).count(), 1)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro)
         self.assertEqual(cierre.respuesta, CierreDeDia.LO_SEGUI)
         self.assertEqual(cierre.calorias_comidas, 2000)
         self.assertEqual(cierre.nota, "ok")
@@ -163,10 +163,10 @@ class R3_SustituirNoDuplicarTests(BaseCierresTests):
         """Igual que `MedicionPeso.una_medicion_por_persona_y_dia` (unidad 006): un `create()`
         suelto que se salte la capa de lógica revienta contra la base, no solo contra la vista."""
         hoy = timezone.localdate()
-        CierreDeDia.objects.create(usuario=self.alejandro, fecha=hoy, respuesta="lo_segui")
+        CierreDeDia.objects.create(persona=self.alejandro, fecha=hoy, respuesta="lo_segui")
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
-                CierreDeDia.objects.create(usuario=self.alejandro, fecha=hoy, respuesta="no_lo_segui")
+                CierreDeDia.objects.create(persona=self.alejandro, fecha=hoy, respuesta="no_lo_segui")
 
 
 # ---------------------------------------------------------------------------------------- #
@@ -205,7 +205,7 @@ class R4_C84_FotoDelMenuTests(BaseCierresTests):
              "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=self.martes)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=self.martes)
         self.assertTrue(MenuSeguido.objects.filter(cierre=cierre).exists())
         comida = ComidaSeguida.objects.get(menu__cierre=cierre)
         self.assertEqual(comida.nombre, "Pollo con arroz")
@@ -218,7 +218,7 @@ class R4_C84_FotoDelMenuTests(BaseCierresTests):
              "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=self.miercoles)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=self.miercoles)
         self.assertFalse(MenuSeguido.objects.filter(cierre=cierre).exists())
 
     def test_los_dos_dias_dejan_su_registro_aunque_solo_uno_guarde_el_menu(self):
@@ -232,8 +232,8 @@ class R4_C84_FotoDelMenuTests(BaseCierresTests):
             {"fecha": self.miercoles.isoformat(), "respuesta": "no_lo_segui",
              "calorias_comidas": "", "nota": ""},
         )
-        self.assertEqual(CierreDeDia.objects.filter(usuario=self.alejandro).count(), 2)
-        self.assertEqual(MenuSeguido.objects.filter(cierre__usuario=self.alejandro).count(), 1)
+        self.assertEqual(CierreDeDia.objects.filter(persona=self.alejandro).count(), 2)
+        self.assertEqual(MenuSeguido.objects.filter(cierre__persona=self.alejandro).count(), 1)
 
     def test_a_medias_tampoco_guarda_el_menu(self):
         self.client.post(
@@ -241,12 +241,12 @@ class R4_C84_FotoDelMenuTests(BaseCierresTests):
             {"fecha": self.martes.isoformat(), "respuesta": "a_medias",
              "calorias_comidas": "", "nota": ""},
         )
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=self.martes)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=self.martes)
         self.assertFalse(MenuSeguido.objects.filter(cierre=cierre).exists())
 
     def test_cambiar_de_lo_segui_a_no_lo_segui_borra_la_foto_anterior(self):
         cerrar_dia(self.alejandro, {"fecha": self.martes, "respuesta": CierreDeDia.LO_SEGUI})
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=self.martes)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=self.martes)
         self.assertTrue(MenuSeguido.objects.filter(cierre=cierre).exists())
 
         cerrar_dia(self.alejandro, {"fecha": self.martes, "respuesta": CierreDeDia.NO_LO_SEGUI})
@@ -259,7 +259,7 @@ class R5_SinPlanPuestoTests(BaseCierresTests):
 
     def test_lo_segui_sin_plan_puesto_no_rompe_y_no_guarda_menu(self):
         fecha = timezone.localdate() - timedelta(days=3)
-        self.assertFalse(PlanDeDia.objects.filter(usuario=self.alejandro, fecha=fecha).exists())
+        self.assertFalse(PlanDeDia.objects.filter(persona=self.alejandro, fecha=fecha).exists())
 
         respuesta = self.client.post(
             f"/cierres/{self.alejandro.id}/",
@@ -267,7 +267,7 @@ class R5_SinPlanPuestoTests(BaseCierresTests):
              "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=fecha)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=fecha)
         self.assertEqual(cierre.respuesta, CierreDeDia.LO_SEGUI)
         self.assertFalse(MenuSeguido.objects.filter(cierre=cierre).exists())
 
@@ -336,7 +336,7 @@ class R8_NoVuelveAPreguntarSiSeSaltoTests(BaseCierresTests):
 
     def test_saltar_no_crea_ningun_cierre_el_dia_se_queda_sin_apuntar(self):
         self.client.post(f"/cierres/{self.alejandro.id}/saltar/")
-        self.assertEqual(CierreDeDia.objects.filter(usuario=self.alejandro).count(), 0)
+        self.assertEqual(CierreDeDia.objects.filter(persona=self.alejandro).count(), 0)
 
     def test_reabrir_la_app_el_mismo_dia_tras_saltar_no_vuelve_a_preguntar(self):
         """El escenario que de verdad protege R8: sin persistir el salto, una segunda visita
@@ -349,7 +349,7 @@ class R8_NoVuelveAPreguntarSiSeSaltoTests(BaseCierresTests):
     def test_saltar_registra_la_fecha_saltada(self):
         ayer = timezone.localdate() - timedelta(days=1)
         self.client.post(f"/cierres/{self.alejandro.id}/saltar/")
-        salto = DiaSaltado.objects.get(usuario=self.alejandro)
+        salto = DiaSaltado.objects.get(persona=self.alejandro)
         self.assertEqual(salto.fecha, ayer)
 
 
@@ -416,7 +416,7 @@ class HTMXTests(BaseCierresTests):
         self.assertNotIn("¿Cumpliste el plan de ayer", contenido)
         # Se guardó de verdad, no solo se pintó distinto.
         ayer = timezone.localdate() - timedelta(days=1)
-        self.assertTrue(CierreDeDia.objects.filter(usuario=self.alejandro, fecha=ayer).exists())
+        self.assertTrue(CierreDeDia.objects.filter(persona=self.alejandro, fecha=ayer).exists())
 
     def test_saltar_con_hx_request_responde_solo_el_trozo(self):
         respuesta = self.client.post(
@@ -461,7 +461,7 @@ class R10_CierreAManoDesdeProgresoTests(BaseCierresTests):
         )
         self.assertEqual(respuesta.status_code, 200)
         self.assertTrue(
-            CierreDeDia.objects.filter(usuario=self.alejandro, fecha=hace_20_dias).exists()
+            CierreDeDia.objects.filter(persona=self.alejandro, fecha=hace_20_dias).exists()
         )
 
     def test_se_puede_cambiar_un_dia_ya_cerrado(self):
@@ -475,11 +475,11 @@ class R10_CierreAManoDesdeProgresoTests(BaseCierresTests):
             {"fecha": fecha, "respuesta": "lo_segui", "calorias_comidas": "1900", "nota": "cambiado"},
         )
         self.assertEqual(respuesta.status_code, 200)
-        cierre = CierreDeDia.objects.get(usuario=self.alejandro, fecha=fecha)
+        cierre = CierreDeDia.objects.get(persona=self.alejandro, fecha=fecha)
         self.assertEqual(cierre.respuesta, CierreDeDia.LO_SEGUI)
         self.assertEqual(cierre.calorias_comidas, 1900)
         self.assertEqual(cierre.nota, "cambiado")
-        self.assertEqual(CierreDeDia.objects.filter(usuario=self.alejandro).count(), 1)
+        self.assertEqual(CierreDeDia.objects.filter(persona=self.alejandro).count(), 1)
 
     def test_el_enlace_cambiar_precarga_el_formulario_con_lo_que_ya_habia(self):
         fecha = (timezone.localdate() - timedelta(days=5)).isoformat()
@@ -526,7 +526,7 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
              "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(CierreDeDia.objects.filter(persona=self.alejandro).exists())
         # Ronda 2, hueco 2: R11 dice "no lo guarda Y LO DICE" — no basta con mirar
         # `form.errors`, el aviso tiene que llegar al HTML que ve la persona (mismo criterio
         # que `planes/tests.py:test_se_avisa_de_cual_esta_mal`, unidad 005).
@@ -540,7 +540,7 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
              "calorias_comidas": "-100", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(CierreDeDia.objects.filter(persona=self.alejandro).exists())
         mensaje = respuesta.context["form"].errors["calorias_comidas"][0]
         self.assertContains(respuesta, mensaje)
 
@@ -551,7 +551,7 @@ class R11_EntradasInvalidasTests(BaseCierresTests):
             {"fecha": manana, "respuesta": "lo_segui", "calorias_comidas": "", "nota": ""},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(CierreDeDia.objects.filter(usuario=self.alejandro).exists())
+        self.assertFalse(CierreDeDia.objects.filter(persona=self.alejandro).exists())
         mensaje = respuesta.context["form"].errors["fecha"][0]
         self.assertContains(respuesta, mensaje)
 
@@ -578,7 +578,7 @@ class R12_AislamientoTests(BaseCierresTests):
     def setUp(self):
         super().setUp()
         self.cierre_de_alejandro = CierreDeDia.objects.create(
-            usuario=self.alejandro, fecha=timezone.localdate(), respuesta=CierreDeDia.LO_SEGUI
+            persona=self.alejandro, fecha=timezone.localdate(), respuesta=CierreDeDia.LO_SEGUI
         )
         self.client.logout()
 

@@ -10,50 +10,60 @@ Aquí la VISIBILIDAD es más amplia que en `hogares/acceso.py` (cualquiera del h
 cualquier perfil del hogar, no solo el suyo): son dos puertas distintas a propósito.
 
 Unidad 010 — la rama "es de OTRA persona" de `perfil_visible_o_404` reutiliza AHORA
-`hogares.acceso.usuario_del_hogar_o_404` (consolidado desde `planes/acceso.py`) en vez de
+`hogares.acceso.persona_del_hogar_o_404` (consolidado desde `planes/acceso.py`) en vez de
 repetir su propio `if hogar is None / get_object_or_404(..., hogar=hogar)`: era la misma
-comprobación escrita dos veces, con `Perfil` en un sitio y `Usuario` en el otro.
+comprobación escrita dos veces.
+
+Unidad 023 — "soy yo" ya no se decide comparando ids de cuenta, sino de PERSONA
+(`hogares.acceso.persona_actual`). El comportamiento es idéntico: hoy cada cuenta es una
+persona y solo una.
 """
 
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 
-from hogares.acceso import usuario_del_hogar_o_404
+from hogares.acceso import persona_actual, persona_del_hogar_o_404
 
 from .models import Perfil
 
 
-def perfil_visible_o_404(request, usuario_id):
+def _es_la_propia(request, persona_id):
+    """¿`persona_id` es la persona de quien está haciendo la petición?"""
+    persona = persona_actual(request)
+    return persona is not None and str(persona.id) == str(persona_id)
+
+
+def perfil_visible_o_404(request, persona_id):
     """
-    El `Perfil` de `usuario_id`: el PROPIO siempre es visible, esté o no esté todavía en un
+    El `Perfil` de `persona_id`: el PROPIO siempre es visible, esté o no esté todavía en un
     hogar; el de OTRA persona, solo si está en el MISMO hogar que quien pregunta (R9: "todo
     el hogar lo ve"). 404 si es de otro hogar, o si no existe.
 
-    Hueco H2 de la revisión: antes esto exigía `request.user.hogar` incluso para el PROPIO
-    perfil, y devolvía 404. Eso rompía R1/R7 en el estado exacto que describe el episodio de
-    C-16/C-104 (crear-cuenta.md): alguien que se registra CON el código de otro hogar queda
-    "esperando que le acepten", con `hogar = None`, hasta que alguien la acepta — y en ese
-    estado sigue teniendo que ver SUS PROPIAS calorías (R1: "al verificar su correo entra y
-    ve 1.894 kcal"). El perfil propio no es "una cosa del hogar" (G-43): es de la persona, y
-    se ve exista o no exista todavía un hogar de por medio. Solo el perfil de OTRO exige
-    hogar compartido — eso sigue igual.
+    Hueco H2 de la revisión: antes esto exigía tener hogar incluso para el PROPIO perfil, y
+    devolvía 404. Eso rompía R1/R7 en el estado exacto que describe el episodio de C-16/C-104
+    (crear-cuenta.md): alguien que se registra CON el código de otro hogar queda "esperando
+    que le acepten", sin hogar, hasta que alguien la acepta — y en ese estado sigue teniendo
+    que ver SUS PROPIAS calorías (R1: "al verificar su correo entra y ve 1.894 kcal"). El
+    perfil propio no es "una cosa del hogar" (G-43): es de la persona, y se ve exista o no
+    exista todavía un hogar de por medio. Solo el perfil de OTRA exige hogar compartido — eso
+    sigue igual.
     """
-    if str(request.user.id) == str(usuario_id):
-        return get_object_or_404(Perfil, usuario_id=usuario_id)
+    if _es_la_propia(request, persona_id):
+        return get_object_or_404(Perfil, persona_id=persona_id)
 
     # Sin hogar propio todavía (R14 de la unidad 003), no hay ningún perfil AJENO que ver —
-    # pero el propio ya se resolvió arriba, antes de llegar aquí. `usuario_del_hogar_o_404` ya
-    # hace exactamente esta comprobación (404 si no hay hogar, o si `usuario_id` es de otro).
-    usuario_ajeno = usuario_del_hogar_o_404(request, usuario_id)
-    return get_object_or_404(Perfil, usuario_id=usuario_ajeno.id)
+    # pero el propio ya se resolvió arriba, antes de llegar aquí. `persona_del_hogar_o_404` ya
+    # hace exactamente esta comprobación (404 si no hay hogar, o si es de otro).
+    persona_ajena = persona_del_hogar_o_404(request, persona_id)
+    return get_object_or_404(Perfil, persona_id=persona_ajena.id)
 
 
-def perfil_propio_o_404(request, usuario_id):
+def perfil_propio_o_404(request, persona_id):
     """
-    El `Perfil` de `usuario_id`, SOLO si es el de quien pregunta (R9: nadie más puede
+    El `Perfil` de `persona_id`, SOLO si es el de quien pregunta (R9: nadie más puede
     cambiarlo). 404 en cualquier otro caso — incluido "existe, pero es de otra persona": no
     se distingue de "no existe" (mismo principio que `hogares/acceso.py`).
     """
-    if str(request.user.id) != str(usuario_id):
+    if not _es_la_propia(request, persona_id):
         raise Http404("No existe.")
-    return get_object_or_404(Perfil, usuario_id=usuario_id)
+    return get_object_or_404(Perfil, persona_id=persona_id)

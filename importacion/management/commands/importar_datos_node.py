@@ -19,7 +19,7 @@ tocar la base (R3, `--dry-run`).
 - **Recetas** (`recetas.logica.crear_receta`): crea la receta y sus ingredientes en una sola
   transacción (R5).
 - **Pesadas** — la ÚNICA excepción, y está declarada: `perfiles.logica.apuntar_medicion` hace
-  `update_or_create` por (usuario, fecha), pensada para que una persona CORRIJA su propia pesada
+  `update_or_create` por (persona, fecha), pensada para que una persona CORRIJA su propia pesada
   del día. Usarla aquí sobrescribiría en silencio una medición que ya existiera en Django con la
   que trae Node, en vez de reconocer la colisión y saltarse la fila (R4). El comando comprueba
   la colisión primero y solo entonces crea directamente (ver `importacion/mapeo.py`, docstring
@@ -44,6 +44,7 @@ from despensa.logica import anadir_producto
 from despensa.models import ProductoDespensa
 from entrenos.logica import apuntar_entreno
 from entrenos.models import Entreno
+from hogares.models import persona_de
 from perfiles.models import MedicionPeso
 from recetas.logica import crear_receta
 from recetas.models import Receta
@@ -103,7 +104,11 @@ class Command(BaseCommand):
                 raise CommandError(
                     f"No existe ninguna cuenta con el correo '{correo}'. No se ha tocado nada."
                 )
-            hogar = usuario.hogar
+            # Unidad 023 — el hogar (y todo lo personal) cuelga de la PERSONA, no de la
+            # cuenta. `--cuenta` sigue recibiendo un correo porque es lo que una persona sabe
+            # teclear; de ahí se saca su persona.
+            persona = persona_de(usuario)
+            hogar = persona.hogar if persona is not None else None
             if hogar is None:
                 raise CommandError(
                     f"La cuenta '{correo}' todavía no tiene hogar (está esperando a que la "
@@ -113,7 +118,7 @@ class Command(BaseCommand):
 
             try:
                 with transaction.atomic():
-                    resumen = _importar_todo(conexion, usuario, hogar)
+                    resumen = _importar_todo(conexion, persona, hogar)
                     if dry_run:
                         raise _CanceladoPorDryRun(resumen)
             except _CanceladoPorDryRun as cancelado:
@@ -129,14 +134,14 @@ class Command(BaseCommand):
         _imprimir_resumen(self.stdout, resumen, dry_run)
 
 
-def _importar_todo(conexion, usuario, hogar):
+def _importar_todo(conexion, persona, hogar):
     """Hace el trabajo real (dentro de la `atomic()` de `handle`) y devuelve el resumen, tabla
     a tabla. El orden (despensa, entrenos, pesadas, recetas) no importa para el resultado: las
     cuatro son independientes entre sí."""
     return {
         "despensa": _importar_despensa(conexion, hogar),
-        "entrenos": _importar_entrenos(conexion, usuario),
-        "pesadas": _importar_pesadas(conexion, usuario),
+        "entrenos": _importar_entrenos(conexion, persona),
+        "pesadas": _importar_pesadas(conexion, persona),
         "recetas": _importar_recetas(conexion, hogar),
     }
 
@@ -174,14 +179,14 @@ def _importar_despensa(conexion, hogar):
     return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
 
 
-def _importar_entrenos(conexion, usuario):
+def _importar_entrenos(conexion, persona):
     """R2/R4 — clave de idempotencia: la tupla completa (ver el porqué en `mapeo.py`). Snapshot
     tomado al empezar, mismo motivo que en la despensa (aunque aquí no hay fusión posible: cada
     fila de Node es siempre UN entreno nuevo si su clave no estaba, nunca se combina con otro)."""
     existentes_al_empezar = {
         (fecha, deporte, intensidad, minutos, calorias)
         for fecha, deporte, intensidad, minutos, calorias in Entreno.objects.filter(
-            usuario=usuario
+            persona=persona
         ).values_list("fecha", "deporte", "intensidad", "minutos", "calorias")
     }
 
@@ -193,15 +198,15 @@ def _importar_entrenos(conexion, usuario):
         if clave in existentes_al_empezar:
             ya_estaban += 1
             continue
-        apuntar_entreno(usuario, datos)
+        apuntar_entreno(persona, datos)
         nuevos += 1
 
     return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
 
 
-def _importar_pesadas(conexion, usuario):
+def _importar_pesadas(conexion, persona):
     """
-    R2/R4 — la clave (usuario, fecha) es LA restricción `una_medicion_por_persona_y_dia` de la
+    R2/R4 — la clave (persona, fecha) es LA restricción `una_medicion_por_persona_y_dia` de la
     unidad 006. Si ya hay una medición ese día (importada antes, o apuntada a mano por la
     persona en la app), la fila de Node se SALTA sin tocar la que ya hay — nunca se sobrescribe
     (ver el porqué de no usar `perfiles.logica.apuntar_medicion` en el docstring de `mapeo.
@@ -213,7 +218,7 @@ def _importar_pesadas(conexion, usuario):
     tomado al empezar (ronda 1 de revisión, H1). El índice único de Node es
     `(usuario_id, COALESCE(miembro_id, 0), fecha)`: permite DOS pesadas el mismo día si son de
     personas distintas de la misma casa (`miembro_id` no se lee, "Fuera de alcance" — cuelga
-    todo del único `usuario` de Django). Con un snapshot congelado, la SEGUNDA fila de Node de
+    todo de la única `Persona` de Django que corresponde a esa cuenta). Con un snapshot congelado, la SEGUNDA fila de Node de
     ese día no está en `existentes_al_empezar` (la primera solo se guarda en Django DURANTE
     esta misma pasada) y llegaría desnuda a `MedicionPeso.objects.create()`, que revienta con
     `IntegrityError` contra `una_medicion_por_persona_y_dia` — justo lo que R4 prohíbe ("no
@@ -237,7 +242,7 @@ def _importar_pesadas(conexion, usuario):
     salta y lo dice").
     """
     existentes_al_empezar = set(
-        MedicionPeso.objects.filter(usuario=usuario).values_list("fecha", flat=True)
+        MedicionPeso.objects.filter(persona=persona).values_list("fecha", flat=True)
     )
     vistas_en_esta_pasada = set()
 
@@ -253,7 +258,7 @@ def _importar_pesadas(conexion, usuario):
         if fecha in vistas_en_esta_pasada:
             colisiones += 1
             continue
-        MedicionPeso.objects.create(usuario=usuario, **datos)
+        MedicionPeso.objects.create(persona=persona, **datos)
         vistas_en_esta_pasada.add(fecha)
         nuevos += 1
 
@@ -306,7 +311,7 @@ def _imprimir_resumen(stdout, resumen, dry_run):
             f"{datos['ya_estaban']} ya estaban."
         )
         # Solo pesadas puede traer `colisiones` (H1, ronda 1): dos filas de Node del mismo día
-        # que Django no puede guardar las dos porque cuelgan del mismo `usuario`. Se dice aparte
+        # que Django no puede guardar las dos porque cuelgan de la misma `persona`. Se dice aparte
         # de "ya estaban" a propósito: no es que esa fecha ya existiera en Django, es que otra
         # fila de Node de ESTA MISMA pasada se adelantó (R4: "se salta y lo dice").
         colisiones = datos.get("colisiones", 0)

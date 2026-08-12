@@ -1,7 +1,7 @@
 """
 Las pantallas de recetas (unidad 021, guardar-tus-recetas.md): la lista (R7), el formulario de
 alta (R1/R2/R3/R5), el detalle de una receta abierta (R1/R4), editarla (R4) y borrarla (R6). Es
-DEL HOGAR entero, no de una persona (G-43, R-70): ninguna vista de aquí recibe un `usuario_id`
+DEL HOGAR entero, no de una persona (G-43, R-70): ninguna vista de aquí recibe un `persona_id`
 en la URL, todas trabajan sobre EL HOGAR de quien pregunta (`recetas/acceso.py`).
 
 R8 (arquitectura del proyecto, "las vistas no calculan; llaman"): el cálculo y la escritura en

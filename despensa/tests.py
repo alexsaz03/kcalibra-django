@@ -45,7 +45,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
-from hogares.models import Hogar, SolicitudEntrada
+from hogares.models import Hogar, Persona, SolicitudEntrada
 
 from .models import ProductoDespensa
 
@@ -65,17 +65,17 @@ class BaseDespensaTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -83,7 +83,7 @@ class BaseDespensaTests(PruebaConRegistroAbierto):
 
         # Carlos, en SU PROPIO hogar (nunca se une a nadie): el tercero de R10.
         self.registrar_y_verificar("carlos@example.com")
-        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.carlos = Persona.objects.get(usuario__email="carlos@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)

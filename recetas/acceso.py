@@ -4,7 +4,7 @@ edita y las borra sin pedir permiso a nadie, y nadie de fuera — tampoco llaman
 el id exacto de una receta (404, nunca 403).
 
 Copia literal de `despensa/acceso.py` (mismo mecanismo, mismo motivo): no hace falta
-`usuario_del_hogar_o_404` porque una receta no cuelga de una persona, cuelga del hogar entero.
+`persona_del_hogar_o_404` porque una receta no cuelga de una persona, cuelga del hogar entero.
 Basta con `hogares.acceso.hogar_actual` (para listar/crear, sin ningún id de por medio) y
 `hogares.acceso.obtener_de_mi_hogar_o_404` (para tocar una receta concreta por su id, filtrando
 siempre por el hogar de quien pregunta).

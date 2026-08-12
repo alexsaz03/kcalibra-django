@@ -17,7 +17,7 @@ from .models import CierreDeDia, ComidaSeguida, DiaSaltado, MenuSeguido
 
 def _guardar_foto_del_menu(cierre):
     """
-    R4/G-161/Q-142 — congela las comidas del `PlanDeDia` de `cierre.usuario` en `cierre.fecha`
+    R4/G-161/Q-142 — congela las comidas del `PlanDeDia` de `cierre.persona` en `cierre.fecha`
     dentro de un `MenuSeguido` nuevo. Borra primero cualquier foto anterior de ESTE cierre (R3:
     si se está SUSTITUYENDO un cierre que ya tenía foto —por ejemplo, se cambió la respuesta de
     "a medias" a "lo seguí"— la foto vieja no debe quedar huérfana ni duplicada).
@@ -28,7 +28,7 @@ def _guardar_foto_del_menu(cierre):
     """
     MenuSeguido.objects.filter(cierre=cierre).delete()
 
-    plan = obtener_plan_de(cierre.usuario, cierre.fecha)
+    plan = obtener_plan_de(cierre.persona, cierre.fecha)
     if plan is None:
         return
     comidas = list(plan.comidas.all())
@@ -52,10 +52,10 @@ def _guardar_foto_del_menu(cierre):
     )
 
 
-def cerrar_dia(usuario, datos):
+def cerrar_dia(persona, datos):
     """
-    R3 — cierra (o SUSTITUYE, si `usuario` ya tenía un cierre en `datos["fecha"]`) el día de
-    `usuario`. `datos` trae al menos "fecha" y "respuesta"; "calorias_comidas" y "nota" son
+    R3 — cierra (o SUSTITUYE, si `persona` ya tenía un cierre en `datos["fecha"]`) el día de
+    `persona`. `datos` trae al menos "fecha" y "respuesta"; "calorias_comidas" y "nota" son
     opcionales (R1/R2), y en su ausencia quedan en blanco (`None` y `""`, nunca reventando por
     una clave que falta).
 
@@ -66,7 +66,7 @@ def cerrar_dia(usuario, datos):
     registro del día queda, pero el menú NO).
     """
     cierre, _creado = CierreDeDia.objects.update_or_create(
-        usuario=usuario,
+        persona=persona,
         fecha=datos["fecha"],
         defaults={
             "respuesta": datos["respuesta"],
@@ -81,31 +81,31 @@ def cerrar_dia(usuario, datos):
     return cierre
 
 
-def dia_pendiente_de_preguntar(usuario):
+def dia_pendiente_de_preguntar(persona):
     """
     R6/R7/R8/R9 — envuelve `servicios.cierres.calcular_dia_pendiente` (la función pura) con
-    los datos reales de `usuario`: si "ayer" ya está cerrado, y si "ayer" ya se saltó. Ninguna
+    los datos reales de `persona`: si "ayer" ya está cerrado, y si "ayer" ya se saltó. Ninguna
     otra fecha entra en la cuenta (R7): comprobar solo "ayer", nunca "el cierre más reciente en
     general", es lo que evita que un cierre de HOY (R9, hecho a mano desde Progreso) tape por
     error la pregunta pendiente de AYER si ayer sigue sin cerrar.
     """
     hoy = timezone.localdate()
     ayer = hoy - timedelta(days=1)
-    cerrado_ayer = CierreDeDia.objects.filter(usuario=usuario, fecha=ayer).exists()
-    salto = DiaSaltado.objects.filter(usuario=usuario).first()
+    cerrado_ayer = CierreDeDia.objects.filter(persona=persona, fecha=ayer).exists()
+    salto = DiaSaltado.objects.filter(persona=persona).first()
     saltado_ayer = salto is not None and salto.fecha >= ayer
     return calcular_dia_pendiente(hoy, cerrado_ayer, saltado_ayer)
 
 
-def saltar_dia_pendiente(usuario):
+def saltar_dia_pendiente(persona):
     """
-    R8/Q-141 — registra que el día pendiente ACTUAL de `usuario` (si lo hay) se saltó, para que
+    R8/Q-141 — registra que el día pendiente ACTUAL de `persona` (si lo hay) se saltó, para que
     `dia_pendiente_de_preguntar` no lo vuelva a ofrecer jamás. Si no hay ningún día pendiente
     ahora mismo (ya se cerró, o ya se había saltado antes), no hace nada: no hay nada que
     saltar, y sobrescribir `DiaSaltado` con `None` sería un dato falso.
     """
-    dia = dia_pendiente_de_preguntar(usuario)
+    dia = dia_pendiente_de_preguntar(persona)
     if dia is None:
         return None
-    DiaSaltado.objects.update_or_create(usuario=usuario, defaults={"fecha": dia})
+    DiaSaltado.objects.update_or_create(persona=persona, defaults={"fecha": dia})
     return dia

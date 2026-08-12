@@ -14,7 +14,6 @@ hereda su aislamiento A TRAVÉS de él — quien puede ver o tocar un plan, ve y
 No hace falta una segunda puerta para las comidas.
 """
 
-from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
@@ -43,8 +42,8 @@ class PlanDeDia(ModeloDeHogar):
     alcance aquí (ver la nota de alcance de la especificación).
     """
 
-    usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    persona = models.ForeignKey(
+        "hogares.Persona",
         on_delete=models.CASCADE,
         related_name="planes_de_dia",
     )
@@ -54,13 +53,13 @@ class PlanDeDia(ModeloDeHogar):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["usuario", "fecha"], name="un_plan_por_persona_y_dia"
+                fields=["persona", "fecha"], name="un_plan_por_persona_y_dia"
             )
         ]
         indexes = [models.Index(fields=["hogar", "fecha"])]
 
     def __str__(self):
-        return f"Plan de {self.usuario} para el {self.fecha}"
+        return f"Plan de {self.persona} para el {self.fecha}"
 
 
 class ComidaDelPlan(models.Model):
