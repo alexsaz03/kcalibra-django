@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block titulo %}Mi hogar{% endblock %}
+{% block titulo %}Las personas de la casa{% endblock %}
 {% block content %}
 <div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
-  <h1 class="text-2xl font-bold text-slate-900">Tu hogar</h1>
+  <h1 class="text-2xl font-bold text-slate-900">Las personas de la casa</h1>
 
   <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
     <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Código para invitar</h2>
@@ -13,15 +13,33 @@
     </p>
   </section>
 
+  {# -------------------------------------------------------------------------------------- #}
+  {# Unidad 024, R3/R100 — "quién vive en ella, quién entra con su cuenta y quién está a      #}
+  {# cargo de quién", TODO por su nombre (G-196): nunca el correo. `miembro.usuario_id` es    #}
+  {# `None` para quien no tiene cuenta (R-99), y entonces `miembro.responsable` dice de quién #}
+  {# depende — siempre existe para esa persona, porque es justo el dato que la crea (R2).     #}
+  {# -------------------------------------------------------------------------------------- #}
   <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
-    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Quién está dentro</h2>
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Quién vive en la casa</h2>
     <ul class="mt-3 space-y-1">
       {% for miembro in miembros %}
         <li class="flex items-center justify-between text-slate-800">
-          <span>{{ miembro.usuario.email }}</span>
-          {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro, aunque #}
-          {# solo su dueña pueda cambiarlos — perfiles/views.py lo hace cumplir en el         #}
-          {# servidor, esto es solo el enlace para llegar. #}
+          <span>
+            {{ miembro.nombre }}
+            {% if miembro.usuario_id %}
+              <span class="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                Entra con su cuenta
+              </span>
+            {% else %}
+              <span class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                A cargo de {{ miembro.responsable.nombre }}
+              </span>
+            {% endif %}
+          </span>
+          {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro; R4      #}
+          {# (unidad 024) — si además es su responsable, esta misma pantalla de "ver datos"   #}
+          {# le deja también CAMBIARLOS (perfiles/acceso.py lo hace cumplir en el servidor,   #}
+          {# esto es solo el enlace para llegar). #}
           <a href="{% url 'perfiles:ver' miembro.id %}" class="text-sm font-medium text-emerald-700 hover:underline">
             Ver datos
           </a>
@@ -30,13 +48,52 @@
     </ul>
   </section>
 
+  {# -------------------------------------------------------------------------------------- #}
+  {# Unidad 024, R2/R-99 — dar de alta a alguien que no va a tener cuenta: los mismos datos  #}
+  {# que pide cualquier alta con cuenta (hogares/forms.py), menos el correo y la contraseña. #}
+  {# -------------------------------------------------------------------------------------- #}
+  <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+      Dar de alta a alguien que no va a tener cuenta
+    </h2>
+    <p class="mt-2 text-sm text-slate-500">
+      Para un niño, o cualquiera de la casa que no vaya a entrar en la app. Quedará a tu cargo:
+      solo tú podrás cambiar sus datos después.
+    </p>
+    <form method="post" action="{% url 'hogares:dar_de_alta_persona_a_cargo' %}" class="mt-4 space-y-4">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+      {% endif %}
+      {% for field in form.visible_fields %}
+        <div>
+          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+            {{ field.label }}
+          </label>
+          {{ field }}
+          {% if field.help_text %}
+            <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
+          {% endif %}
+          {% if field.errors %}
+            <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+      <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
+        Dar de alta
+      </button>
+    </form>
+  </section>
+
   <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
     <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Peticiones pendientes</h2>
     {% if pendientes %}
       <ul class="mt-3 space-y-3">
         {% for solicitud in pendientes %}
           <li class="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3">
-            <span class="text-slate-800">{{ solicitud.usuario.email }} pide entrar</span>
+            <span class="text-slate-800">{{ solicitud.usuario.persona.nombre }} pide entrar</span>
             <span class="flex gap-2">
               <form method="post" action="{% url 'hogares:aceptar_solicitud' solicitud.pk %}">
                 {% csrf_token %}
@@ -57,6 +114,32 @@
     {% else %}
       <p class="mt-3 text-sm text-slate-500">No hay nadie esperando entrar ahora mismo.</p>
     {% endif %}
+  </section>
+
+  {# -------------------------------------------------------------------------------------- #}
+  {# Unidad 024, R5/G-195 — borrar tu cuenta. Si tienes a alguien a cargo, la app no te deja  #}
+  {# (`cuentas/views.py:borrar_cuenta` lo comprueba, y `Persona.responsable` es PROTECT en    #}
+  {# la base de datos: no hay vuelta atrás posible que se salte esto). Confirmación con el    #}
+  {# mismo patrón que ya usa recetas/templates/recetas/detalle.html (sin HTMX: es un borrado  #}
+  {# de la cuenta entera, no un trozo de pantalla). #}
+  {# -------------------------------------------------------------------------------------- #}
+  <section class="mt-6 rounded-xl border border-red-200 bg-red-50 p-6">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-red-700">Zona peligrosa</h2>
+    <p class="mt-2 text-sm text-red-800">
+      Borrar tu cuenta borra también todo lo tuyo (tu peso, tus entrenos, tu plan). Si tienes a
+      alguien a tu cargo, antes tendrás que decidir qué pasa con ella.
+    </p>
+    <form
+      method="post"
+      action="{% url 'cuentas:borrar_cuenta' %}"
+      class="mt-3"
+      onsubmit="return confirm('¿Seguro que quieres borrar tu cuenta? No se puede deshacer.');"
+    >
+      {% csrf_token %}
+      <button type="submit" class="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100">
+        Borrar mi cuenta
+      </button>
+    </form>
   </section>
 </div>
 {% endblock %}

@@ -6,11 +6,14 @@ from .models import Hogar, Persona, SolicitudEntrada
 @admin.register(Persona)
 class PersonaAdmin(admin.ModelAdmin):
     """Unidad 023 — quién vive en cada casa. Aquí es donde se edita ahora el hogar de alguien:
-    antes era un campo de `cuentas.Usuario`, y dejó de serlo."""
+    antes era un campo de `cuentas.Usuario`, y dejó de serlo.
 
-    list_display = ["__str__", "hogar", "usuario"]
-    list_select_related = ["hogar", "usuario"]
-    search_fields = ["usuario__email", "hogar__codigo"]
+    Unidad 024 — `nombre` y `responsable` (R-98/R-99): quien administra ve de un vistazo quién
+    es cada cual y quién está a cargo de quién, sin tener que abrir cada ficha."""
+
+    list_display = ["nombre", "hogar", "usuario", "responsable"]
+    list_select_related = ["hogar", "usuario", "responsable"]
+    search_fields = ["nombre", "usuario__email", "hogar__codigo"]
 
 
 @admin.register(Hogar)

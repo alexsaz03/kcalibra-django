@@ -71,6 +71,8 @@ class RegistroCerradoTests(TestCase):
                 # físicos (cuentas/forms.py). Van aquí con valores válidos para que la ÚNICA
                 # razón de que esta cuenta no se cree sea el registro cerrado (lo que este
                 # test dice probar) y no un formulario incompleto por otro motivo.
+                # Unidad 024: "nombre" también es obligatorio ahora (R-98).
+                "nombre": "Nadie",
                 **DATOS_FISICOS_POR_DEFECTO,
             },
             follow=True,
@@ -91,7 +93,8 @@ class RegistroCerradoTests(TestCase):
                 "password1": CLAVE_VALIDA,
                 "password2": CLAVE_VALIDA,
                 "codigo_hogar": "",
-                # Unidad 004: ver el comentario del test de arriba.
+                # Unidad 004/024: ver el comentario del test de arriba.
+                "nombre": "Alguien",
                 **DATOS_FISICOS_POR_DEFECTO,
             },
             follow=True,

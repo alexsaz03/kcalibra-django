@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block titulo %}
-  {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.usuario.email }}{% endif %}
+  {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.nombre }}{% endif %}
 {% endblock %}
 
 {% block content %}
 <div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
   <h1 class="text-2xl font-bold text-slate-900">
-    {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.usuario.email }}{% endif %}
+    {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.nombre }}{% endif %}
   </h1>
   <p class="mt-1 text-sm text-slate-500">
     Cómo ha ido {% if es_propio %}tu{% else %}su{% endif %} peso — y, si {% if es_propio %}las tienes apuntadas,{% else %}las tiene apuntadas,{% endif %}
@@ -27,7 +27,12 @@
           class="rounded-lg px-3 py-1.5 text-sm font-medium
             {% if miembro.id == persona_objetivo.id %}bg-emerald-600 text-white{% else %}bg-white text-slate-700 border border-slate-200 hover:border-emerald-300{% endif %}"
         >
-          {% if miembro.id == request.user.id %}Tú{% else %}{{ miembro.email }}{% endif %}
+          {# Unidad 024, R6/G-196: antes comparaba el id de la PERSONA con el de la CUENTA      #}
+          {# (`request.user.id`) — con dos personas en el hogar nunca coincidían, y             #}
+          {# `miembro.email` ni siquiera existe en `Persona` (se pintaba en blanco, en           #}
+          {# silencio). Ahora compara persona con persona, vía `request.user.persona.id`, y      #}
+          {# enseña el nombre, que sí es un campo de `Persona`.                                  #}
+          {% if miembro.id == request.user.persona.id %}Tú{% else %}{{ miembro.nombre }}{% endif %}
         </a>
       {% endfor %}
     </div>
@@ -65,14 +70,14 @@
         Todavía no tienes ninguna pesada apuntada. En cuanto apuntes la primera, aquí
         aparecerá su evolución.
       {% else %}
-        {{ persona_objetivo.usuario.email }} todavía no tiene ninguna pesada apuntada.
+        {{ persona_objetivo.nombre }} todavía no tiene ninguna pesada apuntada.
       {% endif %}
     </p>
   {% elif not tiene_datos_en_periodo %}
     {# Tiene mediciones, pero ninguna cae en las semanas elegidas: no es "sin datos", es #}
     {# "sin datos EN ESTE periodo" — mensajes distintos para no confundir. #}
     <p id="progreso-sin-datos-en-periodo" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-      {% if es_propio %}No tienes{% else %}{{ persona_objetivo.usuario.email }} no tiene{% endif %}
+      {% if es_propio %}No tienes{% else %}{{ persona_objetivo.nombre }} no tiene{% endif %}
       ninguna pesada en las últimas {{ semanas }} semanas. Prueba a ampliar el periodo.
     </p>
   {% else %}
@@ -141,7 +146,7 @@
         </p>
       {% else %}
         <p class="mt-2 text-sm text-slate-700">
-          {{ persona_objetivo.usuario.email }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
+          {{ persona_objetivo.nombre }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
           día{{ cumplimiento.cerrados|pluralize }} en este periodo:
           <strong>{{ cumplimiento.lo_segui }}</strong> lo siguió entero,
           <strong>{{ cumplimiento.a_medias }}</strong> a medias y
@@ -158,7 +163,7 @@
           Todavía no has cerrado ningún día en este periodo. En cuanto cierres el primero,
           aquí verás tu cumplimiento.
         {% else %}
-          {{ persona_objetivo.usuario.email }} todavía no ha cerrado ningún día en este periodo.
+          {{ persona_objetivo.nombre }} todavía no ha cerrado ningún día en este periodo.
         {% endif %}
       </p>
     {% endif %}

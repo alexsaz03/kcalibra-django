@@ -23,7 +23,10 @@
       <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-emerald-700">KCalibra</a>
       <div class="flex items-center gap-4 text-sm">
         {% if user.is_authenticated %}
-          <span class="text-slate-600">{{ user.email }}</span>
+          {# Unidad 024, R1/G-196: en toda la app se llama por el nombre, nunca por el correo #}
+          {# con el que se entra — el correo es solo la llave, no identifica a nadie delante  #}
+          {# de los demás. #}
+          <span class="text-slate-600">{{ user.persona.nombre }}</span>
           <a href="{% url 'perfiles:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tus datos</a>
           <a href="{% url 'perfiles:peso_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu peso</a>
           <a href="{% url 'progreso:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu progreso</a>

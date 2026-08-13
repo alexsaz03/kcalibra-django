@@ -20,4 +20,5 @@ urlpatterns = [
         views.corregir_correo,
         name="corregir_correo",
     ),
+    path("borrar/", views.borrar_cuenta, name="borrar_cuenta"),
 ]

@@ -61,13 +61,23 @@ class PruebaConRegistroAbierto(TestCase):
         # test falla por una razón que no tiene nada que ver con lo que dice probar.
         cache.clear()
 
-    def registrar(self, email, codigo_hogar="", password=CLAVE_VALIDA, **datos_fisicos):
+    def registrar(self, email, codigo_hogar="", password=CLAVE_VALIDA, nombre=None, **datos_fisicos):
         """
         Rellena el formulario de alta de verdad, vía HTTP. Devuelve la respuesta.
 
         Los datos físicos (unidad 004) toman los de `DATOS_FISICOS_POR_DEFECTO` salvo que se
         sobrescriban por nombre, p. ej. `self.registrar(email, sexo="hombre", peso_kg="93")`.
+
+        Unidad 024 (R-98) — `nombre` es ahora un campo obligatorio del alta. Sin pasarlo, se
+        deriva del correo con el MISMO criterio que usa la migración de datos de esta unidad
+        (`hogares/migrations/0005_rellena_y_exige_el_nombre.py`: la parte antes de la "@",
+        capitalizada — "alejandro@example.com" -> "Alejandro"), para que los cientos de
+        llamadas ya existentes en toda la suite (que solo pasaban `email`) sigan funcionando
+        sin tocarlas una a una, y para que las aserciones sobre "qué nombre enseña la
+        pantalla" sean predecibles sin tener que leerlas todas.
         """
+        if nombre is None:
+            nombre = email.split("@", 1)[0].capitalize()
         datos = {**DATOS_FISICOS_POR_DEFECTO, **datos_fisicos}
         return self.client.post(
             "/cuentas/signup/",
@@ -76,6 +86,7 @@ class PruebaConRegistroAbierto(TestCase):
                 "password1": password,
                 "password2": password,
                 "codigo_hogar": codigo_hogar,
+                "nombre": nombre,
                 **datos,
             },
             follow=True,

@@ -30,7 +30,8 @@ class CrearCuentaCreaHogarPropioTests(PruebaConRegistroAbierto):
         # lleva a una pantalla autenticada con el código a la vista, sin pasar por /login/.
         respuesta_mi_hogar = self.client.get("/hogares/mi-hogar/")
         self.assertContains(respuesta_mi_hogar, persona.hogar.codigo)
-        self.assertContains(respuesta_mi_hogar, "alejandro@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertContains(respuesta_mi_hogar, "Alejandro")
 
 
 class CodigoInvalidoTests(PruebaConRegistroAbierto):
@@ -99,7 +100,8 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         self.client.logout()
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
         respuesta_hogar = self.client.get("/hogares/mi-hogar/")
-        self.assertContains(respuesta_hogar, "euridice@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertContains(respuesta_hogar, "Euridice")
 
     def test_aceptar_la_mete_dentro_del_hogar_compartido(self):
         alejandro = self._crear_hogar_de_alejandro()
@@ -118,8 +120,9 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         self.client.logout()
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
         respuesta = self.client.get("/hogares/mi-hogar/")
-        self.assertContains(respuesta, "alejandro@example.com")
-        self.assertContains(respuesta, "euridice@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertContains(respuesta, "Alejandro")
+        self.assertContains(respuesta, "Euridice")
 
     def test_acepta_cualquiera_de_dentro_no_solo_quien_creo_el_hogar(self):
         """G-30: "Acepta cualquiera de dentro, no hace falta que sea quien lo creó"."""

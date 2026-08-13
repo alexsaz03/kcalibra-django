@@ -436,7 +436,8 @@ class AislamientoDePerfilesTests(PruebaConRegistroAbierto):
         respuesta = self.client.get(f"/perfiles/{self.euridice.id}/")
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, "euridice@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertContains(respuesta, "Euridice")
         self.assertContains(respuesta, "kcal")  # sus calorías, no un hueco vacío
 
     def test_alejandro_no_ve_ningun_formulario_en_el_perfil_de_euridice(self):
@@ -866,7 +867,8 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         self.assertIsNotNone(h1_propio)
         self.assertIsNotNone(h1_ajeno)
         self.assertIn("Tu peso", h1_propio.group(1))
-        self.assertIn("Peso de euridice@example.com", h1_ajeno.group(1))
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertIn("Peso de Euridice", h1_ajeno.group(1))
 
     def test_alejandro_no_puede_apuntar_peso_a_euridice_llamando_al_servidor(self):
         mediciones_antes = MedicionPeso.objects.filter(persona=self.euridice).count()

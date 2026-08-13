@@ -16,11 +16,16 @@ from allauth.account.models import EmailAddress
 from allauth.account.views import SignupView as _VistaAltaDeAllauth
 from allauth.core import ratelimit
 from django.contrib import messages
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, logout
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
+from django.db.models import ProtectedError
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
+
+from hogares.acceso import persona_actual
 
 Usuario = get_user_model()
 
@@ -188,3 +193,57 @@ def corregir_correo(request):
     nueva_direccion.send_confirmation(request, signup=False)
     messages.success(request, f"Te hemos mandado un enlace a {nuevo_correo}.")
     return redirect("cuentas:esperando_verificacion")
+
+
+@login_required
+@require_POST
+def borrar_cuenta(request):
+    """
+    R5/G-195 (caso límite de la unidad 024, el que la 023 dejó abierto): borrar la cuenta NO
+    se deja si quedan personas a cargo — primero hay que decidir qué pasa con ellas (pasarlas a
+    otra persona de la casa que entre, o borrarlas una a una a conciencia; ninguna de las dos
+    cosas la hace esta unidad, ver "Fuera de alcance" de su especificación: aquí solo se
+    IMPIDE el borrado, no se ofrece el camino de reasignar). Sin nadie a cargo, se borra sin
+    más preguntas (R5, segunda mitad).
+
+    Doble cinturón, a propósito (Q-175: "ni borrando una cuenta... existe una persona sin
+    cuenta y sin responsable"): la comprobación de aquí (`personas_a_cargo.exists()`) es la
+    UX — el mensaje claro, antes de intentar nada. La de verdad, la que no se puede saltar ni
+    llamando al servidor de cualquier otra forma, vive en la base de datos: `Persona.
+    responsable` es `on_delete=PROTECT` (hogares/models.py), así que si por lo que sea esta
+    comprobación se coló, `usuario.delete()` (que en cascada borraría también su `Persona`)
+    revienta con `ProtectedError` en vez de dejar a nadie sin responsable — se captura abajo
+    por si acaso, nunca debería alcanzarse en un uso normal de la app.
+    """
+    persona = persona_actual(request)
+    a_cargo = list(persona.personas_a_cargo.all()) if persona is not None else []
+
+    if a_cargo:
+        nombres = ", ".join(p.nombre for p in a_cargo)
+        messages.error(
+            request,
+            f"No puedes borrar tu cuenta: tienes a {nombres} a tu cargo. Antes tienes que "
+            "pasarla a otra persona de la casa que entre con su cuenta, o borrarla tú mismo.",
+        )
+        return redirect("hogares:mi_hogar")
+
+    usuario = request.user
+    try:
+        # El intento de borrado va ANTES del `logout()`: si `ProtectedError` salta (el
+        # cinturón de la base de datos, por si la comprobación de arriba se coló por una
+        # carrera con otra petición), la sesión sigue viva y el redirect a "mi hogar" todavía
+        # tiene con quién autenticarse.
+        usuario.delete()
+    except ProtectedError:
+        # No debería alcanzarse nunca (la comprobación de arriba ya lo cubre), pero si algo
+        # cambió entre medias, el borrado se detiene igual: la base de datos manda.
+        messages.error(
+            request,
+            "No se pudo borrar tu cuenta: sigues teniendo a alguien a tu cargo.",
+        )
+        return redirect("hogares:mi_hogar")
+
+    # Ya borrada de verdad: ahora sí, cerrar la sesión que le quedaba en el navegador.
+    logout(request)
+    messages.success(request, "Tu cuenta se ha borrado.")
+    return redirect("paginas:inicio")

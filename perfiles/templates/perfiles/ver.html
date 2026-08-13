@@ -2,7 +2,7 @@
 {% load partials %}
 
 {% block titulo %}
-  {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.persona.usuario.email }}{% endif %}
+  {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.persona.nombre }}{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -20,10 +20,12 @@
   {% partialdef tarjeta_perfil %}
   <div id="tarjeta-perfil">
     <h1 class="text-2xl font-bold text-slate-900">
-      {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.persona.usuario.email }}{% endif %}
+      {% if es_propio %}Tus datos{% else %}Datos de {{ perfil.persona.nombre }}{% endif %}
     </h1>
 
-    {% if es_propio %}
+    {# Unidad 024, R4/G-43: `puede_editar` (propia dueña O su responsable) decide si aparece #}
+    {# el formulario — `es_propio` (más abajo) solo decide el TEXTO ("tú" / "su"). #}
+    {% if puede_editar %}
       <form
         hx-post="{% url 'perfiles:actualizar' perfil.persona_id %}"
         hx-target="#tarjeta-perfil"
@@ -60,8 +62,11 @@
       {# Se enseña de dónde sale el número que usa el cálculo, para que no sorprenda. #}
       <p class="mt-3 text-xs text-slate-500">
         El peso no se cambia desde aquí:
-        <a href="{% url 'perfiles:peso_mio' %}" class="font-medium text-emerald-700 hover:underline">apúntalo en tu histórico de peso</a>,
-        que se calcula con la media de tus últimas mediciones. Ahora mismo tienes
+        <a href="{% url 'perfiles:peso' perfil.persona_id %}" class="font-medium text-emerald-700 hover:underline">
+          {% if es_propio %}apúntalo en tu histórico de peso{% else %}apúntalo en su histórico de peso{% endif %}
+        </a>,
+        que se calcula con la media de {% if es_propio %}tus{% else %}sus{% endif %} últimas
+        mediciones. Ahora mismo {% if es_propio %}tienes{% else %}tiene{% endif %}
         {% if resultado %}{{ resultado.peso_kg }} kg{% else %}ninguna medición todavía{% endif %}.
       </p>
     {% else %}
