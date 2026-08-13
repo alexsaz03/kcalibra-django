@@ -17,6 +17,12 @@ comprobación escrita dos veces.
 Unidad 023 — "soy yo" ya no se decide comparando ids de cuenta, sino de PERSONA
 (`hogares.acceso.persona_actual`). El comportamiento es idéntico: hoy cada cuenta es una
 persona y solo una.
+
+Unidad 024 (R4/G-43) — una tercera puerta, `perfil_editable_o_404`: además de la propia dueña,
+su RESPONSABLE también puede cambiar su perfil, si es una persona a cargo (R-99). Es la puerta
+que usa `actualizar_perfil`; `perfil_propio_o_404` sigue existiendo tal cual para lo que sigue
+siendo estrictamente de uno mismo (apuntar y borrar el peso, sin cambios en esta unidad — ver
+hallazgos.md para el porqué de no ampliar también esas dos).
 """
 
 from django.http import Http404
@@ -31,6 +37,24 @@ def _es_la_propia(request, persona_id):
     """¿`persona_id` es la persona de quien está haciendo la petición?"""
     persona = persona_actual(request)
     return persona is not None and str(persona.id) == str(persona_id)
+
+
+def _es_su_responsable(request, persona_id):
+    """¿Quien pregunta es el `responsable` de `persona_id` (R-99, persona a cargo)?"""
+    persona = persona_actual(request)
+    if persona is None:
+        return False
+    return Perfil.objects.filter(
+        persona_id=persona_id, persona__responsable_id=persona.id
+    ).exists()
+
+
+def puede_editar_perfil(request, persona_id):
+    """¿Quien pregunta puede CAMBIAR el perfil de `persona_id`? Es la propia dueña, o su
+    responsable (R4/R-99). Único sitio donde vive esta regla — la usan tanto `ver_perfil`
+    (para decidir si enseña el formulario) como `perfil_editable_o_404` (para la puerta de
+    escritura), así que las dos SIEMPRE están de acuerdo."""
+    return _es_la_propia(request, persona_id) or _es_su_responsable(request, persona_id)
 
 
 def perfil_visible_o_404(request, persona_id):
@@ -67,3 +91,16 @@ def perfil_propio_o_404(request, persona_id):
     if not _es_la_propia(request, persona_id):
         raise Http404("No existe.")
     return get_object_or_404(Perfil, persona_id=persona_id)
+
+
+def perfil_editable_o_404(request, persona_id):
+    """
+    El `Perfil` de `persona_id`, si quien pregunta puede CAMBIARLO (R4/R-99/G-43): es la
+    propia dueña, o su RESPONSABLE si es una persona a cargo. 404 en cualquier otro caso —
+    también si `persona_id` tiene cuenta propia y quien pregunta es "solo" otro miembro del
+    hogar con cuenta (Q-20/Q-175: ni siquiera llamando aquí con el id exacto, saltándose la
+    pantalla).
+    """
+    if puede_editar_perfil(request, persona_id):
+        return get_object_or_404(Perfil, persona_id=persona_id)
+    raise Http404("No existe.")

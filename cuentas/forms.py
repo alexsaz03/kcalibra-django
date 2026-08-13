@@ -36,6 +36,14 @@ class FormularioAlta(forms.Form):
         ),
     )
 
+    # Unidad 024 (R-98/G-196) — cómo se la llama en toda la app, desde el primer momento: ya
+    # no hay ninguna pantalla que identifique a alguien por su correo, y quien se da de alta
+    # necesita un nombre desde el instante en que existe. Va ANTES del código de hogar en este
+    # formulario a propósito (es lo primero que define a una persona), aunque
+    # `hogares.signals.crear_persona_de_la_cuenta` ya haya creado la fila de `Persona` (vacía
+    # de nombre, ver ese fichero) antes de que `signup()` llegue a rellenarlo aquí abajo.
+    nombre = forms.CharField(label="Nombre", max_length=100)
+
     # ------------------------------------------------------------------------------------
     # Unidad 004: los datos físicos, la actividad, el objetivo y las manías. R11 — los datos
     # imposibles se rechazan AQUÍ, al entrar (validación de formulario), no después: la
@@ -71,6 +79,14 @@ class FormularioAlta(forms.Form):
         label="Lo que no te gusta", required=False, widget=forms.Textarea(attrs={"rows": 2})
     )
 
+    def clean_nombre(self):
+        # R-98/G-196: igual que el resto de "datos imposibles" de este formulario, un nombre
+        # en blanco se rechaza AQUÍ, al entrar — nunca deja crear una cuenta sin nombre.
+        valor = self.cleaned_data["nombre"].strip()
+        if not valor:
+            raise forms.ValidationError("El nombre no puede estar vacío.")
+        return valor
+
     def clean_fecha_nacimiento(self):
         # R11: una fecha de nacimiento futura es un dato imposible (calcularía una edad
         # negativa, ver servicios/metabolismo.py:calcular_edad) — se rechaza aquí, no cuando
@@ -92,8 +108,11 @@ class FormularioAlta(forms.Form):
         # del hogar se olvide de crearlos.
         # Unidad 023 — el perfil y el hogar son de la PERSONA, no de la cuenta. La persona ya
         # existe: la crea `hogares.signals.crear_persona_de_la_cuenta` en el mismo instante en
-        # que allauth guarda el `Usuario`, antes de llegar aquí.
+        # que allauth guarda el `Usuario`, antes de llegar aquí — sin nombre todavía (esa
+        # señal no conoce el formulario). Unidad 024: aquí es donde se le pone.
         persona = persona_de(user)
+        persona.nombre = self.cleaned_data["nombre"]
+        persona.save(update_fields=["nombre"])
         crear_perfil_desde_alta(persona, self.cleaned_data)
 
         codigo = self.cleaned_data.get("codigo_hogar", "").strip().upper()

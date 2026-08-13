@@ -16,4 +16,9 @@ urlpatterns = [
         views.rechazar_solicitud,
         name="rechazar_solicitud",
     ),
+    path(
+        "mi-hogar/dar-de-alta/",
+        views.dar_de_alta_persona_a_cargo,
+        name="dar_de_alta_persona_a_cargo",
+    ),
 ]

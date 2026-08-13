@@ -23,7 +23,12 @@ from django.views.decorators.http import require_POST
 
 from hogares.acceso import persona_actual
 
-from .acceso import perfil_propio_o_404, perfil_visible_o_404
+from .acceso import (
+    perfil_editable_o_404,
+    perfil_propio_o_404,
+    perfil_visible_o_404,
+    puede_editar_perfil,
+)
 from .forms import FormularioMedicion, FormularioPerfil
 from .logica import (
     apuntar_medicion,
@@ -48,13 +53,21 @@ def ver_perfil(request, persona_id=None):
     """
     persona_id = persona_id if persona_id is not None else persona_actual(request).id
     perfil = perfil_visible_o_404(request, persona_id)
-    es_propio = perfil.persona_id == persona_actual(request).id
+    yo = persona_actual(request)
+    es_propio = perfil.persona_id == yo.id
+    # Unidad 024, R4/G-43 — quien puede CAMBIAR este perfil no es solo su dueña: también su
+    # responsable, si es una persona a cargo (R-99). `es_propio` sigue decidiendo el TEXTO
+    # ("Tus datos" / "Datos de X"); `puede_editar` decide si aparece el formulario. Se calcula
+    # con la MISMA función que usa la puerta de escritura (`perfil_editable_o_404`), para que
+    # la pantalla nunca ofrezca un formulario que el servidor luego rechace.
+    puede_editar = puede_editar_perfil(request, persona_id)
 
     contexto = {
         "perfil": perfil,
         "es_propio": es_propio,
+        "puede_editar": puede_editar,
         "resultado": calcular_objetivo_del_dia(perfil.persona),
-        "form": FormularioPerfil(instance=perfil) if es_propio else None,
+        "form": FormularioPerfil(instance=perfil) if puede_editar else None,
     }
     return render(request, "perfiles/ver.html", contexto)
 
@@ -63,16 +76,18 @@ def ver_perfil(request, persona_id=None):
 @require_POST
 def actualizar_perfil(request, persona_id):
     """
-    R3/R5/R6 — guarda los cambios y recalcula al momento. `perfil_propio_o_404` es la puerta
-    de R9: si `persona_id` no es el de quien hace la petición, esto responde 404 ANTES de
-    mirar siquiera el formulario — no hay forma de cambiar el perfil de otra persona ni
-    llamando aquí directamente con su id exacto.
+    R3/R5/R6 — guarda los cambios y recalcula al momento. `perfil_editable_o_404` es la puerta
+    de R9/R4: si `persona_id` no es el de quien hace la petición NI de alguien a su cargo,
+    esto responde 404 ANTES de mirar siquiera el formulario — no hay forma de cambiar el
+    perfil de otra persona con cuenta propia ni llamando aquí directamente con su id exacto
+    (Q-20/Q-175).
 
     Con HTMX (R3: "sin recargar la pantalla"), la petición trae la cabecera `HX-Request` y
     aquí se responde SOLO el trozo de la tarjeta (plantillas parciales, como ya hace
     `paginas/views.py:hora_servidor` desde la unidad 002) — nunca la página entera.
     """
-    perfil = perfil_propio_o_404(request, persona_id)
+    perfil = perfil_editable_o_404(request, persona_id)
+    es_propio = perfil.persona_id == persona_actual(request).id
     objetivo_antes_de_este_cambio = perfil.objetivo
 
     form = FormularioPerfil(request.POST, instance=perfil)
@@ -92,7 +107,13 @@ def actualizar_perfil(request, persona_id):
         form = FormularioPerfil(instance=perfil)
 
     resultado = calcular_objetivo_del_dia(perfil.persona)
-    contexto = {"perfil": perfil, "es_propio": True, "resultado": resultado, "form": form}
+    contexto = {
+        "perfil": perfil,
+        "es_propio": es_propio,
+        "puede_editar": True,
+        "resultado": resultado,
+        "form": form,
+    }
 
     plantilla = (
         NOMBRE_DEL_PARTIAL_DE_LA_TARJETA

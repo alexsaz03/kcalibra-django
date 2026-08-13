@@ -10,13 +10,37 @@ directamente a la URL, con el id exacto de una solicitud ajena, recibe un 404 id
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from perfiles.logica import crear_perfil_desde_alta
+
 from .acceso import obtener_de_mi_hogar_o_404, persona_actual
+from .forms import FormularioAltaPersonaACargo
 from .logica import crear_hogar_propio, resolver_solicitudes_caducadas
-from .models import SolicitudEntrada, persona_de
+from .models import Persona, SolicitudEntrada, persona_de
+
+
+def _contexto_mi_hogar(hogar, form):
+    """Reúne lo que pinta "mi hogar" (R3/R100): la lista de miembros —con su nombre, quién
+    entra con su cuenta y, si no entra, quién es su responsable— y las peticiones pendientes.
+    Compartido entre el GET normal y el POST inválido del alta de abajo, para no repetir la
+    misma consulta dos veces en el fichero."""
+    # Unidad 024 — `select_related("responsable")` trae de la misma consulta el nombre del
+    # responsable de una persona a cargo (R100: "para las que no [entran], quién es su
+    # responsable"), sin una consulta extra por fila.
+    miembros = hogar.miembros.select_related("usuario", "responsable").order_by(
+        "usuario__date_joined"
+    )
+    pendientes = (
+        SolicitudEntrada.del_hogar(hogar)
+        .filter(estado=SolicitudEntrada.PENDIENTE)
+        .select_related("usuario", "usuario__persona")
+        .order_by("creada_en")
+    )
+    return {"hogar": hogar, "miembros": miembros, "pendientes": pendientes, "form": form}
 
 
 @login_required
@@ -43,21 +67,49 @@ def mi_hogar(request):
     # ya debería estar caducada.
     resolver_solicitudes_caducadas(hogar=hogar)
 
-    # Unidad 023 — `hogar.miembros` son ahora `Persona`, no cuentas. El orden sigue siendo
-    # el mismo dato de siempre (cuándo se dio de alta esa cuenta), leído a través de ella;
-    # `select_related` lo trae en la misma consulta, sin una por miembro para pintar su correo.
-    miembros = hogar.miembros.select_related("usuario").order_by("usuario__date_joined")
-    pendientes = (
-        SolicitudEntrada.del_hogar(hogar)
-        .filter(estado=SolicitudEntrada.PENDIENTE)
-        .select_related("usuario")
-        .order_by("creada_en")
-    )
-    return render(
-        request,
-        "hogares/mi_hogar.html",
-        {"hogar": hogar, "miembros": miembros, "pendientes": pendientes},
-    )
+    contexto = _contexto_mi_hogar(hogar, form=FormularioAltaPersonaACargo())
+    return render(request, "hogares/mi_hogar.html", contexto)
+
+
+@login_required
+@require_POST
+def dar_de_alta_persona_a_cargo(request):
+    """
+    R2/R-99 — Alejandro da de alta a Euridice, que no tiene ni tendrá cuenta: su ficha nace
+    con su nombre, sus datos físicos y su objetivo, y con Alejandro (quien la da de alta) como
+    su `responsable` — el único que podrá cambiarle sus datos después (R4).
+
+    `crear_perfil_desde_alta` es la MISMA función que usa el alta de una cuenta con cuenta
+    propia (`cuentas/forms.py:FormularioAlta.signup`): con ella, el objetivo diario de Euridice
+    se calcula exactamente igual que el de cualquiera (R2, "Cómo" punto 4 — no se duplica el
+    cálculo, se reutiliza).
+    """
+    persona = persona_actual(request)
+    hogar = persona.hogar if persona is not None else None
+    if hogar is None:
+        # Sin hogar propio todavía (R14 de la unidad 003) no hay una casa a la que dar de
+        # alta a nadie — mismo criterio que el resto de puertas de esta app (404, nunca 403).
+        raise Http404("No existe.")
+
+    form = FormularioAltaPersonaACargo(request.POST)
+    if form.is_valid():
+        nueva_persona = Persona.objects.create(
+            hogar=hogar,
+            nombre=form.cleaned_data["nombre"],
+            responsable=persona,
+        )
+        crear_perfil_desde_alta(nueva_persona, form.cleaned_data)
+        messages.success(
+            request, f"Diste de alta a {nueva_persona.nombre}, a tu cargo."
+        )
+        return redirect("hogares:mi_hogar")
+
+    # Formulario inválido: se vuelve a pintar "mi hogar" con los errores señalados, sin perder
+    # el resto de la pantalla (mismo patrón que perfiles/views.py:actualizar_perfil cuando no
+    # hay HTMX de por medio: la pantalla entera, con el formulario que ya tenía).
+    resolver_solicitudes_caducadas(hogar=hogar)
+    contexto = _contexto_mi_hogar(hogar, form=form)
+    return render(request, "hogares/mi_hogar.html", contexto)
 
 
 @login_required
@@ -83,7 +135,9 @@ def aceptar_solicitud(request, pk):
     persona_solicitante.hogar = solicitud.hogar
     persona_solicitante.save(update_fields=["hogar"])
 
-    messages.success(request, f"{solicitante.email} ya está dentro del hogar.")
+    # R1/G-196: el aviso se lee en la pantalla de la casa — se llama a quien entra por su
+    # nombre, nunca por su correo.
+    messages.success(request, f"{persona_solicitante.nombre} ya está dentro del hogar.")
     return redirect("hogares:mi_hogar")
 
 

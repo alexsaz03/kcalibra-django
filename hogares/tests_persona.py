@@ -109,14 +109,16 @@ class R3_ConLosIdsDesincronizadosCadaPersonaSigueViendoLoSuyoTests(PruebaConRegi
         # Los suyos: 1.894 kcal (C-13 de crear-cuenta.md).
         propio = self.client.get(f"/perfiles/{self.euridice.id}/")
         self.assertEqual(propio.status_code, 200)
-        self.assertContains(propio, "euridice@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo (aquí, el de la barra de
+        # arriba: la propia pantalla de "Tus datos" no enseña ningún nombre en su título).
+        self.assertContains(propio, "Euridice")
         self.assertContains(propio, "1894 kcal")
 
         # Los de Alejandro, de la misma casa: 3.006 kcal (C-13 también). Que salgan ESTOS y no
         # los suyos es lo que demuestra que la traducción de dueños no mezcló a nadie.
         ajeno = self.client.get(f"/perfiles/{self.alejandro.id}/")
         self.assertEqual(ajeno.status_code, 200)
-        self.assertContains(ajeno, "alejandro@example.com")
+        self.assertContains(ajeno, "Alejandro")
         self.assertContains(ajeno, "3006 kcal")
         self.assertNotContains(ajeno, "1894 kcal")
 
@@ -331,12 +333,18 @@ class R6_UnaCuentaSinPerfilSigueSiendoUnEstadoToleradoTests(TestCase):
         cuenta = Usuario.objects.create_user(email="sin-perfil@example.com", password=CLAVE_VALIDA)
         from hogares.models import crear_hogar_propio
 
+        # `create_user` no pasa por el formulario de alta (unidad 024): la señal
+        # (`hogares.signals.crear_persona_de_la_cuenta`) le crea su `Persona` igual, pero sin
+        # nombre — se pone aquí a mano, como haría cualquier alta de verdad.
+        cuenta.persona.nombre = "Sin Perfil"
+        cuenta.persona.save(update_fields=["nombre"])
         crear_hogar_propio(cuenta.persona)
         self.client.force_login(cuenta)
 
         respuesta = self.client.get("/hogares/mi-hogar/")
         self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, "sin-perfil@example.com")
+        # Unidad 024, R1/G-196: por su nombre, nunca por su correo.
+        self.assertContains(respuesta, "Sin Perfil")
 
 
 class R7_ElAislamientoPorHogarResponde404YNunca403Tests(PruebaConRegistroAbierto):

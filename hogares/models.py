@@ -100,7 +100,22 @@ class Persona(models.Model):
     con ella, todos sus datos — que es EXACTAMENTE lo que pasaba antes de esta unidad, cuando
     los seis modelos colgaban directamente de `Usuario` con `CASCADE`. No se cambia aquí un
     comportamiento que esta unidad promete no tocar; qué hacer con la ficha de alguien cuyo
-    responsable borra su cuenta es una pregunta abierta de la unidad 024.
+    responsable borra su cuenta era una pregunta abierta de la unidad 024 — y esta unidad es
+    esa 024: la resuelve `responsable` de aquí abajo.
+
+    Unidad 024 (darle-cuenta-propia-a-los-de-casa.md, R-98/R-99/G-196) — dos campos nuevos:
+
+    - `nombre`: cómo se llama esta persona, y es SIEMPRE lo que la app enseña en pantalla — el
+      correo con el que entra (si entra) ya no identifica a nadie delante de los demás (G-196).
+      Obligatorio: no hay ninguna `Persona` sin nombre desde esta unidad (las que ya existían
+      lo reciben provisional en la migración de datos, R7).
+    - `responsable`: quién puede cambiar los datos de esta persona SI esta persona no tiene
+      cuenta propia (R-99, G-43). `on_delete=PROTECT` a propósito: es lo que hace cumplir R5 en
+      la base de datos, no solo en la vista — borrar la cuenta de un responsable con alguien a
+      su cargo tiene que fallar SIEMPRE, también si alguien se salta la pantalla y llama
+      directamente al borrado (Q-175: "ni borrando una cuenta... existe una persona sin cuenta
+      y sin responsable"). `null=True` porque la mayoría de las personas (las que tienen su
+      propia cuenta) no están a cargo de nadie.
     """
 
     # Mismas semánticas que tenía `Usuario.hogar` (unidad 003), campo a campo: `null` mientras
@@ -126,10 +141,24 @@ class Persona(models.Model):
         related_name="persona",
     )
 
+    # R-98/G-196 — cómo se la llama en toda la app, entre en la app o no. Obligatorio: ver el
+    # docstring de la clase para el porqué y la migración de datos (0004/0005) para cómo
+    # llegan aquí con nombre las personas que ya existían antes de esta unidad.
+    nombre = models.CharField(max_length=100)
+
+    # R-99/G-43 — quién puede cambiar los datos de esta persona si ella no tiene cuenta propia.
+    # FK a sí misma: el responsable es otra `Persona` del mismo hogar. `on_delete=PROTECT` (ver
+    # docstring de la clase) es la mitad de R5 que vive en la base de datos.
+    responsable = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="personas_a_cargo",
+    )
+
     def __str__(self):
-        if self.usuario_id:
-            return self.usuario.email
-        return f"Persona {self.pk} (sin cuenta)"
+        return self.nombre
 
 
 def persona_de(usuario):
