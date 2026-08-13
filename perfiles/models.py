@@ -5,12 +5,14 @@ Los datos de una persona (R7, "Dónde viven los datos" de la especificación de 
 
 Ninguno de los dos hereda de `hogares.models.ModeloDeHogar`: son datos DE LA PERSONA, no del
 hogar (G-43 de darle-cuenta-propia-a-los-de-casa.md) — el resto del hogar los VE a través de
-`usuario.hogar` (ver `perfiles/acceso.py`), pero no son "cosas del hogar" como la despensa.
+`persona.hogar` (ver `perfiles/acceso.py`), pero no son "cosas del hogar" como la despensa.
+
+Unidad 023 — los dos cuelgan de `hogares.Persona`, no de la cuenta con la que se entra: el
+peso y el objetivo son de quien vive en la casa, tenga cuenta o no. Por fuera no cambia nada.
 """
 
 from decimal import Decimal
 
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -37,8 +39,8 @@ class Perfil(models.Model):
     días de `MedicionPeso`, nunca un campo editable de esta ficha.
     """
 
-    usuario = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="perfil"
+    persona = models.OneToOneField(
+        "hogares.Persona", on_delete=models.CASCADE, related_name="perfil"
     )
     sexo = models.CharField(max_length=10, choices=constantes.SEXO_CHOICES)
     fecha_nacimiento = models.DateField(validators=[_fecha_no_futura])
@@ -58,7 +60,7 @@ class Perfil(models.Model):
     no_le_gusta = models.TextField(blank=True, default="")
 
     def __str__(self):
-        return f"Perfil de {self.usuario}"
+        return f"Perfil de {self.persona}"
 
 
 class MedicionPeso(models.Model):
@@ -76,8 +78,8 @@ class MedicionPeso(models.Model):
     aprovecha, nunca un `create` suelto que reventaría contra esta restricción.
     """
 
-    usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mediciones_peso"
+    persona = models.ForeignKey(
+        "hogares.Persona", on_delete=models.CASCADE, related_name="mediciones_peso"
     )
     fecha = models.DateField(default=timezone.localdate, validators=[_fecha_no_futura])
     peso_kg = models.DecimalField(
@@ -100,9 +102,9 @@ class MedicionPeso(models.Model):
         ordering = ["-fecha"]
         constraints = [
             models.UniqueConstraint(
-                fields=["usuario", "fecha"], name="una_medicion_por_persona_y_dia"
+                fields=["persona", "fecha"], name="una_medicion_por_persona_y_dia"
             )
         ]
 
     def __str__(self):
-        return f"{self.peso_kg} kg de {self.usuario} el {self.fecha}"
+        return f"{self.peso_kg} kg de {self.persona} el {self.fecha}"

@@ -7,23 +7,22 @@ pero no se toca": esta unidad no abre ninguna lectura del hogar sobre entrenos a
 nombra, pero llega con R-79 en Progreso, otra unidad) ni "de quién es" (personas a cargo,
 R-26/R-27, sin construir). Ver, apuntar, corregir y borrar son SIEMPRE sobre uno mismo — es la
 "mitad estricta" de `hogares/acceso.py` que menciona el punto 7 del "Cómo" de la especificación,
-sin necesitar `hogar_actual` ni `usuario_del_hogar_o_404`: no hay ningún caso "del mismo hogar,
+sin necesitar `hogar_actual` ni `persona_del_hogar_o_404`: no hay ningún caso "del mismo hogar,
 pero no tú" que deba pasar.
 """
 
-from django.contrib.auth import get_user_model
 from django.http import Http404
-from django.shortcuts import get_object_or_404
 
-Usuario = get_user_model()
+from hogares.acceso import persona_actual
 
 
-def usuario_propio_o_404(request, usuario_id):
+def persona_propia_o_404(request, persona_id):
     """
-    El `Usuario` `usuario_id`, SOLO si es quien pregunta (R10). 404 en cualquier otro caso
+    La `Persona` `persona_id`, SOLO si es quien pregunta (R10). 404 en cualquier otro caso
     —incluido "existe, pero es de otra persona", del mismo hogar o de otro—, nunca 403: mismo
     principio que `hogares/acceso.py` y `perfiles/acceso.py:perfil_propio_o_404`.
     """
-    if str(request.user.id) != str(usuario_id):
+    persona = persona_actual(request)
+    if persona is None or str(persona.id) != str(persona_id):
         raise Http404("No existe.")
-    return get_object_or_404(Usuario, pk=usuario_id)
+    return persona

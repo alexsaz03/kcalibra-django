@@ -8,7 +8,6 @@ Son datos DE LA PERSONA, no del hogar: mismo criterio que `perfiles.models.Medic
 del mismo hogar, R12 — ver `cierres/acceso.py`), no el de `planes.models.PlanDeDia`.
 """
 
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -42,8 +41,8 @@ class CierreDeDia(models.Model):
         (NO_LO_SEGUI, "No lo seguí"),
     ]
 
-    usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cierres_de_dia"
+    persona = models.ForeignKey(
+        "hogares.Persona", on_delete=models.CASCADE, related_name="cierres_de_dia"
     )
     fecha = models.DateField(default=timezone.localdate, validators=[_fecha_no_futura])
     respuesta = models.CharField(max_length=12, choices=RESPUESTAS)
@@ -59,12 +58,12 @@ class CierreDeDia(models.Model):
         ordering = ["-fecha"]
         constraints = [
             models.UniqueConstraint(
-                fields=["usuario", "fecha"], name="un_cierre_por_persona_y_dia"
+                fields=["persona", "fecha"], name="un_cierre_por_persona_y_dia"
             )
         ]
 
     def __str__(self):
-        return f"Cierre de {self.usuario} el {self.fecha}: {self.get_respuesta_display()}"
+        return f"Cierre de {self.persona} el {self.fecha}: {self.get_respuesta_display()}"
 
 
 class MenuSeguido(models.Model):
@@ -134,10 +133,10 @@ class DiaSaltado(models.Model):
     día nuevo (`cierres/logica.py:saltar_dia_pendiente`).
     """
 
-    usuario = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="dia_saltado_cierre"
+    persona = models.OneToOneField(
+        "hogares.Persona", on_delete=models.CASCADE, related_name="dia_saltado_cierre"
     )
     fecha = models.DateField()
 
     def __str__(self):
-        return f"{self.usuario} se saltó el {self.fecha}"
+        return f"{self.persona} se saltó el {self.fecha}"

@@ -35,39 +35,39 @@ def _comidas_como_diccionarios(comidas):
     ]
 
 
-def obtener_plan_de(usuario, fecha):
+def obtener_plan_de(persona, fecha):
     """
-    El plan de `usuario` en `fecha` (cualquiera, no solo hoy), o `None` si no tiene ninguno
+    El plan de `persona` en `fecha` (cualquiera, no solo hoy), o `None` si no tiene ninguno
     puesto ese día. Unidad 012 (decir-si-cumpliste.md, R4) — la foto del menú al cerrar el día
     necesita el plan de ESE día concreto, no el de hoy: `obtener_plan_de_hoy` (abajo) queda
     como el caso particular con `fecha=timezone.localdate()`, sin cambiar su comportamiento.
     """
     return (
-        PlanDeDia.objects.filter(usuario=usuario, fecha=fecha).prefetch_related("comidas").first()
+        PlanDeDia.objects.filter(persona=persona, fecha=fecha).prefetch_related("comidas").first()
     )
 
 
-def obtener_plan_de_hoy(usuario):
+def obtener_plan_de_hoy(persona):
     """
-    R11 — el plan de HOY de `usuario`, o `None` si no tiene ninguno puesto todavía. La fecha
+    R11 — el plan de HOY de `persona`, o `None` si no tiene ninguno puesto todavía. La fecha
     NUNCA es un parámetro: es SIEMPRE `timezone.localdate()` en el momento de la llamada,
     porque la pregunta que responde el Inicio es "¿cuánto puedo comer HOY?", nunca la de otro
     día (un plan de ayer o de mañana, aunque exista, no se ve ni se cuenta aquí).
     """
-    return obtener_plan_de(usuario, timezone.localdate())
+    return obtener_plan_de(persona, timezone.localdate())
 
 
-def resumen_del_dia(usuario):
+def resumen_del_dia(persona):
     """
-    El resumen completo de HOY para `usuario`: su plan (o `None`), sus comidas, su objetivo
+    El resumen completo de HOY para `persona`: su plan (o `None`), sus comidas, su objetivo
     del día (unidad 004, reutilizado tal cual) y lo que suma el plan frente a ese objetivo —
     calorías, macros, % de cobertura y si se ha pasado (R2, R3, R8, R9). Es lo que pinta cada
     tarjeta del Inicio (`paginas/views.py`) y la pantalla de "apuntar el plan"
     (`planes/views.py`).
     """
-    plan = obtener_plan_de_hoy(usuario)
+    plan = obtener_plan_de_hoy(persona)
     comidas = list(plan.comidas.all()) if plan else []
-    objetivo = calcular_objetivo_del_dia(usuario)
+    objetivo = calcular_objetivo_del_dia(persona)
     calorias_objetivo = objetivo["calorias"] if objetivo else 0
 
     resumen = servicio_planes.calcular_resumen_del_dia(
@@ -81,10 +81,10 @@ def resumen_del_dia(usuario):
     }
 
 
-def apuntar_comida(usuario, datos):
+def apuntar_comida(persona, datos):
     """
-    R1/R6 — añade una comida al plan de HOY de `usuario`, creando el plan si todavía no
-    existía. Cualquiera del hogar puede llamar a esto con cualquier `usuario` del mismo hogar:
+    R1/R6 — añade una comida al plan de HOY de `persona`, creando el plan si todavía no
+    existía. Cualquiera del hogar puede llamar a esto con cualquier `persona` del mismo hogar:
     la comprobación de que pertenece a su hogar se hace ANTES de llegar aquí, en
     `planes/acceso.py` (R7) — esta función ya no vuelve a mirarlo, confía en quien la llama.
     `datos` es el `cleaned_data` de `FormularioComida`, ya validado por Django (R10).
@@ -95,8 +95,8 @@ def apuntar_comida(usuario, datos):
     incluso si dos peticiones llegaran a la vez.
     """
     plan, _ = PlanDeDia.objects.get_or_create(
-        usuario=usuario,
+        persona=persona,
         fecha=timezone.localdate(),
-        defaults={"hogar": usuario.hogar},
+        defaults={"hogar": persona.hogar},
     )
     return plan.comidas.create(**datos)

@@ -24,26 +24,26 @@ from servicios import entrenos as servicio_entrenos
 from .models import Entreno
 
 
-def todos_los_entrenos(usuario):
+def todos_los_entrenos(persona):
     """§8 del plano ("Qué ve nada más entrar: sus entrenos") — el histórico completo de
-    `usuario`, más recientes primero (`Entreno.Meta.ordering`): R6/C-39 exige poder corregir
+    `persona`, más recientes primero (`Entreno.Meta.ordering`): R6/C-39 exige poder corregir
     uno de un día pasado, así que la pantalla no se limita a los de hoy."""
-    return Entreno.objects.filter(usuario=usuario)
+    return Entreno.objects.filter(persona=persona)
 
 
-def calorias_del_dia(usuario, fecha):
-    """Cuánto ha quemado `usuario` en `fecha` según sus entrenos apuntados; 0 si no tiene
+def calorias_del_dia(persona, fecha):
+    """Cuánto ha quemado `persona` en `fecha` según sus entrenos apuntados; 0 si no tiene
     ninguno ese día."""
-    total = Entreno.objects.filter(usuario=usuario, fecha=fecha).aggregate(total=Sum("calorias"))[
+    total = Entreno.objects.filter(persona=persona, fecha=fecha).aggregate(total=Sum("calorias"))[
         "total"
     ]
     return total or 0
 
 
-def calorias_de_hoy(usuario):
+def calorias_de_hoy(persona):
     """§8 del plano — "cuántas calorías lleva quemadas hoy": lo que enseña la pantalla nada
     más entrar."""
-    return calorias_del_dia(usuario, timezone.localdate())
+    return calorias_del_dia(persona, timezone.localdate())
 
 
 class SinPesoParaEstimar(Exception):
@@ -56,7 +56,7 @@ class SinPesoParaEstimar(Exception):
     """
 
 
-def _resolver_calorias(usuario, datos):
+def _resolver_calorias(persona, datos):
     """
     G-70 — si la persona escribió calorías, se quedan TAL CUAL (R-36, R2: "la app no las
     discute"); si las dejó en blanco, se estiman con el deporte, la intensidad, los minutos y
@@ -69,7 +69,7 @@ def _resolver_calorias(usuario, datos):
     if calorias not in (None, ""):
         return calorias, True
 
-    peso_kg = peso_medio_7_dias(usuario)
+    peso_kg = peso_medio_7_dias(persona)
     if peso_kg is None:
         raise SinPesoParaEstimar(
             "No podemos estimar las calorías sin tu peso: apúntalo primero, o escribe las "
@@ -84,12 +84,12 @@ def _resolver_calorias(usuario, datos):
     return estimadas, False
 
 
-def apuntar_entreno(usuario, datos):
-    """R-36/R-37 — crea un entreno para `usuario` con los datos ya validados por el
+def apuntar_entreno(persona, datos):
+    """R-36/R-37 — crea un entreno para `persona` con los datos ya validados por el
     formulario (deporte, intensidad, minutos, fecha, y calorías si las trajo)."""
-    calorias, calorias_manuales = _resolver_calorias(usuario, datos)
+    calorias, calorias_manuales = _resolver_calorias(persona, datos)
     return Entreno.objects.create(
-        usuario=usuario,
+        persona=persona,
         fecha=datos["fecha"],
         deporte=datos["deporte"],
         intensidad=datos["intensidad"],
@@ -111,7 +111,7 @@ def corregir_entreno(entreno, datos):
     el día que sea el entreno — es la vista (`entrenos/views.py`) quien no añade ninguno,
     nunca esta capa.
     """
-    calorias, calorias_manuales = _resolver_calorias(entreno.usuario, datos)
+    calorias, calorias_manuales = _resolver_calorias(entreno.persona, datos)
     entreno.fecha = datos["fecha"]
     entreno.deporte = datos["deporte"]
     entreno.intensidad = datos["intensidad"]

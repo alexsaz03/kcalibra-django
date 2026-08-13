@@ -32,7 +32,7 @@ from django.test import TestCase
 
 from despensa.models import ProductoDespensa
 from entrenos.models import Entreno
-from hogares.models import Hogar, crear_hogar_propio
+from hogares.models import Hogar, Persona, crear_hogar_propio
 from perfiles.models import MedicionPeso
 from recetas.models import IngredienteDeReceta, Receta
 
@@ -162,7 +162,8 @@ class BaseImportacionTests(TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.ruta_db = os.path.join(self._tmp.name, "node-de-mentira.db")
 
-        self.usuario = Usuario.objects.create_user(email="prueba@example.com", password="x")
+        self.cuenta = Usuario.objects.create_user(email="prueba@example.com", password="x")
+        self.usuario = Persona.objects.get(usuario=self.cuenta)
         crear_hogar_propio(self.usuario)
         self.hogar = self.usuario.hogar
 
@@ -171,7 +172,7 @@ class BaseImportacionTests(TestCase):
         call_command(
             "importar_datos_node",
             ruta or self.ruta_db,
-            cuenta=cuenta or self.usuario.email,
+            cuenta=cuenta or self.cuenta.email,
             dry_run=dry_run,
             stdout=salida,
         )
@@ -180,8 +181,8 @@ class BaseImportacionTests(TestCase):
     def _contar(self):
         return {
             "despensa": ProductoDespensa.objects.filter(hogar=self.hogar).count(),
-            "entrenos": Entreno.objects.filter(usuario=self.usuario).count(),
-            "pesadas": MedicionPeso.objects.filter(usuario=self.usuario).count(),
+            "entrenos": Entreno.objects.filter(persona=self.usuario).count(),
+            "pesadas": MedicionPeso.objects.filter(persona=self.usuario).count(),
             "recetas": Receta.objects.filter(hogar=self.hogar).count(),
         }
 
@@ -308,11 +309,11 @@ class R2_IdempotenciaTests(BaseImportacionTests):
             ],
         )
         self._importar()
-        self.assertEqual(Entreno.objects.filter(usuario=self.usuario).count(), 2)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 2)
 
         # Repetir la pasada: las DOS ya existen, ninguna se duplica.
         salida = self._importar()
-        self.assertEqual(Entreno.objects.filter(usuario=self.usuario).count(), 2)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 2)
         self.assertIn("Entrenos: 2 en Node -> 0 nuevos, 2 ya estaban.", salida)
 
 
@@ -378,7 +379,7 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
             ],
         )
         self._importar()
-        entreno = Entreno.objects.get(usuario=self.usuario)
+        entreno = Entreno.objects.get(persona=self.usuario)
         self.assertEqual(entreno.fecha, date(2026, 2, 14))
         self.assertEqual(entreno.deporte, "bici")
         self.assertEqual(entreno.intensidad, "fuerte")  # G-71: 'alta' de Node -> 'fuerte' del plano
@@ -392,7 +393,7 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
             pesos=[{"fecha": "2026-02-14", "peso_kg": 70.3, "grasa_pct": 18.2, "cintura_cm": 81.5}],
         )
         self._importar()
-        pesada = MedicionPeso.objects.get(usuario=self.usuario)
+        pesada = MedicionPeso.objects.get(persona=self.usuario)
         self.assertEqual(pesada.peso_kg, Decimal("70.3"))
         self.assertEqual(pesada.grasa_pct, Decimal("18.2"))
         self.assertEqual(pesada.cintura_cm, Decimal("81.5"))
@@ -403,7 +404,7 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
             pesos=[{"fecha": "2026-02-14", "peso_kg": 65.0, "grasa_pct": None, "cintura_cm": None}],
         )
         self._importar()
-        pesada = MedicionPeso.objects.get(usuario=self.usuario)
+        pesada = MedicionPeso.objects.get(persona=self.usuario)
         self.assertIsNone(pesada.grasa_pct)
         self.assertIsNone(pesada.cintura_cm)
 
@@ -412,16 +413,16 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
         día, la fila de Node no se sobrescribe -- se salta, se cuenta como 'ya estaba' y el
         comando sigue sin reventar contra la restricción 'una_medicion_por_persona_y_dia'
         (unidad 006)."""
-        MedicionPeso.objects.create(usuario=self.usuario, fecha=date(2026, 2, 14), peso_kg=Decimal("99.9"))
+        MedicionPeso.objects.create(persona=self.usuario, fecha=date(2026, 2, 14), peso_kg=Decimal("99.9"))
         _crear_sqlite_de_node(
             self.ruta_db,
             pesos=[{"fecha": "2026-02-14", "peso_kg": 70.3, "grasa_pct": None, "cintura_cm": None}],
         )
         salida = self._importar()
         # No revienta, y NO sobrescribe: sigue siendo la medición que ya había.
-        pesada = MedicionPeso.objects.get(usuario=self.usuario, fecha=date(2026, 2, 14))
+        pesada = MedicionPeso.objects.get(persona=self.usuario, fecha=date(2026, 2, 14))
         self.assertEqual(pesada.peso_kg, Decimal("99.9"))
-        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
         self.assertIn("Pesadas: 1 en Node -> 0 nuevos, 1 ya estaban.", salida)
 
     def test_dos_pesadas_de_node_con_la_misma_fecha_se_salta_la_segunda_y_no_revienta(self):
@@ -447,9 +448,9 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
         salida = self._importar()  # no debe reventar con IntegrityError
 
         # Se queda con la PRIMERA fila de Node de ese día; la segunda se salta, no se sobrescribe.
-        pesada = MedicionPeso.objects.get(usuario=self.usuario, fecha=date(2026, 2, 14))
+        pesada = MedicionPeso.objects.get(persona=self.usuario, fecha=date(2026, 2, 14))
         self.assertEqual(pesada.peso_kg, Decimal("70.3"))
-        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
 
         # Y lo dice: 1 nuevo, 0 "ya estaban" (ninguna existía antes de esta pasada) y la
         # colisión nombrada aparte, no disfrazada de "ya estaba".
@@ -476,7 +477,7 @@ class R4_EntrenosYPesadasIntactosTests(BaseImportacionTests):
         salida = self._importar(dry_run=True)  # no debe reventar
 
         # No se escribió nada de verdad.
-        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 0)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 0)
         self.assertIn("Pesadas: 2 en Node -> 1 nuevos, 0 ya estaban.", salida)
         self.assertIn(
             "Pesadas: 1 más se ha saltado por chocar en fecha con otra fila de Node de esta "
@@ -579,7 +580,9 @@ class R5_RecetasTests(BaseImportacionTests):
 
 class R6_AislamientoTests(BaseImportacionTests):
     def test_lo_importado_no_aparece_en_otro_hogar(self):
-        otro_usuario = Usuario.objects.create_user(email="otra-cuenta@example.com", password="x")
+        otro_usuario = Persona.objects.get(
+            usuario=Usuario.objects.create_user(email="otra-cuenta@example.com", password="x")
+        )
         crear_hogar_propio(otro_usuario)
 
         _crear_sqlite_de_node(
@@ -603,7 +606,9 @@ class R6_AislamientoTests(BaseImportacionTests):
         self.assertEqual(Receta.objects.filter(hogar=otro_usuario.hogar).count(), 0)
 
     def test_entrenos_y_pesadas_no_aparecen_en_otra_cuenta(self):
-        otro_usuario = Usuario.objects.create_user(email="otra-cuenta@example.com", password="x")
+        otro_usuario = Persona.objects.get(
+            usuario=Usuario.objects.create_user(email="otra-cuenta@example.com", password="x")
+        )
         crear_hogar_propio(otro_usuario)
 
         _crear_sqlite_de_node(
@@ -613,17 +618,17 @@ class R6_AislamientoTests(BaseImportacionTests):
         )
         self._importar()
 
-        self.assertEqual(Entreno.objects.filter(usuario=self.usuario).count(), 1)
-        self.assertEqual(Entreno.objects.filter(usuario=otro_usuario).count(), 0)
-        self.assertEqual(MedicionPeso.objects.filter(usuario=self.usuario).count(), 1)
-        self.assertEqual(MedicionPeso.objects.filter(usuario=otro_usuario).count(), 0)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=otro_usuario).count(), 0)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=otro_usuario).count(), 0)
 
     def test_una_cuenta_sin_hogar_todavia_no_deja_importar(self):
         """Caso límite de R6: mientras espera a que la acepten en un hogar (unidad 003), una
         cuenta no tiene ningún hogar propio todavía. El comando falla en cristiano, sin tocar
         nada, en vez de dejar algo colgado sin hogar."""
         huerfano = Usuario.objects.create_user(email="esperando@example.com", password="x")
-        self.assertIsNone(huerfano.hogar)
+        self.assertIsNone(huerfano.persona.hogar)
 
         _crear_sqlite_de_node(self.ruta_db, productos=[{"nombre": "Arroz", "cantidad": 1, "unidad": "kg", "categoria": "cereal_pan"}])
 

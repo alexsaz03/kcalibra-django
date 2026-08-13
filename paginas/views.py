@@ -2,6 +2,7 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from cierres.logica import dia_pendiente_de_preguntar
+from hogares.acceso import persona_actual
 from planes.logica import obtener_plan_de, resumen_del_dia
 
 
@@ -18,39 +19,40 @@ def inicio(request):
     paginas/views.py:inicio... no la metas en base.html", porque el plano dice "al abrir la
     app" (esta pantalla), no "en todas partes". Es SIEMPRE sobre la propia persona (G-162:
     "cada persona del hogar con cuenta" contesta la suya, nunca la de otra): por eso se calcula
-    para `request.user`, no para cada tarjeta del hogar.
+    para la persona de quien mira, no para cada tarjeta del hogar.
     """
     if not request.user.is_authenticated:
         return render(request, "paginas/inicio.html")
 
-    hogar = request.user.hogar
+    yo = persona_actual(request)
+    hogar = yo.hogar
     # H2 de la revisión: mientras espera que le acepten en otro hogar (R14 de la unidad 003,
     # el mismo estado que ya se había pasado por alto en el perfil propio de la unidad 004),
-    # `request.user.hogar` es `None`. Todavía no hay "hogar" del que sacar las tarjetas de
+    # la persona no tiene hogar todavía. No hay "hogar" del que sacar las tarjetas de
     # nadie más (se enseña solo la suya) NI del que colgar un plan (`PlanDeDia.hogar` es
     # obligatorio): `hogar_pendiente` se lleva a la plantilla para que NO ofrezca el botón de
     # "Apuntar el plan" en ese estado — sería un enlace muerto (404 al pulsarlo) — y explique
     # por qué en su lugar, en vez de una salida que no lleva a ningún sitio.
     hogar_pendiente = hogar is None
     if hogar_pendiente:
-        miembros = [request.user]
+        miembros = [yo]
     else:
         # G-152: la propia SIEMPRE la primera; el resto, detrás, sin más criterio de orden.
-        todos = list(hogar.miembros.order_by("date_joined"))
-        miembros = [request.user] + [m for m in todos if m.id != request.user.id]
+        todos = list(hogar.miembros.select_related("usuario").order_by("usuario__date_joined"))
+        miembros = [yo] + [m for m in todos if m.id != yo.id]
 
     tarjetas = [
         {
-            "usuario": miembro,
-            "es_propio": miembro.id == request.user.id,
+            "persona": miembro,
+            "es_propio": miembro.id == yo.id,
             "hogar_pendiente": hogar_pendiente,
             **resumen_del_dia(miembro),
         }
         for miembro in miembros
     ]
 
-    dia_pendiente = dia_pendiente_de_preguntar(request.user)
-    plan_pendiente = obtener_plan_de(request.user, dia_pendiente) if dia_pendiente else None
+    dia_pendiente = dia_pendiente_de_preguntar(yo)
+    plan_pendiente = obtener_plan_de(yo, dia_pendiente) if dia_pendiente else None
 
     return render(
         request,

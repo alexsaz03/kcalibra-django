@@ -3,7 +3,7 @@ La pantalla de la despensa (unidad 014, llevar-la-despensa.md): lo que hay en ca
 por categorías (R8), con el formulario para añadir (R1-R3) y, en cada línea, para corregir
 (R5/R7) o quitar (R6). Es DEL HOGAR entero, no de una persona (G-43): no hay "la despensa DE
 alguien" — a diferencia de `entrenos/views.py` o `perfiles/views.py`, ninguna vista de aquí
-recibe un `usuario_id` en la URL; todas trabajan sobre EL HOGAR de quien pregunta
+recibe un `persona_id` en la URL; todas trabajan sobre EL HOGAR de quien pregunta
 (`despensa/acceso.py`). R9/R10 — cualquiera del hogar ve y cambia sin pedir permiso a nadie;
 nadie de fuera, ni siquiera adivinando el id de un producto (404, nunca 403).
 

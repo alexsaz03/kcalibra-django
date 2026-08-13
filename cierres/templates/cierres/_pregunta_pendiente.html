@@ -5,6 +5,10 @@
 {# paginas/views.py:inicio... no la metas en base.html") y también se pide SUELTO, por HTMX,  #}
 {# desde cierres/views.py:responder y cierres/views.py:saltar — mismo mecanismo que           #}
 {# paginas/templates/paginas/inicio.html#hora_servidor (unidad 002).                          #}
+{#                                                                                            #}
+{# Unidad 023 — las rutas piden el id de la PERSONA, no el de la cuenta: `user.persona.id`.    #}
+{# `user` sigue siendo lo que pone el context processor de Django (la cuenta en sesión); la    #}
+{# persona cuelga de ella. Es SIEMPRE la propia (G-162), nunca la de otra.                     #}
 {# ---------------------------------------------------------------------------------------- #}
 {% partialdef pregunta_pendiente %}
 <div id="pregunta-cierre" {% if dia_pendiente %}data-fecha="{{ dia_pendiente|date:'Y-m-d' }}"{% endif %}>
@@ -32,28 +36,28 @@
       {% endif %}
 
       <div class="mt-4 flex flex-wrap gap-2">
-        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+        <form hx-post="{% url 'cierres:responder' user.persona.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
           {% csrf_token %}
           <input type="hidden" name="respuesta" value="lo_segui">
           <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
             Lo seguí
           </button>
         </form>
-        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+        <form hx-post="{% url 'cierres:responder' user.persona.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
           {% csrf_token %}
           <input type="hidden" name="respuesta" value="a_medias">
           <button type="submit" class="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-600">
             A medias
           </button>
         </form>
-        <form hx-post="{% url 'cierres:responder' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+        <form hx-post="{% url 'cierres:responder' user.persona.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
           {% csrf_token %}
           <input type="hidden" name="respuesta" value="no_lo_segui">
           <button type="submit" class="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700">
             No lo seguí
           </button>
         </form>
-        <form hx-post="{% url 'cierres:saltar' user.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
+        <form hx-post="{% url 'cierres:saltar' user.persona.id %}" hx-target="#pregunta-cierre" hx-swap="outerHTML" method="post">
           {% csrf_token %}
           <button type="submit" class="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline">
             Saltar

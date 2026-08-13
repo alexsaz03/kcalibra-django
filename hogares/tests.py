@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
-from hogares.models import Hogar, SolicitudEntrada
+from hogares.models import Hogar, Persona, SolicitudEntrada
 
 Usuario = get_user_model()
 
@@ -22,14 +22,14 @@ class CrearCuentaCreaHogarPropioTests(PruebaConRegistroAbierto):
     def test_al_verificar_ya_esta_dentro_de_su_hogar_con_su_codigo_a_la_vista(self):
         respuesta = self.registrar_y_verificar("alejandro@example.com")
 
-        usuario = Usuario.objects.get(email="alejandro@example.com")
-        self.assertIsNotNone(usuario.hogar_id)
-        self.assertEqual(usuario.hogar.miembros.count(), 1)
+        persona = Persona.objects.get(usuario__email="alejandro@example.com")
+        self.assertIsNotNone(persona.hogar_id)
+        self.assertEqual(persona.hogar.miembros.count(), 1)
 
         # "sin pedirle iniciar sesión aparte": la propia respuesta de pulsar el enlace ya
         # lleva a una pantalla autenticada con el código a la vista, sin pasar por /login/.
         respuesta_mi_hogar = self.client.get("/hogares/mi-hogar/")
-        self.assertContains(respuesta_mi_hogar, usuario.hogar.codigo)
+        self.assertContains(respuesta_mi_hogar, persona.hogar.codigo)
         self.assertContains(respuesta_mi_hogar, "alejandro@example.com")
 
 
@@ -48,10 +48,10 @@ class CodigoInvalidoTests(PruebaConRegistroAbierto):
             self.ultimo_enlace_de_verificacion(para_correo="euridice@example.com"),
             follow=True,
         )
-        usuario = Usuario.objects.get(email="euridice@example.com")
-        self.assertIsNotNone(usuario.hogar_id)
-        self.assertNotEqual(usuario.hogar.codigo, "NOEXISTEESTE")
-        self.assertEqual(usuario.hogar.miembros.count(), 1)
+        persona = Persona.objects.get(usuario__email="euridice@example.com")
+        self.assertIsNotNone(persona.hogar_id)
+        self.assertNotEqual(persona.hogar.codigo, "NOEXISTEESTE")
+        self.assertEqual(persona.hogar.miembros.count(), 1)
 
 
 class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
@@ -59,7 +59,7 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
 
     def _crear_hogar_de_alejandro(self):
         self.registrar_y_verificar("alejandro@example.com")
-        alejandro = Usuario.objects.get(email="alejandro@example.com")
+        alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
         return alejandro
 
@@ -81,7 +81,7 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         respuesta = self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=alejandro.hogar.codigo
         )
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
 
         # Está verificada y autenticada, pero SIN hogar: no ve nada del de alejandro.
         self.assertTrue(respuesta.wsgi_request.user.is_authenticated)
@@ -110,7 +110,7 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         solicitud = SolicitudEntrada.objects.get(hogar=alejandro.hogar)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
 
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertEqual(euridice.hogar_id, alejandro.hogar_id)
         solicitud.refresh_from_db()
         self.assertEqual(solicitud.estado, SolicitudEntrada.ACEPTADA)
@@ -143,7 +143,7 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         segunda_solicitud = SolicitudEntrada.objects.get(usuario__email="euridice@example.com")
         self.client.post(f"/hogares/mi-hogar/solicitudes/{segunda_solicitud.pk}/aceptar/")
 
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertEqual(euridice.hogar_id, alejandro.hogar_id)
 
     def test_rechazar_la_deja_con_su_propio_hogar(self):
@@ -157,7 +157,7 @@ class PedirEntrarConCodigoValidoTests(PruebaConRegistroAbierto):
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/rechazar/")
         self.client.logout()
 
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNotNone(euridice.hogar_id)
         self.assertNotEqual(euridice.hogar_id, alejandro.hogar_id)
         solicitud.refresh_from_db()
@@ -173,7 +173,7 @@ class CaducidadDeSolicitudTests(PruebaConRegistroAbierto):
 
     def _crear_solicitud_vieja(self):
         self.registrar_y_verificar("alejandro@example.com")
-        alejandro = Usuario.objects.get(email="alejandro@example.com")
+        alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
         self.registrar_y_verificar("euridice@example.com", codigo_hogar=alejandro.hogar.codigo)
         self.client.logout()
@@ -192,7 +192,7 @@ class CaducidadDeSolicitudTests(PruebaConRegistroAbierto):
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
         self.client.get("/hogares/mi-hogar/")
 
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNotNone(euridice.hogar_id)
         self.assertNotEqual(euridice.hogar_id, alejandro.hogar_id)
         solicitud.refresh_from_db()
@@ -209,7 +209,7 @@ class CaducidadDeSolicitudTests(PruebaConRegistroAbierto):
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
 
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertNotEqual(euridice.hogar_id, alejandro.hogar_id)
         solicitud.refresh_from_db()
         self.assertEqual(solicitud.estado, SolicitudEntrada.CADUCADA)
@@ -244,11 +244,11 @@ class AislamientoPorHogarTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar("berta@example.com")
-        self.berta = Usuario.objects.get(email="berta@example.com")
+        self.berta = Persona.objects.get(usuario__email="berta@example.com")
         self.client.logout()
 
         # Alguien pide entrar en el hogar de ALEJANDRO (no en el de berta).
@@ -268,7 +268,7 @@ class AislamientoPorHogarTests(PruebaConRegistroAbierto):
         self.assertEqual(respuesta.status_code, 404)
         self.solicitud_de_alejandro.refresh_from_db()
         self.assertEqual(self.solicitud_de_alejandro.estado, SolicitudEntrada.PENDIENTE)
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertNotEqual(euridice.hogar_id, self.alejandro.hogar_id)
 
     def test_alguien_de_otro_hogar_no_puede_rechazar_una_solicitud_ajena(self):
@@ -340,7 +340,7 @@ class AislamientoPorHogarTests(PruebaConRegistroAbierto):
             f"/hogares/mi-hogar/solicitudes/{self.solicitud_de_alejandro.pk}/aceptar/"
         )
         self.assertEqual(respuesta.status_code, 302)
-        euridice = Usuario.objects.get(email="euridice@example.com")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertEqual(euridice.hogar_id, self.alejandro.hogar_id)
 
 

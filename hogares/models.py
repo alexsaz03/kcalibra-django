@@ -1,11 +1,14 @@
 """
-El hogar: con quién se comparte, y el mecanismo de aislamiento que usará TODA la app.
+El hogar: quién vive en él, con quién se comparte, y el mecanismo de aislamiento que usará
+TODA la app.
 
-Dos piezas conviven aquí:
+Cuatro piezas conviven aquí:
 
-1. `Hogar` y `SolicitudEntrada`: los datos concretos de esta unidad (el código para invitar,
+1. `Hogar` y `SolicitudEntrada`: los datos concretos de la unidad 003 (el código para invitar,
    y las peticiones de entrada con su aceptación/rechazo/caducidad).
-2. `ModeloDeHogar`: la base abstracta que hace que "pertenecer a un hogar" sea un mecanismo
+2. `Persona`: quién vive en esta casa (unidad 023). Es lo que la app llamaba "usuario" cuando
+   creía que persona y cuenta eran la misma fila; ya no lo son. Ver su propio docstring.
+3. `ModeloDeHogar`: la base abstracta que hace que "pertenecer a un hogar" sea un mecanismo
    reutilizable, no una columna que cada unidad futura tenga que acordarse de añadir. La
    despensa, las recetas y el calendario de las unidades 004+ heredarán de aquí.
 """
@@ -70,15 +73,93 @@ class Hogar(models.Model):
         return f"Hogar {self.codigo}"
 
 
-def crear_hogar_propio(usuario) -> Hogar:
+class Persona(models.Model):
     """
-    Le monta a `usuario` su propio hogar y lo deja asignado. Es lo que pasa al registrarse sin
+    Alguien de la casa (unidad 023). Nace para deshacer la confusión con la que se construyó
+    esta app: hasta ahora "la persona" y "la cuenta" eran la MISMA fila (`cuentas.Usuario`),
+    y por eso la app no sabía representar a quien vive en el hogar pero no inicia sesión.
+
+    - `Persona` es **quién eres**: de qué casa eres, y de ti cuelga todo lo personal (el
+      perfil, las pesadas, los entrenos, el plan del día y los cierres).
+    - `cuentas.Usuario` se queda en lo que su propio docstring ya prometía: **cómo entras**
+      (un correo y una contraseña).
+
+    `usuario` es `null=True` a propósito, y ES el punto entero de esta unidad: el día que
+    exista alguien de la casa sin cuenta propia (unidad 024), su `Persona` tendrá esa columna
+    vacía. Hoy no hay ninguna: esta unidad prepara el terreno, no lo estrena.
+
+    **NO hereda de `ModeloDeHogar`**, aunque tenga un `hogar`: `ModeloDeHogar.hogar` es
+    `CASCADE` y obligatorio, y el de una persona necesita ser `PROTECT` y admitir nulo —
+    exactamente las mismas semánticas que tenía `Usuario.hogar` hasta esta unidad, incluido el
+    estado "esperando que le acepten" (R5/R14 de la unidad 003). Con su propia FK a `Hogar` le
+    basta para que el check de la unidad 020 (`kcalibra/tests_aislamiento.py`) acepte `persona`
+    como camino válido de acotación, que es lo que mantiene en verde
+    `planes/logica.py:obtener_plan_de`.
+
+    `on_delete=CASCADE` en `usuario`: borrar una cuenta se lleva por delante a su persona y,
+    con ella, todos sus datos — que es EXACTAMENTE lo que pasaba antes de esta unidad, cuando
+    los seis modelos colgaban directamente de `Usuario` con `CASCADE`. No se cambia aquí un
+    comportamiento que esta unidad promete no tocar; qué hacer con la ficha de alguien cuyo
+    responsable borra su cuenta es una pregunta abierta de la unidad 024.
+    """
+
+    # Mismas semánticas que tenía `Usuario.hogar` (unidad 003), campo a campo: `null` mientras
+    # espera que le acepten en el hogar de otra persona, y `PROTECT` para que un hogar con
+    # gente dentro no se borre por accidente al borrar a alguien más. `related_name="miembros"`
+    # se hereda tal cual de `Usuario.hogar`: `hogar.miembros` sigue significando "quién vive en
+    # esta casa" — solo que ahora devuelve personas, que es lo que siempre quiso decir.
+    hogar = models.ForeignKey(
+        Hogar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="miembros",
+    )
+
+    # La cuenta con la que esta persona entra, si tiene alguna. `OneToOneField` (único por
+    # construcción): una cuenta es de una sola persona y una persona no tiene dos cuentas.
+    usuario = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="persona",
+    )
+
+    def __str__(self):
+        if self.usuario_id:
+            return self.usuario.email
+        return f"Persona {self.pk} (sin cuenta)"
+
+
+def persona_de(usuario):
+    """
+    La `Persona` de esta cuenta, o `None` si por lo que sea no la tiene.
+
+    Toda cuenta nace con la suya (ver `hogares/signals.py:crear_persona_de_la_cuenta`), así
+    que en la práctica esto no devuelve `None` nunca; existe para que el middleware y las
+    puertas no tengan que envolver cada acceso en un `try/except`. Django cachea el resultado
+    en la instancia (también cuando no hay ninguna), así que llamarla varias veces en la misma
+    petición NO son varias consultas.
+    """
+    try:
+        return usuario.persona
+    except Persona.DoesNotExist:
+        return None
+
+
+def crear_hogar_propio(persona) -> Hogar:
+    """
+    Le monta a `persona` su propio hogar y lo deja asignado. Es lo que pasa al registrarse sin
     código (R1), con un código que no vale (R6), y cuando una petición de entrada se rechaza o
     caduca (R7, R8): en los tres casos la persona termina con SU hogar, nunca sin ninguno.
+
+    Unidad 023 — recibe una `Persona`, no un `Usuario`: el hogar es de quien vive en la casa,
+    no del correo con el que se entra.
     """
     hogar = Hogar.objects.create()
-    usuario.hogar = hogar
-    usuario.save(update_fields=["hogar"])
+    persona.hogar = hogar
+    persona.save(update_fields=["hogar"])
     return hogar
 
 

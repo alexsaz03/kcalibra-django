@@ -21,7 +21,6 @@ en hallazgos.md — es una desviación de "cómo" (R8 de las reglas del construc
 contrato: ningún R* de esta unidad pide un campo `hogar`.
 """
 
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -83,8 +82,8 @@ class Entreno(models.Model):
     dos casos se ven idénticos en la base de datos si no se guarda cuál fue. Ver hallazgos.md.
     """
 
-    usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="entrenos"
+    persona = models.ForeignKey(
+        "hogares.Persona", on_delete=models.CASCADE, related_name="entrenos"
     )
     fecha = models.DateField(default=timezone.localdate, validators=[_fecha_no_futura])
     deporte = models.CharField(max_length=10, choices=DEPORTES)
@@ -100,7 +99,7 @@ class Entreno(models.Model):
 
     class Meta:
         ordering = ["-fecha", "-creado_en"]
-        indexes = [models.Index(fields=["usuario", "fecha"])]
+        indexes = [models.Index(fields=["persona", "fecha"])]
 
     def __str__(self):
-        return f"{self.get_deporte_display()} de {self.usuario} el {self.fecha}"
+        return f"{self.get_deporte_display()} de {self.persona} el {self.fecha}"

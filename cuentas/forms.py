@@ -21,7 +21,7 @@ from django.contrib import messages
 from django.utils import timezone
 
 from hogares.logica import crear_hogar_propio
-from hogares.models import Hogar
+from hogares.models import Hogar, persona_de
 from perfiles import constantes
 from perfiles.logica import crear_perfil_desde_alta
 
@@ -90,7 +90,11 @@ class FormularioAlta(forms.Form):
         # (R7: "el peso que se teclea al crear la cuenta es la primera medición, con su
         # fecha"), y hacerlo antes de los `return` de más abajo evita que cualquier camino
         # del hogar se olvide de crearlos.
-        crear_perfil_desde_alta(user, self.cleaned_data)
+        # Unidad 023 — el perfil y el hogar son de la PERSONA, no de la cuenta. La persona ya
+        # existe: la crea `hogares.signals.crear_persona_de_la_cuenta` en el mismo instante en
+        # que allauth guarda el `Usuario`, antes de llegar aquí.
+        persona = persona_de(user)
+        crear_perfil_desde_alta(persona, self.cleaned_data)
 
         codigo = self.cleaned_data.get("codigo_hogar", "").strip().upper()
 
@@ -98,7 +102,7 @@ class FormularioAlta(forms.Form):
             # R1: sin código, hogar propio de inmediato. No hace falta esperar a que verifique
             # el correo para MONTARLO (nadie va a poder verlo hasta que verifique, R14); solo
             # hace falta esperar para dejárselo ver.
-            crear_hogar_propio(user)
+            crear_hogar_propio(persona)
             return
 
         if not Hogar.objects.filter(codigo=codigo).exists():
@@ -111,7 +115,7 @@ class FormularioAlta(forms.Form):
                 "invitar a los tuyos con el código que te daremos en cuanto verifiques tu "
                 "correo.",
             )
-            crear_hogar_propio(user)
+            crear_hogar_propio(persona)
             return
 
         # R5/G-37: código válido. NO se toca `hogar` (queda sin asignar) y NO se crea todavía

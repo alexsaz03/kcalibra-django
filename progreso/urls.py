@@ -6,5 +6,5 @@ app_name = "progreso"
 
 urlpatterns = [
     path("", views.ver_progreso, name="ver_mio"),
-    path("<int:usuario_id>/", views.ver_progreso, name="ver"),
+    path("<int:persona_id>/", views.ver_progreso, name="ver"),
 ]

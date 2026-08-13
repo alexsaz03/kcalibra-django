@@ -22,7 +22,7 @@ from django.utils import timezone
 from cierres.models import CierreDeDia
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
 from entrenos.models import Entreno
-from hogares.models import SolicitudEntrada
+from hogares.models import Persona, SolicitudEntrada
 from perfiles.models import MedicionPeso
 
 Usuario = get_user_model()
@@ -35,11 +35,11 @@ def _fijar_mediciones(usuario, mediciones):
     Se usa para controlar EXACTAMENTE qué hay en el periodo de cada test, sin que la medición
     que deja el alta (siempre "hoy", unidad 004) se cuele sin que el test la pidiera.
     """
-    MedicionPeso.objects.filter(usuario=usuario).delete()
+    MedicionPeso.objects.filter(persona=usuario).delete()
     hoy = timezone.localdate()
     for datos in mediciones:
         MedicionPeso.objects.create(
-            usuario=usuario,
+            persona=usuario,
             fecha=hoy - timedelta(days=datos["dias_atras"]),
             peso_kg=datos["peso_kg"],
             grasa_pct=datos.get("grasa_pct"),
@@ -54,11 +54,11 @@ def _fijar_entrenos(usuario, entrenos):
     relleno (no afectan a R1: esta unidad AGRUPA entrenos ya existentes, no vuelve a calcular
     sus calorías — eso ya lo prueban `servicios/tests.py` y `entrenos/tests.py`).
     """
-    Entreno.objects.filter(usuario=usuario).delete()
+    Entreno.objects.filter(persona=usuario).delete()
     hoy = timezone.localdate()
     for datos in entrenos:
         Entreno.objects.create(
-            usuario=usuario,
+            persona=usuario,
             fecha=hoy - timedelta(days=datos["dias_atras"]),
             deporte=datos.get("deporte", "correr"),
             intensidad=datos.get("intensidad", "media"),
@@ -73,11 +73,11 @@ def _fijar_cierres(usuario, cierres):
     Unidad 013 — sustituye TODOS los cierres de `usuario` por `cierres`: lista de dicts con
     "dias_atras" y "respuesta" (`CierreDeDia.LO_SEGUI` / `A_MEDIAS` / `NO_LO_SEGUI`).
     """
-    CierreDeDia.objects.filter(usuario=usuario).delete()
+    CierreDeDia.objects.filter(persona=usuario).delete()
     hoy = timezone.localdate()
     for datos in cierres:
         CierreDeDia.objects.create(
-            usuario=usuario,
+            persona=usuario,
             fecha=hoy - timedelta(days=datos["dias_atras"]),
             respuesta=datos["respuesta"],
         )
@@ -130,17 +130,17 @@ class BaseProgresoTests(PruebaConRegistroAbierto):
     def setUp(self):
         super().setUp()
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
-        self.alejandro = Usuario.objects.get(email="alejandro@example.com")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()
 
         self.registrar_y_verificar(
             "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo
         )
-        self.euridice = Usuario.objects.get(email="euridice@example.com")
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
-        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
         self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
         self.euridice.refresh_from_db()
         self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
@@ -148,7 +148,7 @@ class BaseProgresoTests(PruebaConRegistroAbierto):
 
         # Carlos, en SU PROPIO hogar (nunca se une a nadie): el escenario de R9.
         self.registrar_y_verificar("carlos@example.com", sexo="hombre")
-        self.carlos = Usuario.objects.get(email="carlos@example.com")
+        self.carlos = Persona.objects.get(usuario__email="carlos@example.com")
         self.client.logout()
 
         self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
@@ -353,7 +353,7 @@ class EscrituraAjenaSigueBloqueadaTests(BaseProgresoTests):
     """
 
     def test_r8_apuntar_el_peso_de_euridice_sigue_dando_404(self):
-        mediciones_antes = MedicionPeso.objects.filter(usuario=self.euridice).count()
+        mediciones_antes = MedicionPeso.objects.filter(persona=self.euridice).count()
         respuesta = self.client.post(
             f"/perfiles/{self.euridice.id}/peso/apuntar/",
             {
@@ -365,11 +365,11 @@ class EscrituraAjenaSigueBloqueadaTests(BaseProgresoTests):
         )
         self.assertEqual(respuesta.status_code, 404)
         self.assertEqual(
-            MedicionPeso.objects.filter(usuario=self.euridice).count(), mediciones_antes
+            MedicionPeso.objects.filter(persona=self.euridice).count(), mediciones_antes
         )
 
     def test_r8_borrar_una_medicion_de_euridice_sigue_dando_404(self):
-        medicion = MedicionPeso.objects.filter(usuario=self.euridice).first()  # la del alta
+        medicion = MedicionPeso.objects.filter(persona=self.euridice).first()  # la del alta
         self.assertIsNotNone(medicion)  # control
         respuesta = self.client.post(f"/perfiles/{self.euridice.id}/peso/{medicion.id}/borrar/")
         self.assertEqual(respuesta.status_code, 404)
@@ -439,7 +439,7 @@ class SinDatosTests(BaseProgresoTests):
     """R11 — sin pesadas (o con una sola), la pantalla lo dice con naturalidad, sin error."""
 
     def test_r11_sin_ninguna_pesada_no_da_error_y_lo_dice_con_naturalidad(self):
-        MedicionPeso.objects.filter(usuario=self.alejandro).delete()
+        MedicionPeso.objects.filter(persona=self.alejandro).delete()
         respuesta = self.client.get("/progreso/")
         self.assertEqual(respuesta.status_code, 200)
         self.assertContains(respuesta, "Todavía no tienes ninguna pesada apuntada")
@@ -634,7 +634,7 @@ class CumplimientoSinCierresTests(BaseProgresoTests):
     división por cero: la pantalla sigue entera y lo dice con naturalidad."""
 
     def test_r5_sin_cierres_no_hay_porcentaje_inventado_ni_error(self):
-        CierreDeDia.objects.filter(usuario=self.alejandro).delete()
+        CierreDeDia.objects.filter(persona=self.alejandro).delete()
         respuesta = self.client.get("/progreso/")
         self.assertEqual(respuesta.status_code, 200)
         cumplimiento = respuesta.context["cumplimiento"]
@@ -648,7 +648,7 @@ class SinEntrenosEnPeriodoTests(BaseProgresoTests):
     vacíos ni reclama nada, mismo trato que ya reciben grasa y cintura en la 010."""
 
     def test_r6_sin_entrenos_la_seccion_no_aparece(self):
-        Entreno.objects.filter(usuario=self.alejandro).delete()
+        Entreno.objects.filter(persona=self.alejandro).delete()
         respuesta = self.client.get("/progreso/")
         self.assertEqual(respuesta.status_code, 200)
         self.assertNotContains(respuesta, 'id="progreso-entrenos"')

@@ -18,7 +18,7 @@
     <ul class="mt-3 space-y-1">
       {% for miembro in miembros %}
         <li class="flex items-center justify-between text-slate-800">
-          <span>{{ miembro.email }}</span>
+          <span>{{ miembro.usuario.email }}</span>
           {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro, aunque #}
           {# solo su dueña pueda cambiarlos — perfiles/views.py lo hace cumplir en el         #}
           {# servidor, esto es solo el enlace para llegar. #}

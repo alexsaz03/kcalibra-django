@@ -2,7 +2,7 @@
 {% load partials %}
 
 {% block titulo %}
-  {% if es_propio %}Tu peso{% else %}Peso de {{ usuario_objetivo.email }}{% endif %}
+  {% if es_propio %}Tu peso{% else %}Peso de {{ persona_objetivo.usuario.email }}{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -23,7 +23,7 @@
   {% partialdef historico_de_peso %}
   <div id="historico-de-peso">
     <h1 class="text-2xl font-bold text-slate-900">
-      {% if es_propio %}Tu peso{% else %}Peso de {{ usuario_objetivo.email }}{% endif %}
+      {% if es_propio %}Tu peso{% else %}Peso de {{ persona_objetivo.usuario.email }}{% endif %}
     </h1>
     <p class="mt-1 text-sm text-slate-500">
       {% if es_propio %}
@@ -31,7 +31,7 @@
         opcionales: apúntalas solo si tu báscula te las da.
       {% else %}
         Solo lectura: el resto del hogar ve el peso, pero solo
-        {{ usuario_objetivo.email }} puede apuntarlo o borrarlo.
+        {{ persona_objetivo.usuario.email }} puede apuntarlo o borrarlo.
       {% endif %}
     </p>
 
@@ -70,7 +70,7 @@
             Todavía no tienes ninguna medición apuntada. Apunta tu primera pesada aquí abajo
             para que la app empiece a calcular tus calorías con tu peso de verdad.
           {% else %}
-            {{ usuario_objetivo.email }} todavía no tiene ninguna medición apuntada.
+            {{ persona_objetivo.usuario.email }} todavía no tiene ninguna medición apuntada.
           {% endif %}
         </p>
       {% endif %}
@@ -78,7 +78,7 @@
 
     {% if es_propio %}
       <form
-        hx-post="{% url 'perfiles:apuntar_peso' usuario_objetivo.id %}"
+        hx-post="{% url 'perfiles:apuntar_peso' persona_objetivo.id %}"
         hx-target="#historico-de-peso"
         hx-swap="outerHTML"
         method="post"
@@ -125,7 +125,7 @@
               </span>
               {% if es_propio %}
                 <form
-                  hx-post="{% url 'perfiles:borrar_peso' usuario_objetivo.id medicion.id %}"
+                  hx-post="{% url 'perfiles:borrar_peso' persona_objetivo.id medicion.id %}"
                   hx-target="#historico-de-peso"
                   hx-swap="outerHTML"
                   hx-confirm="¿Borrar la medición del {{ medicion.fecha }}?"
@@ -149,7 +149,7 @@
 
     {# Unidad 010 — vuelta a Progreso, para no dejar a quien llegó desde ahí sin salida. #}
     <p class="mt-6 text-sm">
-      <a href="{% url 'progreso:ver' usuario_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+      <a href="{% url 'progreso:ver' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
         ← Volver a {% if es_propio %}tu progreso{% else %}su progreso{% endif %}
       </a>
     </p>

@@ -10,7 +10,7 @@ class ComidaDelPlanInline(admin.TabularInline):
 
 @admin.register(PlanDeDia)
 class PlanDeDiaAdmin(admin.ModelAdmin):
-    list_display = ["usuario", "fecha", "hogar"]
+    list_display = ["persona", "fecha", "hogar"]
     list_filter = ["fecha"]
-    search_fields = ["usuario__email"]
+    search_fields = ["persona__usuario__email"]
     inlines = [ComidaDelPlanInline]

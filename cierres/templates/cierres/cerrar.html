@@ -20,7 +20,7 @@
     </p>
 
     <form
-      hx-post="{% url 'cierres:cerrar' usuario_objetivo.id %}"
+      hx-post="{% url 'cierres:cerrar' persona_objetivo.id %}"
       hx-target="#historico-de-cierres"
       hx-swap="outerHTML"
       method="post"
@@ -59,7 +59,7 @@
                 {% if cierre.calorias_comidas %} — {{ cierre.calorias_comidas }} kcal{% endif %}
               </span>
               <a
-                href="{% url 'cierres:cerrar' usuario_objetivo.id %}?fecha={{ cierre.fecha|date:'Y-m-d' }}"
+                href="{% url 'cierres:cerrar' persona_objetivo.id %}?fecha={{ cierre.fecha|date:'Y-m-d' }}"
                 class="font-medium text-emerald-700 hover:underline"
               >
                 Cambiar
