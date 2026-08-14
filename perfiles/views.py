@@ -1,15 +1,19 @@
 """
 Las pantallas del perfil (R3, R7, R8, R9): ver los datos y las calorías del día de cualquier
-persona del hogar, y cambiarlos solo si son los propios. Desde la unidad 006, también el
-histórico de peso: apuntar una medición y borrar una equivocada (R1-R10 de
-apuntar-el-peso.md).
+persona del hogar, y cambiarlos solo si son los propios o los de una persona a cargo propia
+(unidad 024/025). Desde la unidad 006, también el histórico de peso: apuntar una medición y
+borrar una equivocada (R1-R10 de apuntar-el-peso.md).
 
 Unidad 010 (R7/R8 de su especificación) — el histórico de peso deja de tratar lectura y
-escritura igual: `ver_peso` ahora es del hogar entero (`perfil_visible_o_404`, mismo criterio
-que `ver_perfil`), pero `apuntar_peso` y `borrar_peso` SIGUEN siendo solo de la propia persona
-(`perfil_propio_o_404`, sin cambios) — R-23 (darle-cuenta-propia-a-los-de-casa.md) nombra
-literalmente "el peso" entre lo que el hogar debe poder VER pero no cambiar, y G-171
-(ver-tu-progreso.md) exige que "se vea el de todos, pero uno cada vez".
+escritura igual: `ver_peso` es del hogar entero (`perfil_visible_o_404`, mismo criterio que
+`ver_perfil`) — R-23 (darle-cuenta-propia-a-los-de-casa.md) nombra literalmente "el peso" entre
+lo que el hogar debe poder VER pero no cambiar, y G-171 (ver-tu-progreso.md) exige que "se vea
+el de todos, pero uno cada vez".
+
+Unidad 025 (R1/R4/G-43 de su especificación) — la ESCRITURA (`apuntar_peso`, `borrar_peso`)
+pasa de `perfil_propio_o_404` a `perfil_editable_o_404`: la propia dueña, o su RESPONSABLE si
+es una persona a cargo, igual que ya hacía `actualizar_perfil` desde la unidad 024. Sigue
+siendo 404, nunca 403, para cualquier otro miembro del hogar.
 
 R8, la regla que más importa aquí: el CÁLCULO no se hace en ningún momento en este fichero.
 Estas vistas solo reciben la petición HTTP, llaman a `perfiles.logica` (que a su vez llama a

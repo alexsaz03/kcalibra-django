@@ -922,10 +922,11 @@ class AislamientoDePesoTests(PruebaConRegistroAbierto):
         """
         H2 de la revisión (2ª ronda) — el ataque que R7 nombra LITERALMENTE ("tampoco
         llamando al servidor con el id exacto") no es probarlo con el `usuario_id` de
-        Euridice (eso muere en la PRIMERA puerta, `perfil_propio_o_404`, y ni siquiera llega
-        a mirar `medicion_id`): es Alejandro llamando con SU PROPIO `usuario_id` —de verdad
-        el suyo, pasa la primera puerta sin problema— pero colando el `medicion_id` de
-        Euridice en la URL. Sin el segundo cinturón de `borrar_peso`
+        Euridice (eso muere en la PRIMERA puerta —`perfil_propio_o_404` cuando se escribió
+        este test; `perfil_editable_o_404` desde la unidad 025, mismo cinturón, otro
+        nombre—, y ni siquiera llega a mirar `medicion_id`): es Alejandro llamando con SU
+        PROPIO `usuario_id` —de verdad el suyo, pasa la primera puerta sin problema— pero
+        colando el `medicion_id` de Euridice en la URL. Sin el segundo cinturón de `borrar_peso`
         (`get_object_or_404(MedicionPeso, id=medicion_id, persona=perfil.usuario)`, que exige
         que la medición sea TAMBIÉN suya) esto borraría una medición ajena. Se comprobó a
         mano que si ese filtro se cambia por `get_object_or_404(MedicionPeso, id=medicion_id)`
