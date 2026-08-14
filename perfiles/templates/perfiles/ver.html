@@ -69,6 +69,23 @@
         mediciones. Ahora mismo {% if es_propio %}tienes{% else %}tiene{% endif %}
         {% if resultado %}{{ resultado.peso_kg }} kg{% else %}ninguna medición todavía{% endif %}.
       </p>
+
+      {# Unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para los entrenos y el #}
+      {# cierre del día: los dos solo son accesibles a quien puede editar (dueña o          #}
+      {# responsable), así que el enlace vive DENTRO de este `{% if puede_editar %}`.       #}
+      <p class="mt-3 text-xs text-slate-500">
+        {% if es_propio %}
+          También puedes ver
+          <a href="{% url 'entrenos:ver' perfil.persona_id %}" class="font-medium text-emerald-700 hover:underline">tus entrenos</a>
+          y
+          <a href="{% url 'cierres:cerrar' perfil.persona_id %}" class="font-medium text-emerald-700 hover:underline">cerrar tu día</a>.
+        {% else %}
+          También puedes ver
+          <a href="{% url 'entrenos:ver' perfil.persona_id %}" class="font-medium text-emerald-700 hover:underline">sus entrenos</a>
+          y
+          <a href="{% url 'cierres:cerrar' perfil.persona_id %}" class="font-medium text-emerald-700 hover:underline">cerrar su día</a>.
+        {% endif %}
+      </p>
     {% else %}
       {# Solo lectura (R9): el resto del hogar ve estos datos, pero no hay ningún formulario #}
       {# ni botón — no se esconde con CSS, no existe la ruta desde aquí (ver acceso.py). #}

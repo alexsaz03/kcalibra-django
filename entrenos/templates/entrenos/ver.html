@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% load partials %}
 
-{% block titulo %}Entrenos{% endblock %}
+{% block titulo %}
+  {% if es_propio %}Entrenos{% else %}Entrenos de {{ persona_objetivo.nombre }}{% endif %}
+{% endblock %}
 
 {% block content %}
 <div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
@@ -11,12 +13,26 @@
   {# como un trozo con nombre, para que HTMX pueda pedirlo suelto al apuntar un entreno      #}
   {# (Q-51) y sustituir SOLO esto, sin recargar nada más — mismo mecanismo que               #}
   {# perfiles/templates/perfiles/peso.html (unidad 006/010).                                 #}
+  {#                                                                                        #}
+  {# Unidad 025, R2/R5/G-43 — `es_propio` decide el TEXTO ("tus"/"sus"); `puede_editar`     #}
+  {# decide si se enseña el formulario y los botones de corregir/borrar — misma separación  #}
+  {# que perfiles/templates/perfiles/peso.html. Hoy `puede_editar` es siempre `True` aquí   #}
+  {# (la puerta ya filtró antes de renderizar: no hay "lo veo pero no lo cambio" para       #}
+  {# entrenos en esta unidad), pero se escribe explícito para no tener que tocar esta       #}
+  {# plantilla el día que se abra esa lectura.                                              #}
   {# ------------------------------------------------------------------------------------ #}
   {% partialdef entrenos_de_hoy %}
   <div id="entrenos-de-hoy">
-    <h1 class="text-2xl font-bold text-slate-900">Tus entrenos</h1>
+    <h1 class="text-2xl font-bold text-slate-900">
+      {% if es_propio %}Tus entrenos{% else %}Entrenos de {{ persona_objetivo.nombre }}{% endif %}
+    </h1>
     <p class="mt-1 text-sm text-slate-500">
-      Apunta lo que has entrenado y cuenta en las calorías que te tocan hoy.
+      {% if es_propio %}
+        Apunta lo que has entrenado y cuenta en las calorías que te tocan hoy.
+      {% else %}
+        Apunta lo que entrenó {{ persona_objetivo.nombre }} y cuenta en las calorías que le
+        tocan hoy.
+      {% endif %}
     </p>
 
     {# R1/§8 del plano — cuánto llevas quemado hoy, lo primero que se ve al entrar. #}
@@ -27,45 +43,50 @@
       </p>
       {% if objetivo %}
         <p class="mt-1 text-xs text-slate-500">
-          Tu objetivo de hoy ya las incluye: <strong>{{ objetivo.calorias }} kcal</strong> en total.
+          {% if es_propio %}Tu objetivo{% else %}Su objetivo{% endif %} de hoy ya las incluye:
+          <strong>{{ objetivo.calorias }} kcal</strong> en total.
         </p>
       {% endif %}
     </section>
 
-    <form
-      hx-post="{% url 'entrenos:apuntar' persona_objetivo.id %}"
-      hx-target="#entrenos-de-hoy"
-      hx-swap="outerHTML"
-      method="post"
-      class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
-    >
-      {% csrf_token %}
-      {% if form.non_field_errors %}
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
-          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
-        </div>
-      {% endif %}
-      {% for field in form.visible_fields %}
-        <div>
-          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
-            {{ field.label }}
-          </label>
-          {{ field }}
-          {% if field.help_text %}
-            <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
-          {% endif %}
-          {% if field.errors %}
-            <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
-          {% endif %}
-        </div>
-      {% endfor %}
-      <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
-        Apuntar entreno
-      </button>
-    </form>
+    {% if puede_editar %}
+      <form
+        hx-post="{% url 'entrenos:apuntar' persona_objetivo.id %}"
+        hx-target="#entrenos-de-hoy"
+        hx-swap="outerHTML"
+        method="post"
+        class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
+      >
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
+            {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+          </div>
+        {% endif %}
+        {% for field in form.visible_fields %}
+          <div>
+            <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
+              {{ field.label }}
+            </label>
+            {{ field }}
+            {% if field.help_text %}
+              <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
+            {% endif %}
+            {% if field.errors %}
+              <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+        <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
+          Apuntar entreno
+        </button>
+      </form>
+    {% endif %}
 
     <section class="mt-6">
-      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Tu histórico</h2>
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+        {% if es_propio %}Tu histórico{% else %}Histórico de {{ persona_objetivo.nombre }}{% endif %}
+      </h2>
       {% if entrenos %}
         <ul class="mt-3 space-y-2">
           {% for entreno in entrenos %}
@@ -75,26 +96,28 @@
                 {{ entreno.get_deporte_display }} ({{ entreno.get_intensidad_display }}) —
                 {{ entreno.minutos }} min — {{ entreno.calorias }} kcal
               </span>
-              <span class="flex shrink-0 items-center gap-3">
-                <a
-                  href="{% url 'entrenos:corregir' persona_objetivo.id entreno.id %}"
-                  class="font-medium text-emerald-700 hover:underline"
-                >
-                  Corregir
-                </a>
-                <form
-                  hx-post="{% url 'entrenos:borrar' persona_objetivo.id entreno.id %}"
-                  hx-target="#entrenos-de-hoy"
-                  hx-swap="outerHTML"
-                  hx-confirm="¿Borrar este entreno?"
-                  method="post"
-                >
-                  {% csrf_token %}
-                  <button type="submit" class="font-medium text-red-700 hover:underline">
-                    Borrar
-                  </button>
-                </form>
-              </span>
+              {% if puede_editar %}
+                <span class="flex shrink-0 items-center gap-3">
+                  <a
+                    href="{% url 'entrenos:corregir' persona_objetivo.id entreno.id %}"
+                    class="font-medium text-emerald-700 hover:underline"
+                  >
+                    Corregir
+                  </a>
+                  <form
+                    hx-post="{% url 'entrenos:borrar' persona_objetivo.id entreno.id %}"
+                    hx-target="#entrenos-de-hoy"
+                    hx-swap="outerHTML"
+                    hx-confirm="¿Borrar este entreno?"
+                    method="post"
+                  >
+                    {% csrf_token %}
+                    <button type="submit" class="font-medium text-red-700 hover:underline">
+                      Borrar
+                    </button>
+                  </form>
+                </span>
+              {% endif %}
             </li>
           {% endfor %}
         </ul>
@@ -102,8 +125,12 @@
         {# R12, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
         {# naturalidad, como el resto de pantallas "sin datos" de la app (peso, progreso). #}
         <p id="sin-entrenos" class="mt-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-          Todavía no has apuntado ningún entreno. En cuanto apuntes el primero, aparecerá aquí
-          y sus calorías se sumarán a lo que te toca comer hoy.
+          {% if es_propio %}
+            Todavía no has apuntado ningún entreno. En cuanto apuntes el primero, aparecerá aquí
+            y sus calorías se sumarán a lo que te toca comer hoy.
+          {% else %}
+            {{ persona_objetivo.nombre }} todavía no tiene ningún entreno apuntado.
+          {% endif %}
         </p>
       {% endif %}
     </section>

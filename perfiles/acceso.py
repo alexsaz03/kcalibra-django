@@ -20,41 +20,43 @@ persona y solo una.
 
 Unidad 024 (R4/G-43) — una tercera puerta, `perfil_editable_o_404`: además de la propia dueña,
 su RESPONSABLE también puede cambiar su perfil, si es una persona a cargo (R-99). Es la puerta
-que usa `actualizar_perfil`; `perfil_propio_o_404` sigue existiendo tal cual para lo que sigue
-siendo estrictamente de uno mismo (apuntar y borrar el peso, sin cambios en esta unidad — ver
-hallazgos.md para el porqué de no ampliar también esas dos).
+que usa `actualizar_perfil`.
+
+Unidad 025 — `puede_editar_perfil` deja de decidir por su cuenta "¿es la propia, o su
+responsable?": delega ENTERA en `hogares.acceso.puede_cambiar_lo_de`, la puerta única del
+proyecto para esa pregunta (G-43), que además corrige el defecto que tenía aquí el
+`_es_su_responsable` de antes (consultaba `Perfil.objects.filter(...)` en vez de
+`Persona.responsable` — R7: una persona a cargo sin `Perfil` todavía respondía mal). Y
+`apuntar_peso`/`borrar_peso` (`perfiles/views.py`) pasan de `perfil_propio_o_404` a
+`perfil_editable_o_404`: el peso entra en G-43 igual que el resto de los datos de la persona
+(el porqué de que antes NO se ampliara está en `hallazgos.md` de la unidad 024).
+`perfil_propio_o_404` se borra: sin nadie usándola, dejarla habría sido una puerta muerta.
 """
 
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 
-from hogares.acceso import persona_actual, persona_del_hogar_o_404
+from hogares.acceso import persona_actual, persona_del_hogar_o_404, puede_cambiar_lo_de
 
 from .models import Perfil
 
 
 def _es_la_propia(request, persona_id):
-    """¿`persona_id` es la persona de quien está haciendo la petición?"""
+    """¿`persona_id` es la persona de quien está haciendo la petición? Sigue viva (a
+    diferencia de `_es_su_responsable`, unidad 025): la usa `perfil_visible_o_404` para decidir
+    VISIBILIDAD, una pregunta distinta de "¿puede editarlo?" (`puede_editar_perfil`, de aquí
+    abajo)."""
     persona = persona_actual(request)
     return persona is not None and str(persona.id) == str(persona_id)
 
 
-def _es_su_responsable(request, persona_id):
-    """¿Quien pregunta es el `responsable` de `persona_id` (R-99, persona a cargo)?"""
-    persona = persona_actual(request)
-    if persona is None:
-        return False
-    return Perfil.objects.filter(
-        persona_id=persona_id, persona__responsable_id=persona.id
-    ).exists()
-
-
 def puede_editar_perfil(request, persona_id):
     """¿Quien pregunta puede CAMBIAR el perfil de `persona_id`? Es la propia dueña, o su
-    responsable (R4/R-99). Único sitio donde vive esta regla — la usan tanto `ver_perfil`
+    responsable (R4/R-99/G-43) — delegado ENTERO en `hogares.acceso.puede_cambiar_lo_de`
+    (unidad 025), la puerta única del proyecto para esta pregunta. La usan tanto `ver_perfil`
     (para decidir si enseña el formulario) como `perfil_editable_o_404` (para la puerta de
     escritura), así que las dos SIEMPRE están de acuerdo."""
-    return _es_la_propia(request, persona_id) or _es_su_responsable(request, persona_id)
+    return puede_cambiar_lo_de(request, persona_id)
 
 
 def perfil_visible_o_404(request, persona_id):
@@ -80,17 +82,6 @@ def perfil_visible_o_404(request, persona_id):
     # hace exactamente esta comprobación (404 si no hay hogar, o si es de otro).
     persona_ajena = persona_del_hogar_o_404(request, persona_id)
     return get_object_or_404(Perfil, persona_id=persona_ajena.id)
-
-
-def perfil_propio_o_404(request, persona_id):
-    """
-    El `Perfil` de `persona_id`, SOLO si es el de quien pregunta (R9: nadie más puede
-    cambiarlo). 404 en cualquier otro caso — incluido "existe, pero es de otra persona": no
-    se distingue de "no existe" (mismo principio que `hogares/acceso.py`).
-    """
-    if not _es_la_propia(request, persona_id):
-        raise Http404("No existe.")
-    return get_object_or_404(Perfil, persona_id=persona_id)
 
 
 def perfil_editable_o_404(request, persona_id):
