@@ -7,12 +7,33 @@ servidor directamente con el id exacto de una solicitud ajena, sin pasar por nin
 """
 
 from django.contrib.auth import get_user_model
+from django.http import Http404
+from django.test import RequestFactory
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
 from hogares.models import Hogar, Persona, SolicitudEntrada
 
+from .acceso import persona_editable_o_404, puede_cambiar_lo_de
+
 Usuario = get_user_model()
+
+# Datos físicos válidos de Marta, la niña a cargo de Alejandro (unidad 025, mismo criterio que
+# `hogares/tests_personas_de_la_casa.py:DATOS_DE_EURIDICE_A_CARGO`, unidad 024).
+DATOS_DE_MARTA_A_CARGO = {
+    "nombre": "Marta",
+    "sexo": "mujer",
+    "fecha_nacimiento": "2015-04-10",
+    "altura_cm": "140",
+    "peso_kg": "35",
+    "actividad": "moderado",
+    "objetivo": "mantener",
+    "ajuste_pct": "",
+    "dieta": "",
+    "alergias": "",
+    "intolerancias": "",
+    "no_le_gusta": "",
+}
 
 
 class CrearCuentaCreaHogarPropioTests(PruebaConRegistroAbierto):
@@ -413,3 +434,100 @@ class CodigoDeHogarTests(PruebaConRegistroAbierto):
         self.assertEqual(respuesta_1.status_code, respuesta_2.status_code)
         self.assertIn("no existe", respuesta_1.content.decode())
         self.assertIn("no existe", respuesta_2.content.decode())
+
+
+class R6_R7_LaReglaVivaEnUnSoloSitioTests(PruebaConRegistroAbierto):
+    """
+    Unidad 025 (R6/R7 de su especificación) — `puede_cambiar_lo_de` y `persona_editable_o_404`
+    (`hogares/acceso.py`) son la puerta ÚNICA que usan `perfiles/`, `entrenos/` y `cierres/`
+    para decidir "¿puede quien pregunta cambiar lo de esta persona?" (G-43). NINGUNA vista de
+    `hogares/` las llama (las usan las otras tres apps): por eso se prueban aquí DIRECTAMENTE,
+    con `RequestFactory` (`persona_actual` solo necesita `request.user`) — sin este fichero,
+    mutar la función a `return False` no tumbaría NINGÚN test de esta app, y R6 exige lo
+    contrario: que caigan tests de las CUATRO apps a la vez (`hogares`, `perfiles`, `entrenos`,
+    `cierres`).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+
+        respuesta = self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO, follow=True
+        )
+        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)
+
+        self.client.logout()
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo, sexo="mujer"
+        )
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
+        self.client.logout()
+
+        self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
+        self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/", follow=True)
+        self.euridice.refresh_from_db()
+        self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
+
+    @staticmethod
+    def _peticion_de(email):
+        """Una `HttpRequest` de mentira que solo lleva `.user` puesto — es lo único que
+        `hogares.acceso.persona_actual` mira (`persona_de(request.user)`)."""
+        peticion = RequestFactory().get("/")
+        peticion.user = Usuario.objects.get(email=email)
+        return peticion
+
+    def test_la_propia_persona_siempre_puede_cambiar_lo_suyo(self):
+        self.assertTrue(
+            puede_cambiar_lo_de(self._peticion_de("alejandro@example.com"), self.alejandro.id)
+        )
+
+    def test_el_responsable_puede_cambiar_lo_de_su_persona_a_cargo(self):
+        self.assertTrue(
+            puede_cambiar_lo_de(self._peticion_de("alejandro@example.com"), self.marta.id)
+        )
+
+    def test_otra_persona_del_hogar_con_cuenta_propia_no_puede_cambiar_lo_de_marta(self):
+        """R4 — Euridice vive en el MISMO hogar que Marta, pero no es su responsable."""
+        self.assertFalse(
+            puede_cambiar_lo_de(self._peticion_de("euridice@example.com"), self.marta.id)
+        )
+
+    def test_tener_a_alguien_a_cargo_no_da_permiso_sobre_el_resto_de_la_casa(self):
+        """R4, segunda mitad — Alejandro es responsable de Marta, pero eso no le da permiso
+        sobre Euridice, que tiene cuenta propia y no está a cargo de nadie."""
+        self.assertFalse(
+            puede_cambiar_lo_de(self._peticion_de("alejandro@example.com"), self.euridice.id)
+        )
+
+    def test_persona_editable_o_404_devuelve_la_persona_si_puede_cambiarla(self):
+        persona = persona_editable_o_404(
+            self._peticion_de("alejandro@example.com"), self.marta.id
+        )
+        self.assertEqual(persona.id, self.marta.id)
+
+    def test_persona_editable_o_404_da_404_nunca_403_si_no_puede_cambiarla(self):
+        with self.assertRaises(Http404):
+            persona_editable_o_404(self._peticion_de("euridice@example.com"), self.marta.id)
+
+    def test_una_persona_a_cargo_sin_perfil_no_revienta_la_puerta(self):
+        """R7 (caso límite) — la regla se decide sobre `Persona.responsable`, NUNCA sobre
+        `Perfil`: una persona a cargo sin `Perfil` todavía no debe dar un 500 ni un
+        `DoesNotExist`, solo la respuesta correcta (True para su responsable, False para
+        cualquier otro)."""
+        sin_perfil = Persona.objects.create(
+            hogar=self.alejandro.hogar, nombre="SinPerfil", responsable=self.alejandro
+        )
+        self.assertFalse(hasattr(sin_perfil, "perfil"))  # control: de verdad no tiene Perfil
+
+        self.assertTrue(
+            puede_cambiar_lo_de(self._peticion_de("alejandro@example.com"), sin_perfil.id)
+        )
+        self.assertFalse(
+            puede_cambiar_lo_de(self._peticion_de("euridice@example.com"), sin_perfil.id)
+        )
+        with self.assertRaises(Http404):
+            persona_editable_o_404(self._peticion_de("euridice@example.com"), sin_perfil.id)

@@ -25,7 +25,6 @@ from hogares.acceso import persona_actual
 
 from .acceso import (
     perfil_editable_o_404,
-    perfil_propio_o_404,
     perfil_visible_o_404,
     puede_editar_perfil,
 )
@@ -123,7 +122,7 @@ def actualizar_perfil(request, persona_id):
     return render(request, plantilla, contexto)
 
 
-def _contexto_peso(persona, es_propio, form=None):
+def _contexto_peso(persona, es_propio, puede_editar, form=None):
     """
     Reúne lo que necesita la pantalla del histórico de peso: el formulario (uno nuevo si no
     se pasa uno ya validado/con errores), el histórico completo, la última medición y el
@@ -131,14 +130,18 @@ def _contexto_peso(persona, es_propio, form=None):
     (el peso con el que se calcula) son DOS valores distintos, cada uno con su origen, para
     que la plantilla los rotule aparte sin confundirlos.
 
-    Unidad 010, R7/R8 — `es_propio` es lo que la plantilla usa para decidir si enseña el
-    formulario de apuntar y los botones de borrar (solo si es la propia persona): la LECTURA
-    ya puede llegar aquí siendo ajena (`ver_peso` abajo), pero la ESCRITURA sigue exigiendo
-    serlo (`apuntar_peso`/`borrar_peso`, sin cambios).
+    Unidad 010, R7/R8 — la LECTURA de esta pantalla puede llegar siendo ajena (`ver_peso`,
+    abajo): todo el hogar la ve.
+
+    Unidad 025, R4/G-43 — `puede_editar` (propia dueña O su responsable, `puede_editar_perfil`)
+    decide si la plantilla enseña el formulario de apuntar y los botones de borrar; `es_propio`
+    sigue decidiendo solo el TEXTO ("tu peso" / "peso de Marta") — la misma separación que ya
+    usa `perfiles/templates/perfiles/ver.html` desde la unidad 024.
     """
     return {
         "persona_objetivo": persona,
         "es_propio": es_propio,
+        "puede_editar": puede_editar,
         "form": form if form is not None else FormularioMedicion(),
         "mediciones": persona.mediciones_peso.all(),
         "ultima": ultima_medicion(persona),
@@ -153,18 +156,24 @@ def ver_peso(request, persona_id=None):
     `persona_id`, y el formulario para apuntar una pesada nueva. Sin `persona_id`, el propio
     (enlace de la barra de navegación).
 
-    Unidad 010, R7/R8 — la LECTURA de esta pantalla ahora es del hogar entero (mismo
-    principio que `ver_perfil`, y la puerta que R7/R-23/G-171 exigían para "ver el progreso
-    de otra persona de tu casa"): `perfil_visible_o_404` deja pasar el propio siempre y el
-    ajeno solo si comparte hogar. La ESCRITURA (`apuntar_peso`, `borrar_peso`, aquí abajo)
-    sigue exigiendo `perfil_propio_o_404` — nadie apunta ni borra el peso de otra persona con
-    cuenta propia (R8), eso NO cambia. La plantilla usa `es_propio` para no enseñar el
-    formulario ni los botones de borrar cuando se mira el de otra persona.
+    Unidad 010, R7/R8 — la LECTURA de esta pantalla es del hogar entero (mismo principio que
+    `ver_perfil`, y la puerta que R7/R-23/G-171 exigían para "ver el progreso de otra persona
+    de tu casa"): `perfil_visible_o_404` deja pasar el propio siempre y el ajeno solo si
+    comparte hogar.
+
+    Unidad 025, R1/R4/G-43 — la ESCRITURA (`apuntar_peso`, `borrar_peso`, aquí abajo) pasó de
+    `perfil_propio_o_404` a `perfil_editable_o_404`: además de la propia dueña, su
+    RESPONSABLE también apunta y borra su peso, si es una persona a cargo. La plantilla usa
+    `puede_editar` (no `es_propio`) para decidir si enseña el formulario y los botones de
+    borrar — misma separación que `ver.html` desde la unidad 024.
     """
     persona_id = persona_id if persona_id is not None else persona_actual(request).id
     perfil = perfil_visible_o_404(request, persona_id)
     es_propio = perfil.persona_id == persona_actual(request).id
-    return render(request, "perfiles/peso.html", _contexto_peso(perfil.persona, es_propio))
+    puede_editar = puede_editar_perfil(request, persona_id)
+    return render(
+        request, "perfiles/peso.html", _contexto_peso(perfil.persona, es_propio, puede_editar)
+    )
 
 
 @login_required
@@ -172,18 +181,23 @@ def ver_peso(request, persona_id=None):
 def apuntar_peso(request, persona_id):
     """
     R1/R2/R3/R10 — apunta una medición (o sustituye la de hoy si ya existía, R2/G-130: lo hace
-    `apuntar_medicion` con su `update_or_create`). `perfil_propio_o_404` es la puerta de R7:
-    nadie apunta el peso de otra persona, tampoco llamando aquí con su id exacto — 404, nunca
-    403. Con HTMX, responde solo el trozo del histórico (mismo patrón que
-    `actualizar_perfil`); sin HTMX, la página completa.
+    `apuntar_medicion` con su `update_or_create`).
+
+    Unidad 025, R1/R4 — `perfil_editable_o_404` es la puerta: la propia dueña, o su
+    responsable si es una persona a cargo (G-43); cualquier otro caso, 404, nunca 403. `es_propio`
+    se recalcula (ya no se puede asumir `True`: quien llega aquí puede ser el responsable de
+    otra persona) para que la plantilla siga rotulando "tu peso" / "peso de Marta" bien. Con
+    HTMX, responde solo el trozo del histórico (mismo patrón que `actualizar_perfil`); sin
+    HTMX, la página completa.
     """
-    perfil = perfil_propio_o_404(request, persona_id)
+    perfil = perfil_editable_o_404(request, persona_id)
+    es_propio = perfil.persona_id == persona_actual(request).id
     form = FormularioMedicion(request.POST)
     if form.is_valid():
         apuntar_medicion(perfil.persona, form.cleaned_data)
         form = FormularioMedicion()  # formulario limpio, listo para la siguiente pesada
 
-    contexto = _contexto_peso(perfil.persona, es_propio=True, form=form)
+    contexto = _contexto_peso(perfil.persona, es_propio=es_propio, puede_editar=True, form=form)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")
@@ -196,17 +210,20 @@ def apuntar_peso(request, persona_id):
 @require_POST
 def borrar_peso(request, persona_id, medicion_id):
     """
-    R8/R9 — borra una medición equivocada; el objetivo del día se recalcula solo, con las que
-    queden (o "sin ninguna", R9, sin reventar). Doble cinturón de R7: `perfil_propio_o_404`
-    comprueba que `persona_id` es quien pregunta, y el `get_object_or_404` de abajo exige
-    ADEMÁS que `medicion_id` sea SUYA — sin esto último, alguien podría apuntarse a sí mismo
-    (pasando su propio `persona_id`) y colar el id de una medición ajena para borrarla.
+    R1/R8/R9 — borra una medición equivocada; el objetivo del día se recalcula solo, con las
+    que queden (o "sin ninguna", R9, sin reventar).
+
+    Unidad 025, R1/R4 — doble cinturón, igual que antes: `perfil_editable_o_404` comprueba que
+    `persona_id` es quien pregunta O su responsable, y el `get_object_or_404` de abajo exige
+    ADEMÁS que `medicion_id` sea de ESA persona — sin esto último, alguien podría apuntarse a
+    sí mismo (o a una persona a su cargo) y colar el id de una medición ajena para borrarla.
     """
-    perfil = perfil_propio_o_404(request, persona_id)
+    perfil = perfil_editable_o_404(request, persona_id)
+    es_propio = perfil.persona_id == persona_actual(request).id
     medicion = get_object_or_404(MedicionPeso, id=medicion_id, persona=perfil.persona)
     borrar_medicion(medicion)
 
-    contexto = _contexto_peso(perfil.persona, es_propio=True)
+    contexto = _contexto_peso(perfil.persona, es_propio=es_propio, puede_editar=True)
     plantilla = (
         NOMBRE_DEL_PARTIAL_DEL_HISTORICO
         if request.headers.get("HX-Request")

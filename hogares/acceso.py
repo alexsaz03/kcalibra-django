@@ -17,6 +17,12 @@ Unidad 023 — la puerta pregunta por PERSONAS, no por cuentas: `usuario_del_hog
 llamarse `persona_del_hogar_o_404` y devuelve una `hogares.Persona`. El comportamiento es el
 mismo hasta la última coma (mismo 404, mismas ramas); lo que cambia es de quién cuelga el
 hogar, que ya no es del correo con el que se entra.
+
+Unidad 025 — se suma la OTRA mitad de G-43 ("lo de una persona lo cambia solo ella, o su
+responsable si es una persona a cargo"): `puede_cambiar_lo_de` y `persona_editable_o_404`, de
+aquí abajo. Es la puerta única que usan `perfiles/`, `entrenos/` y `cierres/` para decidir
+quién puede CAMBIAR los datos de una persona — antes vivía triplicada en espíritu (o, en
+`entrenos/`/`cierres/`, ni existía: autoescritura estrictamente propia).
 """
 
 from django.http import Http404
@@ -59,6 +65,46 @@ def obtener_de_mi_hogar_o_404(request, modelo, **filtros):
         # mirar si el objeto existe.
         raise Http404("No existe.")
     return get_object_or_404(modelo, hogar=hogar, **filtros)
+
+
+def puede_cambiar_lo_de(request, persona_id) -> bool:
+    """
+    ¿Puede quien hace la petición CAMBIAR los datos de `persona_id`? Es la propia persona, o
+    su RESPONSABLE si `persona_id` es una persona a cargo (G-43, R-99) — la mitad de "cambiar"
+    de la regla G-43 ("lo de una persona lo cambia solo ella, o su responsable si es una
+    persona a cargo"), nunca 403 (Q-20): quien llama decide qué hacer con el `False` (404,
+    siempre — ver `persona_editable_o_404` de aquí abajo).
+
+    Unidad 025 — puerta ÚNICA del proyecto para esta pregunta. Antes vivía duplicada en
+    espíritu en `perfiles/acceso.py` (`_es_su_responsable`, que además consultaba `Perfil` en
+    vez de `Persona.responsable` — el defecto que R7 de la especificación viene a cerrar), y
+    no existía en absoluto en `entrenos/` ni en `cierres/` (autoescritura estrictamente
+    propia hasta esta unidad). `perfiles/`, `entrenos/` y `cierres/` delegan aquí.
+
+    Se decide sobre `Persona.responsable` (R7), NUNCA sobre `Perfil`: una persona a cargo sin
+    `Perfil` todavía (un estado que la base de datos no prohíbe, aunque el alta de hoy
+    siempre cree uno) no debe dar ni un 500 ni un `DoesNotExist` — la pregunta que responde
+    esta función no necesita que exista ningún `Perfil` en absoluto.
+    """
+    persona_que_pregunta = persona_actual(request)
+    if persona_que_pregunta is None:
+        return False
+    if str(persona_que_pregunta.id) == str(persona_id):
+        return True
+    return Persona.objects.filter(pk=persona_id, responsable_id=persona_que_pregunta.id).exists()
+
+
+def persona_editable_o_404(request, persona_id):
+    """
+    La `Persona` `persona_id`, SOLO si quien pregunta puede CAMBIARLA
+    (`puede_cambiar_lo_de`): ella misma, o su responsable. 404 en cualquier otro caso —
+    también si `persona_id` no existe, o si tiene cuenta propia y quien pregunta es "solo"
+    otro miembro del hogar sin ser su responsable— nunca 403 (Q-20/Q-175): ni siquiera
+    llamando aquí con el id exacto, saltándose la pantalla.
+    """
+    if puede_cambiar_lo_de(request, persona_id):
+        return get_object_or_404(Persona, pk=persona_id)
+    raise Http404("No existe.")
 
 
 def persona_del_hogar_o_404(request, persona_id):

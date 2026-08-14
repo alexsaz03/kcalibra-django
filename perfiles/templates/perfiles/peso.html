@@ -14,11 +14,13 @@
   {# apuntar o borrar una pesada (R1/R8) y sustituir SOLO esto, sin recargar nada más —     #}
   {# mismo mecanismo que perfiles/templates/perfiles/ver.html y planes/apuntar.html.        #}
   {#                                                                                        #}
-  {# Unidad 010, R7/R8 — `es_propio` decide si se enseña el formulario de apuntar y los     #}
-  {# botones de borrar: la LECTURA de esta pantalla ya es del hogar entero (ver             #}
-  {# perfiles/views.py:ver_peso), pero la ESCRITURA sigue siendo solo de la propia          #}
-  {# persona. No se esconde con CSS: si no es propio, el formulario y los botones ni se     #}
-  {# generan (mismo patrón que perfiles/templates/perfiles/ver.html con la tarjeta ajena).  #}
+  {# Unidad 010, R7/R8 — la LECTURA de esta pantalla es del hogar entero (ver               #}
+  {# perfiles/views.py:ver_peso).                                                            #}
+  {#                                                                                        #}
+  {# Unidad 025, R1/R4/G-43 — `puede_editar` (propia dueña O su responsable) decide si se   #}
+  {# enseña el formulario de apuntar y los botones de borrar; `es_propio` (más abajo) solo  #}
+  {# decide el TEXTO ("tu"/"su"). No se esconde con CSS: si no puede editar, el formulario  #}
+  {# y los botones ni se generan (mismo patrón que perfiles/templates/perfiles/ver.html).   #}
   {# ------------------------------------------------------------------------------------ #}
   {% partialdef historico_de_peso %}
   <div id="historico-de-peso">
@@ -29,9 +31,12 @@
       {% if es_propio %}
         Apunta tu peso recién salido de la báscula. La grasa corporal y la cintura son
         opcionales: apúntalas solo si tu báscula te las da.
+      {% elif puede_editar %}
+        Apunta el peso de {{ persona_objetivo.nombre }}. La grasa corporal y la cintura son
+        opcionales: apúntalas solo si su báscula te las da.
       {% else %}
         Solo lectura: el resto del hogar ve el peso, pero solo
-        {{ persona_objetivo.nombre }} puede apuntarlo o borrarlo.
+        {{ persona_objetivo.nombre }} (o su responsable) puede apuntarlo o borrarlo.
       {% endif %}
     </p>
 
@@ -69,6 +74,9 @@
           {% if es_propio %}
             Todavía no tienes ninguna medición apuntada. Apunta tu primera pesada aquí abajo
             para que la app empiece a calcular tus calorías con tu peso de verdad.
+          {% elif puede_editar %}
+            {{ persona_objetivo.nombre }} todavía no tiene ninguna medición apuntada. Apúntale
+            la primera aquí abajo.
           {% else %}
             {{ persona_objetivo.nombre }} todavía no tiene ninguna medición apuntada.
           {% endif %}
@@ -76,7 +84,7 @@
       {% endif %}
     </section>
 
-    {% if es_propio %}
+    {% if puede_editar %}
       <form
         hx-post="{% url 'perfiles:apuntar_peso' persona_objetivo.id %}"
         hx-target="#historico-de-peso"
@@ -123,7 +131,7 @@
                 {% if medicion.grasa_pct != None %}· {{ medicion.grasa_pct }}% grasa{% endif %}
                 {% if medicion.cintura_cm != None %}· {{ medicion.cintura_cm }} cm cintura{% endif %}
               </span>
-              {% if es_propio %}
+              {% if puede_editar %}
                 <form
                   hx-post="{% url 'perfiles:borrar_peso' persona_objetivo.id medicion.id %}"
                   hx-target="#historico-de-peso"

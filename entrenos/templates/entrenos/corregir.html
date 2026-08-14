@@ -41,7 +41,7 @@
 
   <p class="mt-6 text-sm">
     <a href="{% url 'entrenos:ver' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
-      ← Volver a tus entrenos
+      {% if es_propio %}← Volver a tus entrenos{% else %}← Volver a los entrenos de {{ persona_objetivo.nombre }}{% endif %}
     </a>
   </p>
 </div>

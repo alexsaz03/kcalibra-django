@@ -1,8 +1,9 @@
 """
 Las pantallas de "cerrar el día" (unidad 012, decir-si-cumpliste.md): responder o saltar la
-pregunta que sale al abrir la app (R6-R9, Q-140), y el cierre a mano desde Progreso (R10).
-Solo lectura/escritura de UNO MISMO (R12): la puerta es `cierres/acceso.py:
-persona_propia_o_404`, la misma "mitad estricta" que usa `entrenos/views.py`.
+pregunta que sale al abrir la app (R6-R9, Q-140), y el cierre a mano desde Progreso (R10). La
+puerta es `cierres/acceso.py:persona_propia_o_404`, la misma que usa `entrenos/views.py` —
+desde la unidad 025 (R3/G-43) también deja pasar al RESPONSABLE de una persona a cargo, no
+solo a ella misma.
 
 R8 (arquitectura del proyecto, "las vistas no calculan; llaman"): estas vistas reciben la
 petición HTTP, llaman a `cierres.logica` y renderizan lo que devuelve — el cálculo (qué día
@@ -14,6 +15,7 @@ from django.shortcuts import redirect, render
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
 
+from hogares.acceso import persona_actual
 from planes.logica import obtener_plan_de
 
 from .acceso import persona_propia_o_404
@@ -89,8 +91,12 @@ def cerrar(request, persona_id):
 
     R13 (caso límite) — sin ningún cierre todavía, la plantilla lo dice con naturalidad (ver
     `cierres/cerrar.html`): esta vista no distingue el caso, simplemente pasa una lista vacía.
+
+    Unidad 025, R3/G-43 — `persona_id` puede ser una persona a cargo de quien pregunta
+    (`persona_propia_o_404` delega en `hogares.acceso.persona_editable_o_404`).
     """
     persona = persona_propia_o_404(request, persona_id)
+    quien_pregunta = persona_actual(request)
 
     if request.method == "POST":
         form = FormularioCierre(request.POST)
@@ -117,6 +123,12 @@ def cerrar(request, persona_id):
 
     contexto = {
         "persona_objetivo": persona,
+        # Unidad 025, R3/R5/G-43 — misma separación que perfiles/ y entrenos/: `es_propio`
+        # decide el TEXTO, `puede_editar` decide si se enseña el formulario. `puede_editar`
+        # es siempre `True` aquí (la puerta ya filtró antes de renderizar; no hay, en esta
+        # unidad, un tercer estado "lo veo pero no lo cambio" para cierres).
+        "es_propio": persona.id == quien_pregunta.id,
+        "puede_editar": True,
         "form": form,
         "cierres": CierreDeDia.objects.filter(persona=persona),
     }
