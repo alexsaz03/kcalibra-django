@@ -23,6 +23,12 @@ responsable si es una persona a cargo"): `puede_cambiar_lo_de` y `persona_editab
 aquí abajo. Es la puerta única que usan `perfiles/`, `entrenos/` y `cierres/` para decidir
 quién puede CAMBIAR los datos de una persona — antes vivía triplicada en espíritu (o, en
 `entrenos/`/`cierres/`, ni existía: autoescritura estrictamente propia).
+
+Unidad 026 — las dos salidas de G-195/R-101 (pasarle la ficha a otra persona de la casa, o
+borrarla a conciencia) necesitan una puerta MÁS ESTRECHA que `puede_cambiar_lo_de`: aquí la
+propia dueña NO vale, solo su responsable actual (R5 de la especificación de esta unidad,
+"quien cuida de alguien, ya puede apuntarle las cosas" — pero solo quien cuida decide si deja
+de cuidar). `es_su_responsable` y `persona_a_cargo_o_404`, aquí abajo.
 """
 
 from django.http import Http404
@@ -103,6 +109,35 @@ def persona_editable_o_404(request, persona_id):
     llamando aquí con el id exacto, saltándose la pantalla.
     """
     if puede_cambiar_lo_de(request, persona_id):
+        return get_object_or_404(Persona, pk=persona_id)
+    raise Http404("No existe.")
+
+
+def es_su_responsable(request, persona_id) -> bool:
+    """
+    ¿Es quien hace la petición el RESPONSABLE actual de `persona_id`? Más estrecha que
+    `puede_cambiar_lo_de` (unidad 025): aquí la propia dueña de la ficha NUNCA vale, solo su
+    responsable — a propósito, porque pasarle la ficha a otra persona o borrarla son actos que
+    solo tiene sentido que haga quien responde por ella (R5, unidad 026). En la práctica esto
+    nunca lo pediría la propia persona a cargo: sin cuenta, no puede ni autenticarse para hacer
+    la petición — pero la puerta no se fía de eso, se decide sobre el dato (`responsable_id`),
+    igual que `puede_cambiar_lo_de`.
+    """
+    persona_que_pregunta = persona_actual(request)
+    if persona_que_pregunta is None:
+        return False
+    return Persona.objects.filter(pk=persona_id, responsable_id=persona_que_pregunta.id).exists()
+
+
+def persona_a_cargo_o_404(request, persona_id):
+    """
+    La `Persona` `persona_id`, SOLO si quien pregunta es su responsable actual
+    (`es_su_responsable`). 404 en cualquier otro caso —también si `persona_id` no existe, si
+    tiene cuenta propia, o si es la propia dueña pidiéndolo saltándose la pantalla— nunca 403
+    (Q-20): Euridice, que vive en la misma casa pero no es responsable de Marta, recibe el
+    mismo 404 que si Marta no existiera (R5, unidad 026).
+    """
+    if es_su_responsable(request, persona_id):
         return get_object_or_404(Persona, pk=persona_id)
     raise Http404("No existe.")
 

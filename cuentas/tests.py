@@ -26,6 +26,7 @@ from django.db import connection
 from django.test import TestCase, override_settings
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, DATOS_FISICOS_POR_DEFECTO, PruebaConRegistroAbierto
+from hogares.models import Persona, SolicitudEntrada
 from kcalibra.settings import _booleano_desde_entorno, _entero_desde_entorno
 
 Usuario = get_user_model()
@@ -1281,3 +1282,73 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta_reset = self.client.get("/cuentas/password/reset/")
         self.assertEqual(respuesta_reset.status_code, 200)
         self.assertContains(respuesta_reset, "¿Has olvidado tu contraseña?")
+
+
+class YaPuedesBorrarTuCuentaTests(PruebaConRegistroAbierto):
+    """
+    R3 (unidad 026, docs/05-trabajo/026-la-salida-del-borrado/especificacion.md) — hecha
+    cualquiera de las dos salidas de G-195 (pasarla a otra persona de la casa que entre con su
+    cuenta, o borrarla a conciencia), Alejandro ya puede borrar su cuenta y se borra de
+    verdad. Antes de esta unidad no había forma de llegar aquí: la 024 (R5, arriba) solo dejó
+    el cerrojo puesto, sin ninguna de las dos llaves.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+
+        respuesta = self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-04-10",
+                "altura_cm": "140",
+                "peso_kg": "35",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+            follow=True,
+        )
+        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)
+
+    def test_tras_pasarla_ya_se_puede_borrar_la_cuenta(self):
+        self.client.logout()
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo, sexo="mujer"
+        )
+        self.client.logout()
+        self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
+        solicitud = SolicitudEntrada.objects.get(usuario__email="euridice@example.com")
+        self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
+
+        respuesta_pasar = self.client.post(
+            f"/hogares/mi-hogar/personas/{self.marta.id}/pasar/", {"destino": euridice.id}
+        )
+        self.marta.refresh_from_db()
+        self.assertEqual(self.marta.responsable_id, euridice.id)  # control: sí se pasó
+
+        respuesta = self.client.post("/cuentas/borrar/", follow=True)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(Usuario.objects.filter(email="alejandro@example.com").exists())
+        # Marta sigue existiendo, ahora a cargo de Euridice: no se la llevó nadie por delante.
+        self.marta.refresh_from_db()
+        self.assertEqual(self.marta.responsable_id, euridice.id)
+
+    def test_tras_borrarla_ya_se_puede_borrar_la_cuenta(self):
+        self.client.post(f"/hogares/mi-hogar/personas/{self.marta.id}/borrar/")
+        self.assertFalse(Persona.objects.filter(pk=self.marta.id).exists())  # control
+
+        respuesta = self.client.post("/cuentas/borrar/", follow=True)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(Usuario.objects.filter(email="alejandro@example.com").exists())

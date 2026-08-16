@@ -10,6 +10,7 @@ directamente a la URL, con el id exacto de una solicitud ajena, recibe un 404 id
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import ProtectedError
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -17,23 +18,39 @@ from django.views.decorators.http import require_POST
 
 from perfiles.logica import crear_perfil_desde_alta
 
-from .acceso import obtener_de_mi_hogar_o_404, persona_actual
-from .forms import FormularioAltaPersonaACargo
+from .acceso import (
+    obtener_de_mi_hogar_o_404,
+    persona_a_cargo_o_404,
+    persona_actual,
+    persona_del_hogar_o_404,
+)
+from .forms import FormularioAltaPersonaACargo, FormularioPasarACargo
 from .logica import crear_hogar_propio, resolver_solicitudes_caducadas
 from .models import Persona, SolicitudEntrada, persona_de
 
 
-def _contexto_mi_hogar(hogar, form):
+def _contexto_mi_hogar(hogar, form, persona=None):
     """Reúne lo que pinta "mi hogar" (R3/R100): la lista de miembros —con su nombre, quién
     entra con su cuenta y, si no entra, quién es su responsable— y las peticiones pendientes.
     Compartido entre el GET normal y el POST inválido del alta de abajo, para no repetir la
-    misma consulta dos veces en el fichero."""
+    misma consulta dos veces en el fichero.
+
+    Unidad 026 — a cada `miembro` que está a cargo de `persona` (quien mira la pantalla) se le
+    cuelga su `formulario_pasar` (R1/R4: el formulario con el que pasarle la ficha a otra
+    persona del hogar). `miembros` se fuerza a lista ANTES de recorrerla para colgar el
+    atributo: así la plantilla, que itera sobre el mismo `miembros` del contexto, ve la misma
+    instancia ya decorada — no una segunda evaluación del queryset sin el atributo puesto."""
     # Unidad 024 — `select_related("responsable")` trae de la misma consulta el nombre del
     # responsable de una persona a cargo (R100: "para las que no [entran], quién es su
     # responsable"), sin una consulta extra por fila.
-    miembros = hogar.miembros.select_related("usuario", "responsable").order_by(
-        "usuario__date_joined"
+    miembros = list(
+        hogar.miembros.select_related("usuario", "responsable").order_by("usuario__date_joined")
     )
+    for miembro in miembros:
+        es_mi_persona_a_cargo = persona is not None and miembro.responsable_id == persona.id
+        miembro.formulario_pasar = (
+            FormularioPasarACargo(hogar=hogar, excluir=persona) if es_mi_persona_a_cargo else None
+        )
     pendientes = (
         SolicitudEntrada.del_hogar(hogar)
         .filter(estado=SolicitudEntrada.PENDIENTE)
@@ -67,7 +84,7 @@ def mi_hogar(request):
     # ya debería estar caducada.
     resolver_solicitudes_caducadas(hogar=hogar)
 
-    contexto = _contexto_mi_hogar(hogar, form=FormularioAltaPersonaACargo())
+    contexto = _contexto_mi_hogar(hogar, form=FormularioAltaPersonaACargo(), persona=persona)
     return render(request, "hogares/mi_hogar.html", contexto)
 
 
@@ -108,7 +125,7 @@ def dar_de_alta_persona_a_cargo(request):
     # el resto de la pantalla (mismo patrón que perfiles/views.py:actualizar_perfil cuando no
     # hay HTMX de por medio: la pantalla entera, con el formulario que ya tenía).
     resolver_solicitudes_caducadas(hogar=hogar)
-    contexto = _contexto_mi_hogar(hogar, form=form)
+    contexto = _contexto_mi_hogar(hogar, form=form, persona=persona)
     return render(request, "hogares/mi_hogar.html", contexto)
 
 
@@ -172,3 +189,90 @@ def _cerrar_como_caducada_si_hace_falta(solicitud):
         solicitud.resuelta_en = timezone.now()
         solicitud.save(update_fields=["estado", "resuelta_en"])
         crear_hogar_propio(persona_de(solicitud.usuario))
+
+
+@login_required
+@require_POST
+def pasar_responsable(request, persona_id):
+    """
+    R1/R4 (unidad 026, la primera de las dos salidas de G-195) — Alejandro pasa a Marta a
+    cargo de Euridice: cambia SOLO `Persona.responsable`, así que la ficha de Marta se queda
+    entera, con todo su histórico (perfil, pesadas, entrenos, cierres, planes: nada de eso
+    cuelga de `responsable`, cuelga de `persona`, que no cambia). Desde este momento Euridice
+    puede cambiar sus datos y Alejandro ya no: `hogares/acceso.py:puede_cambiar_lo_de` lee
+    este mismo campo, así que el efecto es inmediato en las cuatro apps que ya delegan en esa
+    puerta (perfiles, entrenos, cierres, y la ficha de aquí).
+    """
+    quien_pide = persona_actual(request)
+    persona = persona_a_cargo_o_404(request, persona_id)  # R5: 404 si no soy su responsable
+
+    destino_id = request.POST.get("destino")
+    if destino_id:
+        try:
+            destino_id = int(destino_id)
+        except (TypeError, ValueError):
+            raise Http404("No existe.")
+        # Q-11/Q-20: un destino de OTRA casa es indistinguible desde fuera de uno que no
+        # existe — se comprueba con la misma puerta que usa el resto de la app, ANTES de que
+        # el formulario decida si además es una opción válida dentro del hogar correcto.
+        persona_del_hogar_o_404(request, destino_id)
+
+    form = FormularioPasarACargo(request.POST, hogar=persona.hogar, excluir=quien_pide)
+    if form.is_valid():
+        destino = form.cleaned_data["destino"]
+        persona.responsable = destino
+        persona.save(update_fields=["responsable"])
+        messages.success(request, f"{persona.nombre} ahora está a cargo de {destino.nombre}.")
+    else:
+        for error in form.errors.get("destino", []):
+            messages.error(request, error)
+    return redirect("hogares:mi_hogar")
+
+
+@login_required
+def borrar_persona_a_cargo(request, persona_id):
+    """
+    R2/R7 (unidad 026, la segunda salida de G-195) — borrar la ficha de una persona a cargo
+    "a conciencia": el GET enseña, en HTML servido por el servidor (nunca en un `confirm()` de
+    JavaScript, que ningún test ve — lección de la unidad 021), su nombre y cuánto histórico
+    se lleva por delante; el POST la borra de verdad, una por una (no existe borrado en lote).
+
+    Todo lo que cuelga de `Persona` es `CASCADE` (`perfiles/models.py`, `entrenos/models.py`,
+    `cierres/models.py`, `planes/models.py`), así que el histórico se va solo con ella — es
+    justo lo que G-195 promete ("se van con todo su histórico, porque lo ha pedido a
+    conciencia"). El único `PROTECT` es `Persona.responsable` hacia sí misma (R7, caso
+    límite): si la persona que se borra fuera a su vez responsable de otra —hoy no debería
+    poder pasar, una persona a cargo no tiene cuenta con la que dar de alta a nadie, pero el
+    campo lo permite en la base de datos— el `delete()` revienta con `ProtectedError`, que se
+    captura aquí con el mismo patrón que ya usa `cuentas/views.py:borrar_cuenta`.
+    """
+    persona = persona_a_cargo_o_404(request, persona_id)  # R5: 404 si no soy su responsable
+
+    if request.method == "POST":
+        nombre = persona.nombre
+        try:
+            persona.delete()
+        except ProtectedError:
+            # R7 — caso límite: `persona` es a su vez responsable de otra persona a cargo.
+            # Nunca un ProtectedError crudo ni un 500: un mensaje en cristiano, y nada se
+            # borra a medias (la transacción de la petición se deshace sola).
+            messages.error(
+                request,
+                f"No se puede borrar la ficha de {nombre}: a su vez tiene a alguien a su "
+                "cargo. Pásale antes esa persona a otra, o bórrala primero a ella.",
+            )
+            return redirect("hogares:mi_hogar")
+        messages.success(request, f"Se ha borrado la ficha de {nombre} y todo su histórico.")
+        return redirect("hogares:mi_hogar")
+
+    # GET: la pantalla de "a conciencia" — nombre y recuento ANTES de confirmar (R2).
+    recuento = {
+        "pesadas": persona.mediciones_peso.count(),
+        "entrenos": persona.entrenos.count(),
+        "cierres": persona.cierres_de_dia.count(),
+    }
+    return render(
+        request,
+        "hogares/borrar_persona_a_cargo.html",
+        {"persona": persona, "recuento": recuento},
+    )
