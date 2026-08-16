@@ -246,8 +246,12 @@ class R5_NoSePuedeBorrarLaCuentaConAlguienACargoTests(_ConAlejandroYEuridiceACar
 
     def test_el_aviso_explica_que_hay_que_decidir_que_pasa_con_ella_antes(self):
         respuesta = self.client.post("/cuentas/borrar/", follow=True)
-        self.assertContains(respuesta, "Euridice")
-        self.assertContains(respuesta, "a tu cargo")
+        # Unidad 026, 2ª ronda (H2, deuda heredada de la 024): "Euridice" ya la escribe la
+        # lista de "Quién vive en la casa", y "a tu cargo" también lo escribe, estático, el
+        # formulario de alta de esa misma pantalla ("Quedará a tu cargo:") — los dos asserts
+        # por separado pasan aunque el mensaje real cambie de texto (misma cara que H1/H2 de
+        # esta unidad). Se afirma sobre la frase completa del mensaje real.
+        self.assertContains(respuesta, "tienes a Euridice a tu cargo")
 
     def test_la_base_de_datos_lo_impide_tambien_si_alguien_se_salta_la_vista(self):
         """Q-175: la protección no vive SOLO en `cuentas/views.py:borrar_cuenta` — está

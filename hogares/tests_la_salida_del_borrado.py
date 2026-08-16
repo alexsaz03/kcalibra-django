@@ -329,6 +329,26 @@ class R5_SoloElResponsableActualTests(_ConAlejandroMartaYEuridice):
         ):
             self.assertNotEqual(respuesta.status_code, 403)
 
+    def test_solo_su_responsable_no_es_lo_mismo_que_ella_misma(self):
+        """H3 (2ª ronda): "SOLO su responsable actual" (el "Cómo" §1 dice explícitamente que
+        aquí "la propia dueña no cuenta") es una puerta MÁS ESTRECHA que `puede_cambiar_lo_de`
+        de la 025 — esa otra deja pasar también a "la propia persona". Los tests de arriba
+        prueban que la puerta IMPORTA (Euridice, que no es responsable de Marta, recibe 404 en
+        las tres rutas), pero ninguno prueba que sea ESTRECHA: con `es_su_responsable`
+        aflojada a `puede_cambiar_lo_de`, Alejandro —que es SU PROPIA persona, y por eso
+        `puede_cambiar_lo_de` lo dejaría pasar— podría pedir pasarse a SÍ MISMO a cargo de
+        Euridice contra su propio id, un estado que el modelo no debería admitir."""
+        self.client.logout()
+        self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
+
+        respuesta = self.client.post(
+            f"/hogares/mi-hogar/personas/{self.alejandro.id}/pasar/",
+            {"destino": self.euridice.id},
+        )
+        self.assertEqual(respuesta.status_code, 404)
+        self.alejandro.refresh_from_db()
+        self.assertIsNone(self.alejandro.responsable_id)  # nada cambió
+
 
 class R6_ElCaminoExisteTests(_ConAlejandroMartaYEuridice):
     """
@@ -339,7 +359,11 @@ class R6_ElCaminoExisteTests(_ConAlejandroMartaYEuridice):
     def test_el_aviso_nombra_a_marta_y_aterriza_donde_estan_las_dos_salidas(self):
         respuesta = self.client.post("/cuentas/borrar/", follow=True)
 
-        self.assertContains(respuesta, "Marta")  # nombra a quien lo impide
+        # Segunda ronda (H2): "Marta" ya la escribe la lista de "Quién vive en la casa" de
+        # esa misma pantalla — el comentario decía "nombra a quien lo impide" pero el assert
+        # no probaba eso (5ª/10ª/17ª cara). Se afirma sobre la frase completa del aviso, que
+        # solo sale del mensaje real de `cuentas/views.py:borrar_cuenta`.
+        self.assertContains(respuesta, "tienes a Marta a tu cargo")
         contenido = respuesta.content.decode()
         # Aterrizó en "Mi hogar", donde ahora viven las dos salidas de la fila de Marta.
         self.assertIn(f"/hogares/mi-hogar/personas/{self.marta.id}/pasar/", contenido)
@@ -366,7 +390,12 @@ class R7_CasoLimiteDelProtectTests(_ConAlejandroMartaYEuridice):
         )
 
         self.assertEqual(respuesta.status_code, 200)  # nunca un 500
-        self.assertContains(respuesta, "Marta")
+        # Segunda ronda (H1): "Marta" ya la escribe la lista de "Quién vive en la casa" de
+        # esa misma pantalla (5ª/10ª/17ª cara de tests-que-no-fallan-cuando-deben.md) — un
+        # assertContains(respuesta, "Marta") pasa aunque el mensaje sea un ProtectedError
+        # crudo. Se afirma sobre el texto distintivo del mensaje en cristiano, no sobre un
+        # nombre que la página ya escribe por su cuenta.
+        self.assertContains(respuesta, "a su vez tiene a alguien a su cargo")
         self.assertTrue(Persona.objects.filter(pk=self.marta.id).exists())
         self.assertTrue(Persona.objects.filter(pk=nieta.id).exists())
 
