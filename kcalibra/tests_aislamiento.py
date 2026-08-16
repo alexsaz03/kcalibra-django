@@ -19,12 +19,12 @@ Una consulta está acotada si alguna de sus llamadas de estrechamiento (`filter`
 hogar**:
 
 - el propio `hogar` del modelo, o
-- una clave ajena del modelo cuyo destino tenga a su vez un `hogar` (hoy: `usuario`, porque
-  `cuentas.Usuario.hogar` existe — ver `_lleva_a_un_hogar()` y `modelos_del_hogar()`).
+- una clave ajena del modelo cuyo destino tenga a su vez un `hogar` (hoy: `persona`, porque
+  `hogares.Persona.hogar` existe — ver `_lleva_a_un_hogar()` y `modelos_del_hogar()`).
 
 Ese segundo caso NO es un apaño para callar avisos: es el patrón real de `planes/logica.py`,
-donde el plan se pide por la persona (`filter(usuario=usuario, fecha=fecha)`) y esa persona ya
-vino validada por la puerta (`hogares.acceso.usuario_del_hogar_o_404`). Acotar por una persona
+donde el plan se pide por la persona (`filter(persona=persona, fecha=fecha)`) y esa persona ya
+vino validada por la puerta (`hogares.acceso.persona_del_hogar_o_404`). Acotar por una persona
 del hogar es MÁS estrecho que acotar por el hogar entero, no más ancho. La lista no se escribe a
 mano: se deduce de las claves ajenas de cada modelo, así que el día que llegue un modelo nuevo
 sus caminos al hogar se descubren solos, igual que el modelo (R3).
