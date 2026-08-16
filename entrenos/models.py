@@ -4,9 +4,10 @@ que cuente en las calorías que le tocan a la persona ese día (R-36 a R-38, C-3
 
 Es un dato DE LA PERSONA, no del hogar — mismo criterio que `perfiles.models.MedicionPeso`, no
 `planes.models.PlanDeDia`: esta unidad no abre ninguna lectura del hogar sobre entrenos ajenos
-(R-23 los nombra, pero llega con R-79 en Progreso, otra unidad) ni "de quién es" (personas a
-cargo, R-26/R-27, sin construir todavía: ni `a_cargo` ni `responsable` existen en `cuentas/` ni
-`hogares/`). Apuntar, corregir y borrar son SIEMPRE sobre uno mismo (R10).
+(R-23 los nombra, pero esa mitad de VER sigue sin construir, llega con R-79 en Progreso, otra
+unidad — ver `entrenos/acceso.py`). Apuntar, corregir y borrar son sobre uno mismo, o sobre una
+persona a cargo de quien pregunta (R10; unidad 025, R2/G-43 — `hogares.Persona.responsable`
+existe desde la unidad 024) — nunca sobre otra persona con cuenta propia.
 
 Nota para quien revise esto contra la especificación: `Entreno` NO hereda de
 `hogares.models.ModeloDeHogar` — fijado por

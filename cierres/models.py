@@ -4,8 +4,9 @@ nada, con calorías y nota opcionales (R-75), y —solo cuando la respuesta es "
 entero"— guardar el menú de ese día como historia (R-77/G-161/Q-142).
 
 Son datos DE LA PERSONA, no del hogar: mismo criterio que `perfiles.models.MedicionPeso` y
-`entrenos.models.Entreno` (cerrar el día de otra persona no está permitido ni siquiera dentro
-del mismo hogar, R12 — ver `cierres/acceso.py`), no el de `planes.models.PlanDeDia`.
+`entrenos.models.Entreno` (cerrar el día de otra persona con cuenta propia no está permitido,
+ni siquiera dentro del mismo hogar, R12 — salvo el responsable sobre su persona a cargo, unidad
+025/G-43 — ver `cierres/acceso.py`), no el de `planes.models.PlanDeDia`.
 """
 
 from django.core.exceptions import ValidationError
