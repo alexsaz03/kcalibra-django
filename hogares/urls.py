@@ -21,4 +21,14 @@ urlpatterns = [
         views.dar_de_alta_persona_a_cargo,
         name="dar_de_alta_persona_a_cargo",
     ),
+    path(
+        "mi-hogar/personas/<int:persona_id>/pasar/",
+        views.pasar_responsable,
+        name="pasar_responsable",
+    ),
+    path(
+        "mi-hogar/personas/<int:persona_id>/borrar/",
+        views.borrar_persona_a_cargo,
+        name="borrar_persona_a_cargo",
+    ),
 ]

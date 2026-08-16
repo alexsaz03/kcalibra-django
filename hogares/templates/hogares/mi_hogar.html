@@ -19,30 +19,69 @@
   {# `None` para quien no tiene cuenta (R-99), y entonces `miembro.responsable` dice de quién #}
   {# depende — siempre existe para esa persona, porque es justo el dato que la crea (R2).     #}
   {# -------------------------------------------------------------------------------------- #}
-  <section class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+  <section id="quien-vive-en-la-casa" class="mt-6 rounded-xl border border-slate-200 bg-white p-6">
     <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Quién vive en la casa</h2>
-    <ul class="mt-3 space-y-1">
+    <ul class="mt-3 space-y-2">
       {% for miembro in miembros %}
-        <li class="flex items-center justify-between text-slate-800">
-          <span>
-            {{ miembro.nombre }}
-            {% if miembro.usuario_id %}
-              <span class="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                Entra con su cuenta
-              </span>
-            {% else %}
-              <span class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                A cargo de {{ miembro.responsable.nombre }}
-              </span>
-            {% endif %}
-          </span>
-          {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro; R4      #}
-          {# (unidad 024) — si además es su responsable, esta misma pantalla de "ver datos"   #}
-          {# le deja también CAMBIARLOS (perfiles/acceso.py lo hace cumplir en el servidor,   #}
-          {# esto es solo el enlace para llegar). #}
-          <a href="{% url 'perfiles:ver' miembro.id %}" class="text-sm font-medium text-emerald-700 hover:underline">
-            Ver datos
-          </a>
+        <li class="text-slate-800">
+          <div class="flex items-center justify-between">
+            <span>
+              {{ miembro.nombre }}
+              {% if miembro.usuario_id %}
+                <span class="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  Entra con su cuenta
+                </span>
+              {% else %}
+                <span class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                  A cargo de {{ miembro.responsable.nombre }}
+                </span>
+              {% endif %}
+            </span>
+            {# R9 (unidad 004): cualquiera del hogar ve los datos de cualquier miembro; R4    #}
+            {# (unidad 024) — si además es su responsable, esta misma pantalla de "ver datos" #}
+            {# le deja también CAMBIARLOS (perfiles/acceso.py lo hace cumplir en el servidor, #}
+            {# esto es solo el enlace para llegar). #}
+            <a href="{% url 'perfiles:ver' miembro.id %}" class="text-sm font-medium text-emerald-700 hover:underline">
+              Ver datos
+            </a>
+          </div>
+
+          {# ---------------------------------------------------------------------------- #}
+          {# Unidad 026, R1/R2/R4/R6 — las DOS salidas de G-195, solo visibles para quien   #}
+          {# es responsable de esta persona (`miembro.formulario_pasar` viene puesto SOLO   #}
+          {# en ese caso, desde `hogares/views.py:_contexto_mi_hogar`). Si no queda nadie    #}
+          {# más con cuenta en el hogar, R4 pide decirlo claro: la única salida es borrar.   #}
+          {# ---------------------------------------------------------------------------- #}
+          {% if miembro.formulario_pasar %}
+            <div class="mt-2 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-2">
+              {% if miembro.formulario_pasar.fields.destino.queryset.exists %}
+                <form
+                  method="post"
+                  action="{% url 'hogares:pasar_responsable' miembro.id %}"
+                  class="flex flex-wrap items-center gap-2"
+                >
+                  {% csrf_token %}
+                  {{ miembro.formulario_pasar.destino }}
+                  <button
+                    type="submit"
+                    class="rounded-lg border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                  >
+                    Pasarle la ficha
+                  </button>
+                </form>
+              {% else %}
+                <p class="text-xs text-slate-500">
+                  Nadie más en la casa entra con su cuenta: la única salida es borrar su ficha.
+                </p>
+              {% endif %}
+              <a
+                href="{% url 'hogares:borrar_persona_a_cargo' miembro.id %}"
+                class="text-xs font-medium text-red-700 hover:underline"
+              >
+                Borrar su ficha
+              </a>
+            </div>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>
@@ -121,13 +160,17 @@
   {# (`cuentas/views.py:borrar_cuenta` lo comprueba, y `Persona.responsable` es PROTECT en    #}
   {# la base de datos: no hay vuelta atrás posible que se salte esto). Confirmación con el    #}
   {# mismo patrón que ya usa recetas/templates/recetas/detalle.html (sin HTMX: es un borrado  #}
-  {# de la cuenta entera, no un trozo de pantalla). #}
+  {# de la cuenta entera, no un trozo de pantalla).                                           #}
+  {# Unidad 026, R6 — el aviso ya no manda a una puerta que no existe: las dos salidas están  #}
+  {# arriba, en la fila de cada persona a cargo ("Quién vive en la casa").                    #}
   {# -------------------------------------------------------------------------------------- #}
   <section class="mt-6 rounded-xl border border-red-200 bg-red-50 p-6">
     <h2 class="text-sm font-medium uppercase tracking-wide text-red-700">Zona peligrosa</h2>
     <p class="mt-2 text-sm text-red-800">
       Borrar tu cuenta borra también todo lo tuyo (tu peso, tus entrenos, tu plan). Si tienes a
-      alguien a tu cargo, antes tendrás que decidir qué pasa con ella.
+      alguien a tu cargo, antes tendrás que
+      <a href="#quien-vive-en-la-casa" class="underline">pasarla a otra persona de la casa que
+      entre con su cuenta, o borrar su ficha a conciencia</a>, en la lista de arriba.
     </p>
     <form
       method="post"

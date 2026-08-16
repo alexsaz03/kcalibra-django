@@ -200,11 +200,11 @@ def corregir_correo(request):
 def borrar_cuenta(request):
     """
     R5/G-195 (caso límite de la unidad 024, el que la 023 dejó abierto): borrar la cuenta NO
-    se deja si quedan personas a cargo — primero hay que decidir qué pasa con ellas (pasarlas a
-    otra persona de la casa que entre, o borrarlas una a una a conciencia; ninguna de las dos
-    cosas la hace esta unidad, ver "Fuera de alcance" de su especificación: aquí solo se
-    IMPIDE el borrado, no se ofrece el camino de reasignar). Sin nadie a cargo, se borra sin
-    más preguntas (R5, segunda mitad).
+    se deja si quedan personas a cargo — primero hay que decidir qué pasa con ellas: pasarlas a
+    otra persona de la casa que entre (`hogares/views.py:pasar_responsable`) o borrarlas una a
+    una a conciencia (`hogares/views.py:borrar_persona_a_cargo`) — las dos salidas que G-195
+    promete, construidas por la unidad 026 en "Mi hogar", donde este mismo aviso redirige. Sin
+    nadie a cargo, se borra sin más preguntas (R5, segunda mitad).
 
     Doble cinturón, a propósito (Q-175: "ni borrando una cuenta... existe una persona sin
     cuenta y sin responsable"): la comprobación de aquí (`personas_a_cargo.exists()`) es la

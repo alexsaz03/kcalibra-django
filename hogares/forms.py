@@ -19,6 +19,8 @@ from django.utils import timezone
 
 from perfiles import constantes
 
+from .models import Persona
+
 
 class FormularioAltaPersonaACargo(forms.Form):
     nombre = forms.CharField(label="Nombre", max_length=100)
@@ -62,3 +64,41 @@ class FormularioAltaPersonaACargo(forms.Form):
         if valor > timezone.localdate():
             raise forms.ValidationError("La fecha de nacimiento no puede ser futura.")
         return valor
+
+
+class FormularioPasarACargo(forms.Form):
+    """
+    R1/R4 (unidad 026) — a quién se le puede pasar la ficha de una persona a cargo: alguien
+    del MISMO hogar, que entre con su PROPIA cuenta, y que no sea quien pide (`excluir`). La
+    validación vive AQUÍ, en el `ModelChoiceField`, no en la plantilla: un `<select>` que solo
+    PINTA las opciones válidas no protege de nada si alguien postea otro id a mano (lección de
+    la unidad 021, "lo que solo pinta el navegador, ningún test lo ve").
+
+    El hogar de `destino` se comprueba dos veces a propósito, y no es redundante: la puerta
+    `persona_del_hogar_o_404` (llamada ANTES de construir este formulario, en la vista) es la
+    que decide qué le pasa a un id de OTRA casa — 404, nunca un error de formulario, para no
+    confirmar que existe aunque sea en otro sitio (Q-11/Q-20). Este formulario solo decide
+    entre las opciones que YA son del hogar correcto: sin cuenta propia (una persona a cargo)
+    o la propia persona que pide, ninguna de las dos es un destino válido, y eso sí es un
+    rechazo corriente (R4: "se rechaza"), no un 404.
+    """
+
+    destino = forms.ModelChoiceField(
+        queryset=Persona.objects.none(),
+        label="Nuevo responsable",
+        error_messages={
+            "invalid_choice": (
+                "Ese destino no vale: tiene que ser otra persona de la casa que entre con su "
+                "propia cuenta."
+            ),
+            "required": "Elige a quién le pasas la ficha.",
+        },
+    )
+
+    def __init__(self, *args, hogar, excluir, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["destino"].queryset = (
+            Persona.objects.filter(hogar=hogar, usuario__isnull=False)
+            .exclude(pk=excluir.pk)
+            .order_by("nombre")
+        )
