@@ -701,13 +701,16 @@ class Bug030_LaPuertaCompartidaSinRedEnAisladoTests(PruebaConRegistroAbierto):
     (`BaseCierresTests` registra a Alejandro EL PRIMERO de la tanda) protege esa comparación
     en AISLADO: con las secuencias de `Persona` y `Usuario` recién migradas, el `persona.id` y
     el `usuario.id` de quien registra primero coinciden por pura casualidad (los dos valen 1)
-    — la misma forma que la 18ª cara de la 027 y la 16ª de la 029.
+    — la 16ª cara (`tests-que-no-fallan-cuando-deben.md`, unidad 023: los contadores van a la
+    par), que 027 y 029 ya cerraron para `progreso/` y `perfiles/` respectivamente, pero que
+    nunca se había cerrado aquí.
 
-    Medido en este worktree: mutando la línea 98 para comparar
-    `persona_que_pregunta.usuario_id` en vez de `.id` (la MISMA forma que protegen 027/029, no
-    una mutación cómoda), `python manage.py test cierres` SOLO sigue en `OK` — la coincidencia
-    numérica de más arriba tapa el defecto (docs/bugs/030-la-puerta-compartida-sin-red-en-
-    entrenos-y-cierres.md, sección 2).
+    Antes de esta clase, mutando la línea 98 para comparar `persona_que_pregunta.usuario_id`
+    en vez de `.id` (la MISMA forma que protegen 027/029, no una mutación cómoda),
+    `python manage.py test cierres` SOLO daba `OK` (57 tests) — la coincidencia numérica de
+    más arriba tapaba el defecto entonces; remedido restaurando la versión anterior de este
+    fichero (docs/bugs/030-la-puerta-compartida-sin-red-en-entrenos-y-cierres.md, sección 3).
+    Con esta clase presente, la misma mutación SÍ cae (esa misma ficha, sección 2).
 
     La cura, la misma que 027/029: dar de alta a una `Persona` SIN `Usuario` (Marta) ANTES de
     que Alejandro registre su cuenta, adelantando la secuencia de `Persona` un paso por
