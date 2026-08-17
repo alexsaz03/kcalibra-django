@@ -838,3 +838,127 @@ class TresSeccionesALaVezTests(BaseProgresoTests):
         self.assertContains(respuesta, "Peso")  # la 010, intacta
         self.assertContains(respuesta, 'id="progreso-entrenos"')
         self.assertContains(respuesta, 'id="progreso-cumplimiento"')
+
+
+class _ConAlejandroYMartaACargo(PruebaConRegistroAbierto):
+    """Alejandro (cuenta propia) y Marta, a su cargo (sin cuenta, R-99/G-43) — mismo montaje
+    que `cierres/tests_quien_tienes_a_cargo.py:R7_LaPuertaMiraResponsableNoPerfilTests`, sin
+    `Perfil` porque no hace falta para lo que este bug prueba (la puerta de `progreso/` no
+    depende de que exista uno). La sesión queda en Alejandro al terminar `setUp`."""
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+        self.marta = Persona.objects.create(
+            hogar=self.alejandro.hogar, nombre="Marta", responsable=self.alejandro
+        )
+
+
+class Bug028_ElResponsableVeElEnlaceDeCerrarTests(_ConAlejandroYMartaACargo):
+    """
+    Bug 028 — el patrón que la unidad 025 dejó escrito en el comentario de cada plantilla que
+    lo aplica (`es_propio` decide el TEXTO, `puede_editar` decide si se ENSEÑA la acción) se
+    quedó sin aplicar en `progreso/ver.html`: el enlace "Cerrar un día" usaba `es_propio`
+    ("soy yo", a secas) en vez de `puede_editar`, así que el responsable de una persona a
+    cargo —a quien `cierres/acceso.py` SÍ deja pasar, unidad 025— no veía el enlace en la
+    pantalla donde está mirando el cumplimiento.
+    """
+
+    def test_alejandro_ve_el_enlace_de_cerrar_el_dia_de_marta(self):
+        respuesta = self.client.get(f"/progreso/{self.marta.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        # `cierres/acceso.py` (unidad 025) ya deja pasar a Alejandro por esta URL; el enlace
+        # tiene que existir en la PANTALLA, no solo la puerta de detrás.
+        self.assertIn(f'href="/cierres/{self.marta.id}/"', contenido)
+
+
+class Bug028_SegundoSintomaElTextoDelHistoricoTests(_ConAlejandroYMartaACargo):
+    """
+    Bug 028, segundo síntoma (sección 1 de la ficha) — `ver.html` decía "Ver su histórico →"
+    a quien mira a su persona a cargo, cuando ahí también puede apuntarle una pesada
+    (`perfiles/views.py:ver_peso` sí lo deja, R1/G-43 de la unidad 025). El texto prometía
+    menos de lo que la app permite.
+
+    Contraprueba (regla 2 del constructor): con la plantilla ANTES del arreglo —el `{% if
+    es_propio %}/{% else %}` de dos ramas, sin la rama `puede_editar`— esta aserción daba
+    ROJO (el texto de abajo no existía en ninguna rama; solo salía "Ver su histórico →", sin
+    "apuntarle una pesada"). Reproducido a mano revirtiendo `ver.html` a esas dos ramas y
+    volviendo a correr este test en aislado:
+
+    $ git -C /Users/euridicepretelrodriguez/Desktop/proyectos/kcalibra-agents/codebase/028-progreso-no-ofrece-cerrar-el-dia-de-quien-cuidas stash
+    (la plantilla vuelve a la versión sin el `{% elif puede_editar %}`)
+    $ python manage.py test progreso.tests.Bug028_SegundoSintomaElTextoDelHistoricoTests -v 2
+    FAIL: test_alejandro_ve_que_puede_apuntarle_una_pesada_a_marta ... AssertionError:
+    'Ver su histórico y apuntarle una pesada →' not found in '...Ver su histórico →...'
+    $ git -C /Users/euridicepretelrodriguez/Desktop/proyectos/kcalibra-agents/codebase/028-progreso-no-ofrece-cerrar-el-dia-de-quien-cuidas stash pop
+    (la plantilla vuelve a tener el arreglo; ver sección 5 de la ficha para el output literal)
+    """
+
+    def test_alejandro_ve_que_puede_apuntarle_una_pesada_a_marta(self):
+        respuesta = self.client.get(f"/progreso/{self.marta.id}/")
+        contenido = respuesta.content.decode()
+        self.assertIn("Ver su histórico y apuntarle una pesada →", contenido)
+
+
+class Bug028_LaAmpliacionNoSeVaDeMadreTests(_ConAlejandroYMartaACargo):
+    """
+    Bug 028 — el arreglo cambia el CRITERIO de "¿se enseña el enlace?" de `es_propio` a
+    `puede_editar`, pero `puede_editar` tiene que seguir siendo tan ESTRECHO como
+    `hogares.acceso.puede_cambiar_lo_de` (G-43: la propia dueña, o SU responsable — nunca
+    "cualquiera del hogar", que es lo que `es_propio` de tan estricto NO dejaba ver antes por
+    accidente). Euridice está en el MISMO hogar que Marta (R7: la VE, R-23/G-171) pero no es
+    su responsable — nunca debe ver el enlace de cerrar el día de Marta, ni el texto de
+    "apuntarle una pesada".
+
+    Contraprueba (regla 2): esta aserción da ROJO si `puede_editar_progreso` se implementa
+    mal — por ejemplo, "cualquiera del MISMO hogar" en vez de "la dueña o su responsable"
+    (`hogares.acceso.puede_cambiar_lo_de`). Verificado con esa mutación exacta:
+
+    $ python - <<'PY'
+    import re
+    p = "progreso/acceso.py"
+    s = open(p).read()
+    s2 = s.replace(
+        "    return puede_cambiar_lo_de(request, persona_id)",
+        "    persona = persona_actual(request)\n"
+        "    return persona is not None and persona.hogar_id == "
+        "Persona.objects.get(pk=persona_id).hogar_id  # MUTACIÓN: todo el hogar, no solo la"
+        " dueña/responsable",
+        1,
+    )
+    open(p, "w").write(s2)
+    PY
+    $ python manage.py test progreso.tests.Bug028_LaAmpliacionNoSeVaDeMadreTests -v 2
+    FAIL: test_euridice_no_ve_el_enlace_de_cerrar_el_dia_de_marta ... AssertionError:
+    'href="/cierres/.../..."' unexpectedly found in ...
+    (mutación revertida con `git checkout -- progreso/acceso.py` a continuación — ver
+    sección 5 de la ficha para el output literal completo de esta contraprueba)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.logout()
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=self.alejandro.hogar.codigo, sexo="mujer"
+        )
+        self.euridice = Persona.objects.get(usuario__email="euridice@example.com")
+        self.client.logout()
+
+        self.client.login(username="alejandro@example.com", password=CLAVE_VALIDA)
+        solicitud = SolicitudEntrada.objects.get(usuario=self.euridice.usuario)
+        self.client.post(f"/hogares/mi-hogar/solicitudes/{solicitud.pk}/aceptar/")
+        self.euridice.refresh_from_db()
+        self.assertEqual(self.euridice.hogar_id, self.alejandro.hogar_id)  # control
+
+        self.client.logout()
+        self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
+
+    def test_euridice_no_ve_el_enlace_de_cerrar_el_dia_de_marta(self):
+        respuesta = self.client.get(f"/progreso/{self.marta.id}/")
+        self.assertEqual(respuesta.status_code, 200)  # control: R7, sí la ve (solo lectura)
+        contenido = respuesta.content.decode()
+        self.assertNotIn(f'href="/cierres/{self.marta.id}/"', contenido)
+        self.assertIn("Ver su histórico →", contenido)
+        self.assertNotIn("apuntarle una pesada", contenido)

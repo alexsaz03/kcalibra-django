@@ -31,7 +31,7 @@ from servicios.progreso import (
 
 from hogares.acceso import persona_actual
 
-from .acceso import persona_visible_o_404
+from .acceso import persona_visible_o_404, puede_editar_progreso
 
 
 @login_required
@@ -56,6 +56,12 @@ def ver_progreso(request, persona_id=None):
     persona_id = persona_id if persona_id is not None else yo.id
     persona_objetivo = persona_visible_o_404(request, persona_id)
     es_propio = persona_objetivo.id == yo.id
+    # Bug 028 — patrón de la unidad 025 (perfiles/templates/perfiles/ver.html:73-88):
+    # `es_propio` decide el TEXTO, `puede_editar` decide si se ENSEÑA una acción (aquí, el
+    # enlace a `cierres:cerrar`). Antes de esta unidad la plantilla usaba `es_propio` para
+    # esa decisión, así que el responsable de una persona a cargo no veía el enlace aunque
+    # `cierres/acceso.py` sí le deja pasar.
+    puede_editar = puede_editar_progreso(request, persona_id)
 
     semanas = semanas_desde_parametro(request.GET.get("semanas"))
     hoy = timezone.localdate()
@@ -100,6 +106,7 @@ def ver_progreso(request, persona_id=None):
     contexto = {
         "persona_objetivo": persona_objetivo,
         "es_propio": es_propio,
+        "puede_editar": puede_editar,
         "miembros_del_hogar": miembros_del_hogar,
         "semanas": semanas,
         "semanas_min": SEMANAS_MIN,
