@@ -882,18 +882,22 @@ class Bug028_SegundoSintomaElTextoDelHistoricoTests(_ConAlejandroYMartaACargo):
     menos de lo que la app permite.
 
     Contraprueba (regla 2 del constructor): con la plantilla ANTES del arreglo —el `{% if
-    es_propio %}/{% else %}` de dos ramas, sin la rama `puede_editar`— esta aserción daba
-    ROJO (el texto de abajo no existía en ninguna rama; solo salía "Ver su histórico →", sin
-    "apuntarle una pesada"). Reproducido a mano revirtiendo `ver.html` a esas dos ramas y
-    volviendo a correr este test en aislado:
+    es_propio %}/{% else %}` de dos ramas, sin la rama `puede_editar`— esta aserción da
+    ROJO (el texto de abajo no existe en ninguna rama; solo sale "Ver su histórico →", sin
+    "apuntarle una pesada"). Receta REAL y reejecutable (nunca `git stash`: la pila es única
+    y compartida entre TODOS los worktrees, y aquí además ni siquiera sería reproducible —
+    esta rama tiene un solo commit, así que un stash a secas se llevaría también estas clases
+    de test y la corrida diría "no such test", no el `AssertionError` de abajo). Revierte SOLO
+    la plantilla al commit anterior al arreglo (`34dd815`, el padre de este bug en la rama), y
+    la restaura al terminar:
 
-    $ git -C /Users/euridicepretelrodriguez/Desktop/proyectos/kcalibra-agents/codebase/028-progreso-no-ofrece-cerrar-el-dia-de-quien-cuidas stash
-    (la plantilla vuelve a la versión sin el `{% elif puede_editar %}`)
+    $ git checkout 34dd815 -- progreso/templates/progreso/ver.html
     $ python manage.py test progreso.tests.Bug028_SegundoSintomaElTextoDelHistoricoTests -v 2
     FAIL: test_alejandro_ve_que_puede_apuntarle_una_pesada_a_marta ... AssertionError:
     'Ver su histórico y apuntarle una pesada →' not found in '...Ver su histórico →...'
-    $ git -C /Users/euridicepretelrodriguez/Desktop/proyectos/kcalibra-agents/codebase/028-progreso-no-ofrece-cerrar-el-dia-de-quien-cuidas stash pop
-    (la plantilla vuelve a tener el arreglo; ver sección 5 de la ficha para el output literal)
+    $ git checkout HEAD -- progreso/templates/progreso/ver.html
+    (la plantilla vuelve a tener el arreglo; ver sección 5 de la ficha para el output literal
+    completo de las dos corridas, ROJO y VERDE)
     """
 
     def test_alejandro_ve_que_puede_apuntarle_una_pesada_a_marta(self):
@@ -914,27 +918,32 @@ class Bug028_LaAmpliacionNoSeVaDeMadreTests(_ConAlejandroYMartaACargo):
 
     Contraprueba (regla 2): esta aserción da ROJO si `puede_editar_progreso` se implementa
     mal — por ejemplo, "cualquiera del MISMO hogar" en vez de "la dueña o su responsable"
-    (`hogares.acceso.puede_cambiar_lo_de`). Verificado con esa mutación exacta:
+    (`hogares.acceso.puede_cambiar_lo_de`). Receta REAL y reejecutable (probada tal cual:
+    importa `Persona` DENTRO de la mutación —`progreso/acceso.py` no la tiene importada a
+    nivel de módulo— porque sin ese `import` la llamada revienta con `NameError`, no con el
+    `AssertionError` que se afirma abajo):
 
     $ python - <<'PY'
-    import re
     p = "progreso/acceso.py"
     s = open(p).read()
     s2 = s.replace(
         "    return puede_cambiar_lo_de(request, persona_id)",
+        "    from hogares.models import Persona  # MUTACION\n"
         "    persona = persona_actual(request)\n"
         "    return persona is not None and persona.hogar_id == "
-        "Persona.objects.get(pk=persona_id).hogar_id  # MUTACIÓN: todo el hogar, no solo la"
-        " dueña/responsable",
+        "Persona.objects.get(pk=persona_id).hogar_id  # MUTACION: todo el hogar, no solo la"
+        " duena/responsable",
         1,
     )
+    assert s2 != s, "el replace no encontró el texto a mutar"
     open(p, "w").write(s2)
     PY
     $ python manage.py test progreso.tests.Bug028_LaAmpliacionNoSeVaDeMadreTests -v 2
     FAIL: test_euridice_no_ve_el_enlace_de_cerrar_el_dia_de_marta ... AssertionError:
-    'href="/cierres/.../..."' unexpectedly found in ...
-    (mutación revertida con `git checkout -- progreso/acceso.py` a continuación — ver
-    sección 5 de la ficha para el output literal completo de esta contraprueba)
+    'href="/cierres/2/"' unexpectedly found in ...
+    $ git checkout HEAD -- progreso/acceso.py
+    (mutación revertida; ver sección 5 de la ficha para el output literal completo de las dos
+    corridas, ROJO y VERDE)
     """
 
     def setUp(self):
