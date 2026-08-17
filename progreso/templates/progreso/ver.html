@@ -171,18 +171,25 @@
 
   <p class="mt-6 text-sm">
     <a href="{% url 'perfiles:peso' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
-      {% if es_propio %}Ver tu histórico y apuntar una pesada →{% else %}Ver su histórico →{% endif %}
+      {% if es_propio %}
+        Ver tu histórico y apuntar una pesada →
+      {% elif puede_editar %}
+        Ver su histórico y apuntarle una pesada →
+      {% else %}
+        Ver su histórico →
+      {% endif %}
     </a>
   </p>
 
   {# -------------------------------------------------------------------------------------- #}
-  {# R10/§8 del plano (unidad 012, decir-si-cumpliste.md): "el cierre a mano desde Progreso". #}
-  {# El enlace solo se ofrece si `es_propio` (progreso/views.py:58: "soy yo", a secas) — hoy   #}
-  {# NO coincide con la puerta de `cierres/acceso.py`, que desde la unidad 025 también deja    #}
-  {# cerrar al responsable de una persona a cargo; ese hueco ya tiene su propia ficha de bug,  #}
-  {# no se toca aquí. Fuera de `es_propio`, sería un enlace muerto contra esa puerta (404).     #}
+  {# Bug 028, unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para los entrenos y #}
+  {# el cierre del día: los dos solo son accesibles a quien puede editar (dueña o             #}
+  {# responsable), así que el enlace vive DENTRO de este `{% if puede_editar %}` — no de       #}
+  {# `{% if es_propio %}` ("soy yo", a secas), que es lo que esta pantalla usaba hasta este    #}
+  {# bug y lo que dejaba sin el enlace al responsable de una persona a cargo, aunque           #}
+  {# `cierres/acceso.py` (unidad 025) ya le deja pasar sin discusión.                          #}
   {# -------------------------------------------------------------------------------------- #}
-  {% if es_propio %}
+  {% if puede_editar %}
     <p class="mt-3 text-sm">
       <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
         Cerrar un día (¿cumpliste el plan?) →

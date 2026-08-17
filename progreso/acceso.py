@@ -15,9 +15,16 @@ get_object_or_404(..., hogar=hogar)` una cuarta vez.
 
 Esta puerta es SOLO de lectura: Progreso no tiene ninguna vista de escritura propia (apuntar y
 borrar el peso siguen siendo cosa de `perfiles/`, con su propia puerta sin cambios — R8).
+
+Bug 028 — `puede_editar_progreso`, aquí abajo: `progreso/` no escribe nada, pero SÍ enlaza a
+quien escribe (`cierres:cerrar`), y ese enlace tiene que enseñarse con el mismo criterio con el
+que `cierres/acceso.py` deja pasar (G-43: la propia dueña, o su responsable si es una persona a
+cargo) — no con "soy yo" a secas (`es_propio`, que solo debe decidir TEXTO, patrón de la unidad
+025). Copiado de `perfiles/acceso.py:puede_editar_perfil`: delega ENTERO en
+`hogares.acceso.puede_cambiar_lo_de`, la puerta única del proyecto para esta pregunta.
 """
 
-from hogares.acceso import persona_actual, persona_del_hogar_o_404
+from hogares.acceso import persona_actual, persona_del_hogar_o_404, puede_cambiar_lo_de
 
 
 def persona_visible_o_404(request, persona_id):
@@ -31,3 +38,12 @@ def persona_visible_o_404(request, persona_id):
     if persona is not None and str(persona.id) == str(persona_id):
         return persona
     return persona_del_hogar_o_404(request, persona_id)
+
+
+def puede_editar_progreso(request, persona_id):
+    """¿Quien pregunta puede CAMBIAR los datos de `persona_id` (apuntar una pesada, cerrar un
+    día)? Es la propia dueña, o su responsable (R4/R-99/G-43) — delegado ENTERO en
+    `hogares.acceso.puede_cambiar_lo_de` (bug 028, mismo patrón que `puede_editar_perfil` de
+    `perfiles/acceso.py`). La usa `ver_progreso` para decidir si enseña el enlace a
+    `cierres:cerrar`: ese SÍ es el criterio correcto, aunque Progreso en sí no escriba nada."""
+    return puede_cambiar_lo_de(request, persona_id)
