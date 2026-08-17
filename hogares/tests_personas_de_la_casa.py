@@ -25,6 +25,33 @@ from .models import Persona, SolicitudEntrada
 
 Usuario = get_user_model()
 
+# Bug 027 (misma familia que 016/018/019/026, cara de
+# docs/conocimiento/tests-que-no-fallan-cuando-deben.md): `templates/base.html` pinta el nombre
+# de quien tiene la sesión abierta en la barra de arriba de TODAS las páginas de la app. Un
+# assertIn("Alejandro", <página entera>) hecho estando Alejandro logueado pasa SIEMPRE, viva o
+# no viva "Alejandro" en el contenido propio de la pantalla — medido mutando cada plantilla
+# para que no diga nada suyo en su cuerpo: la suite seguía en verde (ver
+# docs/bugs/027-asserts-de-la-024-y-una-rama-de-progreso-sin-red.md, sección 2). Estas
+# dos zonas se usan para acotar, nunca para aflojar lo que cada test comprueba.
+
+
+def _zona_de_la_barra_de_arriba(contenido):
+    """Aísla el `<header>` (`templates/base.html`): el ÚNICO sitio de la página donde esta
+    unidad garantiza el nombre de quien mira, siempre, en toda pantalla autenticada — es
+    exactamente lo que promete `test_la_barra_de_arriba_enseña_el_nombre_no_el_correo`, así
+    que es lo único que ese test debe mirar."""
+    inicio = contenido.index("<header")
+    fin = contenido.index("</header>", inicio) + len("</header>")
+    return contenido[inicio:fin]
+
+
+def _zona_de_cuerpo(contenido):
+    """Todo lo que hay DESPUÉS de la barra de arriba: el contenido propio de cada pantalla,
+    sin la barra que se repite igual en todas y que por eso no prueba nada específico de
+    ESTA pantalla."""
+    return contenido.split("</header>", 1)[1]
+
+
 # Los mismos datos físicos de Euridice que usa el resto de la suite (R1 de crear-cuenta.md,
 # C-112 de darle-cuenta-propia-a-los-de-casa.md): 167 cm, 62 kg, objetivo "adelgazar" (la
 # clave real es "perder_grasa", ver perfiles/constantes.py) — 1.894 kcal es su cifra conocida.
@@ -68,29 +95,64 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
     """
 
     def test_ninguna_pantalla_muestra_ningun_correo(self):
-        rutas = [
-            "/",  # Inicio
-            f"/progreso/{self.alejandro.id}/",  # Progreso
-            f"/perfiles/{self.alejandro.id}/peso/",  # su peso
-            f"/planes/{self.alejandro.id}/apuntar/",  # apuntar plan
-            f"/perfiles/{self.alejandro.id}/",  # sus datos
-            "/hogares/mi-hogar/",  # la pantalla de la casa
+        # Bug 027: en las CUATRO rutas donde Alejandro mira lo SUYO (es_propio=True en la
+        # vista), sus propias plantillas dicen "tu"/"tus" en vez de repetir su nombre — un
+        # diseño correcto, no un defecto (no hace falta que la pantalla te diga tu propio
+        # nombre para saber que es tuya). Un assertIn("Alejandro", ...) en esas cuatro solo
+        # podía estar pasando por la barra de arriba, medido mutando cada plantilla para que
+        # no dijera nada suyo en su cuerpo — la suite seguía en verde (ficha del bug 027,
+        # sección 2). El arreglo NO afloja el criterio ("sin correo, se sabe de quién es"):
+        # en vez de un literal que solo la barra garantiza, comprueba en el CUERPO (fuera de
+        # la barra) la frase que CADA pantalla usa de verdad para decirlo — la misma que ya
+        # usan sus propias plantillas. En Inicio, el ancla sigue siendo el nombre (SÍ se
+        # lista a cada persona por la suya, "Tú (Alejandro)"). En la pantalla de la casa el
+        # ancla también es el nombre, pero OJO: este assert solo comprueba que "Alejandro"
+        # aparece en algún sitio del cuerpo — puede colar por "A cargo de Alejandro" en la
+        # ficha de Euridice, no necesariamente por la suya propia (medido). La comprobación
+        # precisa de que CADA ficha dice su propio nombre, una a una, es la que hace
+        # `R3_LaPantallaDeLasPersonasDeLaCasaTests.test_ve_las_dos_fichas_marcadas_correctamente`
+        # más abajo — este subtest solo cierra el hueco de R1 (correo vs. cuerpo), no
+        # duplica esa precisión.
+        rutas_y_fragmento_de_identidad = [
+            ("/", "Alejandro"),  # Inicio: "Tú (Alejandro)" en su propia tarjeta
+            (f"/progreso/{self.alejandro.id}/", "Tu progreso"),
+            (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso"),
+            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan"),
+            (f"/perfiles/{self.alejandro.id}/", "Tus datos"),
+            ("/hogares/mi-hogar/", "Alejandro"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
         ]
-        for ruta in rutas:
+        for ruta, fragmento_de_identidad in rutas_y_fragmento_de_identidad:
             with self.subTest(ruta=ruta):
                 respuesta = self.client.get(ruta)
                 self.assertEqual(respuesta.status_code, 200)
+                contenido = respuesta.content.decode()
+                # El correo, en cambio, sí se comprueba sobre la página ENTERA a propósito:
+                # R1 promete que no aparece en NINGÚN sitio, incluida la barra — acotar esta
+                # mitad sería aflojarla, no acotarla.
                 self.assertNotIn(
-                    "alejandro@example.com", respuesta.content.decode(),
+                    "alejandro@example.com", contenido,
                     f"{ruta} sigue enseñando el correo de Alejandro",
                 )
-                self.assertIn("Alejandro", respuesta.content.decode())
+                cuerpo = _zona_de_cuerpo(contenido)
+                self.assertIn(
+                    fragmento_de_identidad, cuerpo,
+                    f"{ruta} no dice de quién es en su propio contenido "
+                    "(fuera de la barra de arriba)",
+                )
 
     def test_la_barra_de_arriba_enseña_el_nombre_no_el_correo(self):
         respuesta = self.client.get("/")
         contenido = respuesta.content.decode()
         self.assertNotIn("alejandro@example.com", contenido)
-        self.assertIn("Alejandro", contenido)
+        # Bug 027: este test se llama "la barra de arriba enseña el nombre" pero miraba la
+        # página ENTERA — y en Inicio, "Alejandro" TAMBIÉN aparece en el cuerpo (su propia
+        # tarjeta, "Tú (Alejandro)"), así que el assert podía estar pasando por ahí y nunca
+        # haber probado la barra en absoluto (medido: con la barra rota a propósito —
+        # "Alejandro" sustituido por otra cosa en `templates/base.html`— este test seguía en
+        # verde gracias al cuerpo; ver ficha del bug 027, sección 2). Acotado a la barra de
+        # verdad.
+        barra = _zona_de_la_barra_de_arriba(contenido)
+        self.assertIn("Alejandro", barra)
 
 
 class R2_AltaDeUnaPersonaACargoTests(PruebaConRegistroAbierto):
@@ -152,14 +214,42 @@ class R3_LaPantallaDeLasPersonasDeLaCasaTests(_ConAlejandroYEuridiceACargo):
     cargo de Alejandro.
     """
 
+    @staticmethod
+    def _zona_de_quien_vive_en_la_casa(contenido):
+        """Aísla la sección `id="quien-vive-en-la-casa"`
+        (`hogares/templates/hogares/mi_hogar.html`): el listado de fichas por nombre que R3
+        promete. Bug 027: el `assertIn("Alejandro", ...)` original, sobre la página ENTERA,
+        pasaba aunque la propia ficha de Alejandro dejara de decir su nombre — colaba por la
+        barra de arriba (medido mutando `mi_hogar.html` para que su fila NO dijera
+        "Alejandro", dejando intacto el resto; la suite seguía en verde — ver ficha del bug
+        027, sección 2)."""
+        inicio = contenido.index('id="quien-vive-en-la-casa"')
+        fin = contenido.index("</section>", inicio)
+        return contenido[inicio:fin]
+
     def test_ve_las_dos_fichas_marcadas_correctamente(self):
         respuesta = self.client.get("/hogares/mi-hogar/")
         contenido = respuesta.content.decode()
+        zona = self._zona_de_quien_vive_en_la_casa(contenido)
 
-        self.assertIn("Alejandro", contenido)
-        self.assertIn("Euridice", contenido)
-        self.assertIn("Entra con su cuenta", contenido)
-        self.assertIn("A cargo de Alejandro", contenido)
+        # Bug 027, segunda vuelta de la medición: acotar a la ZONA no basta por sí solo —
+        # "Alejandro" aparece DOS VECES ahí dentro por dos motivos distintos: su propio
+        # nombre, y "A cargo de Alejandro" en la ficha de Euridice. Un assertIn("Alejandro",
+        # zona) seguía pasando con la ficha de Alejandro mutada para no decir su nombre,
+        # porque la SEGUNDA aparición (la de Euridice) lo colaba igual (medido: misma
+        # mutación de arriba, sobre la zona ya acotada, seguía en verde). El criterio real de
+        # R3 es por FICHA ("la propia marcada como la que entra con su cuenta, y la de
+        # Euridice...") — así que se comprueba ficha a ficha, no la zona entera de un tirón.
+        fichas = re.findall(r"<li\b.*?</li>", zona, re.DOTALL)
+        self.assertTrue(fichas, "no casó ninguna ficha: ¿cambió mi_hogar.html?")
+
+        ficha_con_cuenta = next((f for f in fichas if "Entra con su cuenta" in f), None)
+        self.assertIsNotNone(ficha_con_cuenta, "ninguna ficha dice 'Entra con su cuenta'")
+        self.assertIn("Alejandro", ficha_con_cuenta)
+
+        ficha_a_cargo = next((f for f in fichas if "A cargo de Alejandro" in f), None)
+        self.assertIsNotNone(ficha_a_cargo, "ninguna ficha dice 'A cargo de Alejandro'")
+        self.assertIn("Euridice", ficha_a_cargo)
 
 
 class R4_SoloElResponsablePuedeEditarLosDatosDeACargoTests(_ConAlejandroYEuridiceACargo):
@@ -286,6 +376,38 @@ class R6_ElSelectorDeProgresoConDosPersonasTests(PruebaConRegistroAbierto):
 
     def setUp(self):
         super().setUp()
+        # Desincroniza a propósito el id de `Persona` del id de `Usuario` ANTES de que
+        # Alejandro exista (mismo hallazgo que en
+        # progreso.tests.EsperandoAceptacionEnElHogarTests, revisión del bug 027): en una
+        # tanda aislada las dos secuencias avanzan 1 a 1, así que la mutación histórica que R6
+        # existe para cazar (comparar `request.user.id`, la CUENTA de quien mira, en vez de
+        # `request.user.persona.id`) da el mismo resultado que compararlo bien, por pura
+        # coincidencia numérica — medido: sin este paso, esa mutación pasaba en verde
+        # corriendo esta clase sola. Dar de alta a una persona a cargo (una `Persona` SIN
+        # `Usuario`) antes de que Alejandro se registre adelanta la secuencia de `Persona` un
+        # paso por delante de la de `Usuario` — y ese desfase queda para siempre (nada lo
+        # recompone), así que ni el id de Alejandro ni el de Euridice volverán a coincidir con
+        # el de su propia cuenta.
+        self.registrar_y_verificar("relleno@example.com", sexo="mujer")
+        self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-01-01",
+                "altura_cm": "120",
+                "peso_kg": "25",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+        )
+        self.client.logout()
+
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
         self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()

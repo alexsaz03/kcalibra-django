@@ -376,6 +376,101 @@ class EscrituraAjenaSigueBloqueadaTests(BaseProgresoTests):
         self.assertTrue(MedicionPeso.objects.filter(id=medicion.id).exists())
 
 
+class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
+    """
+    Bug 027 (8ª cara de tests-que-no-fallan-cuando-deben.md, medida en la revisión de la 023
+    y nunca cerrada hasta ahora): ningún test de este fichero monta el estado "esperando que
+    le acepten en el hogar, todavía sin hogar propio" (R14 de la unidad 003) para /progreso/.
+    `BaseProgresoTests.setUp` (arriba) SIEMPRE acepta a Euridice en el hogar de Alejandro
+    ANTES de que ningún test corra, así que la rama de
+    `progreso/acceso.py:persona_visible_o_404` que deja ver la PROPIA persona sin necesitar
+    ningún hogar (`hogar_actual` puede ser `None` — R7 de la especificación de esta unidad,
+    "la PROPIA siempre es visible, aunque todavía no tenga hogar asignado") nunca se
+    ejercita. Consecuencia medida: mutar esa comparación para que compare el id de la CUENTA
+    en vez de la PERSONA (`persona.usuario_id` en vez de `persona.id`) deja pasar la suite
+    ENTERA — 601 tests, `python manage.py test` sigue en `OK` con la mutación puesta (ver
+    docs/bugs/027-asserts-de-la-024-y-una-rama-de-progreso-sin-red.md, sección 2, para el
+    output completo).
+
+    Su hermana `perfiles.tests.R1_EuridicePorHTTPTests
+    .test_ve_sus_calorias_incluso_registrandose_con_codigo_de_otro_hogar_sin_que_nadie_la_acepte`
+    SÍ cubre este estado para `/perfiles/`, con el mismo montaje (registrarse CON el código de
+    otro hogar y no ser aceptada). Este test hace lo mismo para `/progreso/`, que se había
+    quedado sin su versión.
+    """
+
+    def test_ve_su_propio_progreso_aunque_todavia_no_le_hayan_aceptado_en_el_hogar(self):
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+
+        # Desincroniza a propósito el id de `Persona` del id de `Usuario` ANTES de que
+        # Euridice exista. Medido: sin este paso, en una tanda aislada (solo este test) el id
+        # de la `Persona` de Euridice coincide por PURA CASUALIDAD con el id de su propia
+        # `Usuario` — las dos secuencias arrancan en 1 y avanzan 1 a 1 cuando cada cuenta
+        # estrena su persona — así que la mutación de Forma B (comparar `persona.usuario_id`
+        # en vez de `persona.id`) pasaba en verde IGUAL, no porque el código protegiera nada,
+        # sino por la coincidencia. Dar de alta a Marta (una `Persona` SIN `Usuario`, R2 de la
+        # unidad 024) adelanta la secuencia de `Persona` un paso por delante de la de
+        # `Usuario`, para que el id de Euridice YA NO pueda coincidir con el de su cuenta.
+        self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-01-01",
+                "altura_cm": "120",
+                "peso_kg": "25",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+        )
+        self.client.logout()
+
+        self.registrar_y_verificar(
+            "euridice@example.com", codigo_hogar=alejandro.hogar.codigo
+        )
+        euridice = Persona.objects.get(usuario__email="euridice@example.com")
+        self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
+
+        _fijar_mediciones(euridice, [{"dias_atras": 0, "peso_kg": 61}])
+
+        # Sin `persona_id` en la URL (el enlace "Tu progreso" de la barra de arriba): cae al
+        # `persona_id = yo.id` de la propia vista (progreso/views.py).
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        graficas, zona_de_datos = _zona_de_datos(contenido)
+        self.assertTrue(graficas, "no casó ninguna gráfica: ¿cambió _grafica.html?")
+        self.assertIn("61", zona_de_datos)
+
+        # Y también con su propio id explícito en la URL, saltándose el enlace de la barra.
+        respuesta_con_id = self.client.get(f"/progreso/{euridice.id}/")
+        self.assertEqual(respuesta_con_id.status_code, 200)
+
+        # R81 — sin hogar todavía, el selector no ofrece a nadie más que a ella misma (no hay
+        # nadie más de "su hogar" que ofrecer: `progreso/views.py` cae al caso
+        # `miembros_del_hogar = [yo]` cuando `yo.hogar` es `None`). Un
+        # `assertNotContains(respuesta, "alejandro@example.com")` no puede fallar NUNCA aquí
+        # (sin hogar el `{% if miembros_del_hogar|length > 1 %}` ni siquiera renderiza el
+        # selector, y desde la unidad 024 la app no imprime ningún correo en ninguna
+        # pantalla) — medido: con la vista mutada para filtrar TODA la base de `Persona` al
+        # selector (la regresión exacta que R81 vigila), ese assert seguía en verde. Alejandro
+        # y Marta SÍ existen en la base en este momento (se dieron de alta arriba, para la
+        # desincronización de ids) — son el contrafactual real: si la vista mezclara personas
+        # de fuera del hogar de Euridice, sus nombres aparecerían aquí.
+        self.assertNotIn(
+            'flex flex-wrap gap-2">', contenido,
+            "el selector se renderizó aunque Euridice no tiene hogar todavía",
+        )
+        self.assertNotIn("Alejandro", contenido)
+        self.assertNotIn("Marta", contenido)
+
+
 class AislamientoEntreHogaresTests(BaseProgresoTests):
     """R9 — de OTRO hogar, 404, nunca 403 (misma puerta que el resto de la app, unidad 003)."""
 
