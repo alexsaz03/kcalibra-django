@@ -506,3 +506,101 @@ class SinPesoNoRevientaTests(BaseEntrenosTests):
         )
         self.assertEqual(respuesta.status_code, 200)
         self.assertFalse(Entreno.objects.filter(persona=self.alejandro).exists())
+
+
+class Bug030_LaPuertaCompartidaSinRedEnAisladoTests(PruebaConRegistroAbierto):
+    """
+    Bug 030 — `entrenos/acceso.py:persona_propia_o_404` no compara nada por su cuenta: delega
+    ENTERA en `hogares.acceso.puede_cambiar_lo_de` (línea 98: `if
+    str(persona_que_pregunta.id) == str(persona_id)`), la puerta ÚNICA que comparten
+    `perfiles/`, `progreso/`, `entrenos/` y `cierres/`. Ninguno de los tests de arriba
+    (`BaseEntrenosTests` registra a Alejandro EL PRIMERO de la tanda) protege esa comparación
+    en AISLADO: con las secuencias de `Persona` y `Usuario` recién migradas, el `persona.id` y
+    el `usuario.id` de quien registra primero coinciden por pura casualidad (los dos valen 1)
+    — la 16ª cara (`tests-que-no-fallan-cuando-deben.md`, unidad 023: los contadores van a la
+    par), que 027 y 029 ya cerraron para `progreso/` y `perfiles/` respectivamente, pero que
+    nunca se había cerrado aquí.
+
+    Antes de esta clase, mutando la línea 98 para comparar `persona_que_pregunta.usuario_id`
+    en vez de `.id` (la MISMA forma que protegen 027/029, no una mutación cómoda),
+    `python manage.py test entrenos` SOLO daba `OK` (42 tests) — la coincidencia numérica de
+    más arriba tapaba el defecto entonces; remedido restaurando la versión anterior de este
+    fichero (docs/bugs/030-la-puerta-compartida-sin-red-en-entrenos-y-cierres.md, sección 3).
+    Con esta clase presente, la misma mutación SÍ cae (esa misma ficha, sección 2).
+
+    La cura, la misma que 027/029: dar de alta a una `Persona` SIN `Usuario` (Marta) ANTES de
+    que Alejandro registre su cuenta, adelantando la secuencia de `Persona` un paso por
+    delante de la de `Usuario` para siempre, así su `persona.id` ya NUNCA coincide con su
+    `usuario.id` por casualidad. La 19ª cara (revisión de la 029), aquí obligatoria: el
+    montaje que crea el desfase se AFIRMA con un assert sobre lo que debía crearse, no se
+    supone — si el alta de Marta fallara en silencio, la secuencia de `Persona` no avanzaría
+    y esta red se apagaría sin un solo rojo.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # "Relleno" es quien da de alta a Marta: necesita su propio hogar antes de poder
+        # llamar a /hogares/mi-hogar/dar-de-alta/.
+        self.registrar_y_verificar("relleno@example.com", sexo="mujer")
+        respuesta_alta = self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-01-01",
+                "altura_cm": "120",
+                "peso_kg": "25",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+        )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_alta.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", usuario__isnull=True).exists()
+        )
+        self.client.logout()
+
+        # Alejandro registra DESPUÉS de Marta: su persona.id queda por delante de su
+        # usuario.id, así que la coincidencia numérica del montaje sin red deja de darse.
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre", peso_kg="93")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+        self.assertNotEqual(self.alejandro.id, self.alejandro.usuario_id)  # control del desfase
+
+    def test_alejandro_apunta_su_propio_entreno_con_los_ids_desincronizados(self):
+        respuesta = self.client.post(
+            f"/entrenos/{self.alejandro.id}/apuntar/",
+            {"fecha": timezone.localdate().isoformat(), "deporte": "correr",
+             "intensidad": "media", "minutos": "30", "calorias": "300"},
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(Entreno.objects.filter(persona=self.alejandro, calorias=300).exists())
+
+    def test_alejandro_corrige_su_propio_entreno_con_los_ids_desincronizados(self):
+        entreno = Entreno.objects.create(
+            persona=self.alejandro, fecha=timezone.localdate(), deporte="hyrox",
+            intensidad="fuerte", minutos=60, calorias=1302, calorias_manuales=False,
+        )
+        respuesta = self.client.post(
+            f"/entrenos/{self.alejandro.id}/{entreno.id}/corregir/",
+            {"fecha": timezone.localdate().isoformat(), "deporte": "correr",
+             "intensidad": "media", "minutos": "5", "calorias": ""},
+        )
+        self.assertEqual(respuesta.status_code, 302)  # sin HX-Request: redirect (R6)
+        entreno.refresh_from_db()
+        self.assertEqual(entreno.minutos, 5)
+
+    def test_alejandro_borra_su_propio_entreno_con_los_ids_desincronizados(self):
+        entreno = Entreno.objects.create(
+            persona=self.alejandro, fecha=timezone.localdate(), deporte="hyrox",
+            intensidad="fuerte", minutos=60, calorias=1302, calorias_manuales=False,
+        )
+        respuesta = self.client.post(f"/entrenos/{self.alejandro.id}/{entreno.id}/borrar/")
+        self.assertEqual(respuesta.status_code, 302)  # sin HX-Request: redirect (BorrarTests)
+        self.assertFalse(Entreno.objects.filter(id=entreno.id).exists())
