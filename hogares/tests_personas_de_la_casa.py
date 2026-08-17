@@ -104,16 +104,22 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
         # sección 2). El arreglo NO afloja el criterio ("sin correo, se sabe de quién es"):
         # en vez de un literal que solo la barra garantiza, comprueba en el CUERPO (fuera de
         # la barra) la frase que CADA pantalla usa de verdad para decirlo — la misma que ya
-        # usan sus propias plantillas. En Inicio y en la pantalla de la casa, donde SÍ se
-        # lista a cada persona por su nombre (no son "tu/tus", son fichas de todo el hogar),
-        # el ancla sigue siendo el nombre.
+        # usan sus propias plantillas. En Inicio, el ancla sigue siendo el nombre (SÍ se
+        # lista a cada persona por la suya, "Tú (Alejandro)"). En la pantalla de la casa el
+        # ancla también es el nombre, pero OJO: este assert solo comprueba que "Alejandro"
+        # aparece en algún sitio del cuerpo — puede colar por "A cargo de Alejandro" en la
+        # ficha de Euridice, no necesariamente por la suya propia (medido). La comprobación
+        # precisa de que CADA ficha dice su propio nombre, una a una, es la que hace
+        # `R3_LaPantallaDeLasPersonasDeLaCasaTests.test_ve_las_dos_fichas_marcadas_correctamente`
+        # más abajo — este subtest solo cierra el hueco de R1 (correo vs. cuerpo), no
+        # duplica esa precisión.
         rutas_y_fragmento_de_identidad = [
             ("/", "Alejandro"),  # Inicio: "Tú (Alejandro)" en su propia tarjeta
             (f"/progreso/{self.alejandro.id}/", "Tu progreso"),
             (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso"),
             (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan"),
             (f"/perfiles/{self.alejandro.id}/", "Tus datos"),
-            ("/hogares/mi-hogar/", "Alejandro"),  # cada ficha de "Quién vive en la casa"
+            ("/hogares/mi-hogar/", "Alejandro"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
         ]
         for ruta, fragmento_de_identidad in rutas_y_fragmento_de_identidad:
             with self.subTest(ruta=ruta):
@@ -370,6 +376,38 @@ class R6_ElSelectorDeProgresoConDosPersonasTests(PruebaConRegistroAbierto):
 
     def setUp(self):
         super().setUp()
+        # Desincroniza a propósito el id de `Persona` del id de `Usuario` ANTES de que
+        # Alejandro exista (mismo hallazgo que en
+        # progreso.tests.EsperandoAceptacionEnElHogarTests, revisión del bug 027): en una
+        # tanda aislada las dos secuencias avanzan 1 a 1, así que la mutación histórica que R6
+        # existe para cazar (comparar `request.user.id`, la CUENTA de quien mira, en vez de
+        # `request.user.persona.id`) da el mismo resultado que compararlo bien, por pura
+        # coincidencia numérica — medido: sin este paso, esa mutación pasaba en verde
+        # corriendo esta clase sola. Dar de alta a una persona a cargo (una `Persona` SIN
+        # `Usuario`) antes de que Alejandro se registre adelanta la secuencia de `Persona` un
+        # paso por delante de la de `Usuario` — y ese desfase queda para siempre (nada lo
+        # recompone), así que ni el id de Alejandro ni el de Euridice volverán a coincidir con
+        # el de su propia cuenta.
+        self.registrar_y_verificar("relleno@example.com", sexo="mujer")
+        self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-01-01",
+                "altura_cm": "120",
+                "peso_kg": "25",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+        )
+        self.client.logout()
+
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
         self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
         self.client.logout()

@@ -454,8 +454,21 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
 
         # R81 — sin hogar todavía, el selector no ofrece a nadie más que a ella misma (no hay
         # nadie más de "su hogar" que ofrecer: `progreso/views.py` cae al caso
-        # `miembros_del_hogar = [yo]` cuando `yo.hogar` es `None`).
-        self.assertNotContains(respuesta, "alejandro@example.com")
+        # `miembros_del_hogar = [yo]` cuando `yo.hogar` es `None`). Un
+        # `assertNotContains(respuesta, "alejandro@example.com")` no puede fallar NUNCA aquí
+        # (sin hogar el `{% if miembros_del_hogar|length > 1 %}` ni siquiera renderiza el
+        # selector, y desde la unidad 024 la app no imprime ningún correo en ninguna
+        # pantalla) — medido: con la vista mutada para filtrar TODA la base de `Persona` al
+        # selector (la regresión exacta que R81 vigila), ese assert seguía en verde. Alejandro
+        # y Marta SÍ existen en la base en este momento (se dieron de alta arriba, para la
+        # desincronización de ids) — son el contrafactual real: si la vista mezclara personas
+        # de fuera del hogar de Euridice, sus nombres aparecerían aquí.
+        self.assertNotIn(
+            'flex flex-wrap gap-2">', contenido,
+            "el selector se renderizó aunque Euridice no tiene hogar todavía",
+        )
+        self.assertNotIn("Alejandro", contenido)
+        self.assertNotIn("Marta", contenido)
 
 
 class AislamientoEntreHogaresTests(BaseProgresoTests):
