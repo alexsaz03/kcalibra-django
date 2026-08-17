@@ -152,7 +152,45 @@ class R1_EuridicePorHTTPTests(PruebaConRegistroAbierto):
 
         El perfil PROPIO no es "una cosa del hogar" (G-43): tiene que verse aunque todavía no
         haya ningún hogar de por medio.
+
+        Bug 029 (16ª cara de `tests-que-no-fallan-cuando-deben.md`, misma familia que la 18ª
+        de la 027): sin el paso de aquí abajo, Alejandro y Euridice quedaban persona=1/usuario=1
+        y persona=2/usuario=2 — las dos secuencias avanzan 1 a 1 en una base recién migrada.
+        `perfiles/acceso.py:_es_la_propia` compara `persona.id` con el `persona_id` de la
+        URL/del propio `persona_actual`; mutado para comparar `persona.usuario_id` en su lugar
+        (el mismo error que la 023 cazó en `progreso/acceso.py`), el resultado es idéntico por
+        pura coincidencia numérica y este test seguía en verde — medido:
+        `python manage.py test perfiles.tests.R1_EuridicePorHTTPTests.test_ve_sus_calorias_incluso_registrandose_con_codigo_de_otro_hogar_sin_que_nadie_la_acepte`
+        con esa mutación puesta, `OK` (docs/bugs/029-la-puerta-de-perfiles-sin-red-en-aislado.md,
+        sección 2). Se desincroniza a propósito ANTES de que Alejandro exista: da de alta a
+        Marta (una `Persona` SIN `Usuario`, mismo mecanismo que
+        `progreso.tests.EsperandoAceptacionEnElHogarTests` y
+        `hogares.tests_personas_de_la_casa.R6_ElSelectorDeProgresoConDosPersonasTests`),
+        adelantando la secuencia de `Persona` un paso por delante de la de `Usuario` para
+        siempre — así ningún id propio vuelve a coincidir con el de su cuenta por casualidad.
         """
+        # Desincroniza las secuencias de `Persona` y `Usuario` (ver docstring). No necesita
+        # "hoy" congelado: a nadie de aquí se le comprueban calorías.
+        self.registrar_y_verificar("relleno@example.com", sexo="mujer")
+        self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Marta",
+                "sexo": "mujer",
+                "fecha_nacimiento": "2015-01-01",
+                "altura_cm": "120",
+                "peso_kg": "25",
+                "actividad": "moderado",
+                "objetivo": "mantener",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+        )
+        self.client.logout()
+
         with _con_hoy_fijo():
             self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
             alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
