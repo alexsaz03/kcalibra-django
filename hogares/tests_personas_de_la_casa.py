@@ -389,7 +389,7 @@ class R6_ElSelectorDeProgresoConDosPersonasTests(PruebaConRegistroAbierto):
         # recompone), así que ni el id de Alejandro ni el de Euridice volverán a coincidir con
         # el de su propia cuenta.
         self.registrar_y_verificar("relleno@example.com", sexo="mujer")
-        self.client.post(
+        respuesta_alta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/",
             {
                 "nombre": "Marta",
@@ -406,10 +406,19 @@ class R6_ElSelectorDeProgresoConDosPersonasTests(PruebaConRegistroAbierto):
                 "no_le_gusta": "",
             },
         )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_alta.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", usuario__isnull=True).exists()
+        )
         self.client.logout()
 
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
         self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+        # Alejandro registra DESPUÉS de Marta: su persona.id queda por delante de su
+        # usuario.id, así que la coincidencia numérica del montaje sin red deja de darse.
+        self.assertNotEqual(self.alejandro.id, self.alejandro.usuario_id)  # control del desfase
         self.client.logout()
 
         self.registrar_y_verificar(

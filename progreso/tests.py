@@ -412,7 +412,7 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
         # sino por la coincidencia. Dar de alta a Marta (una `Persona` SIN `Usuario`, R2 de la
         # unidad 024) adelanta la secuencia de `Persona` un paso por delante de la de
         # `Usuario`, para que el id de Euridice YA NO pueda coincidir con el de su cuenta.
-        self.client.post(
+        respuesta_alta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/",
             {
                 "nombre": "Marta",
@@ -429,6 +429,12 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
                 "no_le_gusta": "",
             },
         )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_alta.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", usuario__isnull=True).exists()
+        )
         self.client.logout()
 
         self.registrar_y_verificar(
@@ -436,6 +442,9 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
         )
         euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
+        # Euridice registra DESPUÉS de Marta: su persona.id queda por delante de su
+        # usuario.id, así que la coincidencia numérica del montaje sin red deja de darse.
+        self.assertNotEqual(euridice.id, euridice.usuario_id)  # control del desfase
 
         _fijar_mediciones(euridice, [{"dias_atras": 0, "peso_kg": 61}])
 
