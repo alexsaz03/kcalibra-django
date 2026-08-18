@@ -442,9 +442,14 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
         )
         euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
-        # Euridice registra DESPUÉS de Marta: su persona.id queda por delante de su
-        # usuario.id, así que la coincidencia numérica del montaje sin red deja de darse.
-        self.assertNotEqual(euridice.id, euridice.usuario_id)  # control del desfase
+        # Control estructural del desfase (no por el orden numérico: a escala de suite otros
+        # tests ya pueden haber desalineado las secuencias por su cuenta, y entonces comparar
+        # ids por casualidad deja de decir nada — 18ª cara operando sobre la red
+        # anti-19ª-cara). Marta existe SIN Usuario y se creó ANTES que Euridice: si el alta
+        # falla o alguien la borra junto con sus asserts, este `.get()` revienta él solo, sin
+        # depender de qué id le tocara a nadie.
+        marta = Persona.objects.get(nombre="Marta", usuario__isnull=True)
+        self.assertLess(marta.id, euridice.id)  # control del desfase, estructural
 
         _fijar_mediciones(euridice, [{"dias_atras": 0, "peso_kg": 61}])
 
