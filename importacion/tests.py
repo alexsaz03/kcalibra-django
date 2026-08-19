@@ -1170,6 +1170,36 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
             "La del miembro sigue igual (ya estaba, idempotencia normal).",
         )
 
+    def test_A_precondicion_no_revienta_por_una_pesada_LEGITIMA_del_titular(self):
+        """La otra mitad de la guarda de A: `_filas_pendientes_de_mover` salta las filas del
+        titular en LOS DOS bucles, entrenos Y pesadas — el test anterior solo cubría el de
+        entrenos. Mismo escenario, sobre `pesos`: una pesada NUEVA y legítima del titular cuya
+        tupla completa (fecha+peso+grasa+cintura) coincidiera, por pura casualidad, con la de
+        un miembro YA movida, no puede disparar una señal falsa."""
+        fila_miembro = {
+            "fecha": "2026-07-27", "peso_kg": 63.0, "grasa_pct": None, "cintura_cm": None,
+            "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        # Euridice ya tiene esta pesada, correctamente movida (simula una importación anterior
+        # ya corregida por `mover_filas_de_miembro`).
+        MedicionPeso.objects.create(persona=self.miembro, **mapeo.datos_pesada(fila_miembro))
+
+        # Node trae la MISMA fila del miembro (ya estaba: idempotencia normal) MÁS una fila
+        # NUEVA del titular con la MISMA tupla completa — coincidencia real, no el bug.
+        fila_titular_nueva = dict(fila_miembro, miembro_id=None)
+        _crear_sqlite_de_node(self.ruta_db, pesos=[fila_miembro, fila_titular_nueva])
+
+        # No debe reventar: es una importación legítima, sin ninguna señal de verdad.
+        self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(
+            MedicionPeso.objects.filter(persona=self.usuario).count(), 1,
+            "La pesada legítima del titular tiene que haberse creado.",
+        )
+        self.assertEqual(
+            MedicionPeso.objects.filter(persona=self.miembro).count(), 1,
+            "La del miembro sigue igual (ya estaba, idempotencia normal).",
+        )
+
 
 # ---------------------------------------------------------------------------------------------
 # BUG 033, decisiones 2 y 3 (RESUELTAS) — `mover_filas_de_miembro`: mueve las filas de
