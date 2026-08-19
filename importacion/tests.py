@@ -1136,6 +1136,40 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
 
         self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 8)
 
+    def test_A_precondicion_no_revienta_por_una_fila_LEGITIMA_del_titular(self):
+        """Mutante superviviente (ronda 3, A): `_filas_pendientes_de_mover` salta las filas del
+        titular A PROPÓSITO (`if fila["miembro_id"] is None: continue`, en los dos bucles,
+        entrenos y pesadas) — las suyas nunca "chocaban" bajo el diseño del bug (colgaba todo
+        de él, nunca de otra persona). Si esa guarda se quitara, una fila NUEVA y LEGÍTIMA del
+        titular cuya tupla coincidiera, por pura casualidad, con la de un miembro YA movido
+        (dos personas de la casa entrenando parecido el mismo día — no tiene nada que ver con
+        el bug) dispararía una señal falsa, y el comando se negaría a una importación que no
+        tenía nada malo. Medido: sin la guarda, el importador rechaza una pasada legítima.
+        Contraprobado quitando esa guarda exacta — ver la ficha del bug, sección 5."""
+        fila_miembro = {
+            "fecha": "2026-07-01", "tipo": "correr", "duracion_min": 30,
+            "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        # Euridice ya tiene esta fila, correctamente movida (simula una importación anterior
+        # ya corregida por `mover_filas_de_miembro`).
+        apuntar_entreno(self.miembro, mapeo.datos_entreno(fila_miembro))
+
+        # Node trae la MISMA fila del miembro (ya estaba: idempotencia normal) MÁS una fila
+        # NUEVA del titular con la MISMA tupla — coincidencia real, no el bug.
+        fila_titular_nueva = dict(fila_miembro, miembro_id=None)
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[fila_miembro, fila_titular_nueva])
+
+        # No debe reventar: es una importación legítima, sin ninguna señal de verdad.
+        self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(
+            Entreno.objects.filter(persona=self.usuario).count(), 1,
+            "El entreno legítimo del titular tiene que haberse creado.",
+        )
+        self.assertEqual(
+            Entreno.objects.filter(persona=self.miembro).count(), 1,
+            "La del miembro sigue igual (ya estaba, idempotencia normal).",
+        )
+
 
 # ---------------------------------------------------------------------------------------------
 # BUG 033, decisiones 2 y 3 (RESUELTAS) — `mover_filas_de_miembro`: mueve las filas de

@@ -371,6 +371,10 @@ def _filas_pendientes_de_mover(conexion, persona, mapa_miembros, hogar):
         datos = mapeo.datos_entreno(fila)
         persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
         clave = mapeo.clave_entreno(datos)
+        # Redundante a propósito (revisión, ronda 3): el `- {persona_fila.id}` de abajo YA
+        # excluye "ya está en su sitio" sin este `continue` (medido: quitarlo no cambia el
+        # resultado). Se deja porque nombra el caso más común en voz alta y evita calcular la
+        # resta del hogar entero cuando no hace falta — no es una guarda de corrección.
         if clave in existentes_por_persona_entrenos[persona_fila.id]:
             continue  # ya está en su sitio correcto: idempotencia normal, no es una señal
         if existentes_del_hogar_entrenos.get(clave, set()) - {persona_fila.id}:
@@ -382,6 +386,8 @@ def _filas_pendientes_de_mover(conexion, persona, mapa_miembros, hogar):
         datos = mapeo.datos_pesada(fila)
         persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
         fecha = datos["fecha"]
+        # Mismo motivo que en entrenos, arriba: redundante con la resta `- {persona_fila.id}`
+        # de abajo, se deja por claridad y por ahorrar la resta cuando no hace falta.
         if fecha in existentes_por_persona_pesadas[persona_fila.id]:
             continue
         clave_completa = (fecha, datos["peso_kg"], datos["grasa_pct"], datos["cintura_cm"])
