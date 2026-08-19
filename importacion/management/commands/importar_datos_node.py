@@ -1,10 +1,22 @@
 """
-`python manage.py importar_datos_node <ruta-a-la-sqlite-de-node> --cuenta <correo> [--dry-run]`
+`python manage.py importar_datos_node <ruta-a-la-sqlite-de-node> --cuenta <correo>
+[--miembro-node <id-de-node>:<correo> ...] [--dry-run]`
 
 Trae la despensa, los entrenos, las recetas y las pesadas DE VERDAD de la app Node que sigue en
 uso, y los cuelga de una cuenta que YA EXISTE en la app nueva (unidad 022, "Qué" de la
 especificación). Repetible sin estropear nada (R2) y capaz de enseñar lo que haría antes de
 tocar la base (R3, `--dry-run`).
+
+## Bug 033 — entrenos y pesadas ya no cuelgan TODOS del titular
+
+`entrenos`/`pesos` traen `miembro_id` en Node (`NULL` = titular, un id = otro miembro de la
+casa). Antes de esta unidad esa columna no se leía y todo colgaba de la única `persona` de
+`--cuenta` — el bug 033. Ahora cada fila cuelga de quien le corresponde: la del titular sigue
+resolviéndose con `--cuenta`; la de cualquier otro miembro necesita su propia correspondencia,
+declarada A MANO con `--miembro-node <id-de-node>:<correo>` (repetible). La traducción completa
+—por qué es un parámetro explícito y no un emparejamiento por nombre, y qué pasa si falta
+alguno— vive en `importacion/miembros.py`. Despensa y recetas no tienen `miembro_id`: siguen
+colgando del `hogar`, sin cambios.
 
 ## Por qué pasa por las puertas que ya existen, y no por un `create()` a pelo
 
@@ -49,7 +61,7 @@ from perfiles.models import MedicionPeso
 from recetas.logica import crear_receta
 from recetas.models import Receta
 
-from ... import mapeo, origen
+from ... import mapeo, miembros, origen
 
 Usuario = get_user_model()
 
@@ -81,6 +93,22 @@ class Command(BaseCommand):
             required=True,
             metavar="CORREO",
             help="Correo de la cuenta de KCalibra (Django) ya existente a la que cuelga todo lo importado.",
+        )
+        parser.add_argument(
+            "--miembro-node",
+            action="append",
+            default=[],
+            metavar="ID:CORREO-O-ID-DE-PERSONA",
+            help=(
+                "Bug 033 — correspondencia de un miembro_id de Node (columna de `entrenos`/"
+                "`pesos`) con la persona de KCalibra a la que cuelgan sus filas: "
+                "'<id-de-node>:<correo>' si esa persona tiene cuenta propia, o "
+                "'<id-de-node>:<id-de-persona>' si no la tiene (unidad 024). Repetible, uno "
+                "por cada miembro de la casa que Node distingue del titular. Una fila con un "
+                "miembro_id sin declarar aquí hace fallar el comando ANTES de escribir nada "
+                "(nunca cuelga del titular por defecto, nunca se descarta callada) — ver "
+                "importacion/miembros.py."
+            ),
         )
         parser.add_argument(
             "--dry-run",
@@ -116,9 +144,24 @@ class Command(BaseCommand):
                     "tocado nada."
                 )
 
+            # Bug 033 — la correspondencia miembro_id -> Persona se resuelve y se valida ANTES
+            # de abrir la transacción de escritura: si algo no cuadra (formato, cuenta que no
+            # existe, persona de otra casa, o una fila de Node con un miembro_id que nadie
+            # declaró), el comando revienta aquí, sin haber tocado la base todavía.
+            mapa_miembros = miembros.resolver_mapa_miembros(options["miembro_node"], hogar)
+            faltan = miembros.miembros_sin_mapear(conexion, mapa_miembros)
+            if faltan:
+                lista = ", ".join(str(m) for m in faltan)
+                plural = "s" if len(faltan) > 1 else ""
+                raise CommandError(
+                    f"La base de Node trae fila{plural} con miembro_id {lista} sin "
+                    "correspondencia declarada. No se ha escrito nada. Añade "
+                    "--miembro-node <id-de-node>:<correo> por cada uno."
+                )
+
             try:
                 with transaction.atomic():
-                    resumen = _importar_todo(conexion, persona, hogar)
+                    resumen = _importar_todo(conexion, persona, hogar, mapa_miembros)
                     if dry_run:
                         raise _CanceladoPorDryRun(resumen)
             except _CanceladoPorDryRun as cancelado:
@@ -134,16 +177,25 @@ class Command(BaseCommand):
         _imprimir_resumen(self.stdout, resumen, dry_run)
 
 
-def _importar_todo(conexion, persona, hogar):
+def _importar_todo(conexion, persona, hogar, mapa_miembros):
     """Hace el trabajo real (dentro de la `atomic()` de `handle`) y devuelve el resumen, tabla
     a tabla. El orden (despensa, entrenos, pesadas, recetas) no importa para el resultado: las
     cuatro son independientes entre sí."""
     return {
         "despensa": _importar_despensa(conexion, hogar),
-        "entrenos": _importar_entrenos(conexion, persona),
-        "pesadas": _importar_pesadas(conexion, persona),
+        "entrenos": _importar_entrenos(conexion, persona, mapa_miembros),
+        "pesadas": _importar_pesadas(conexion, persona, mapa_miembros),
         "recetas": _importar_recetas(conexion, hogar),
     }
+
+
+def _personas_involucradas(persona, mapa_miembros):
+    """El titular más cada `Persona` que `--miembro-node` declaró, sin repetidos (por si el
+    mismo correo se declarara para dos `miembro_id` distintos): `{persona.id: persona}`, para
+    poder construir un snapshot de idempotencia POR PERSONA (033) en vez de uno solo."""
+    personas = {persona.id: persona}
+    personas.update({p.id: p for p in mapa_miembros.values()})
+    return personas
 
 
 def _importar_despensa(conexion, hogar):
@@ -179,32 +231,41 @@ def _importar_despensa(conexion, hogar):
     return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
 
 
-def _importar_entrenos(conexion, persona):
+def _importar_entrenos(conexion, persona, mapa_miembros):
     """R2/R4 — clave de idempotencia: la tupla completa (ver el porqué en `mapeo.py`). Snapshot
     tomado al empezar, mismo motivo que en la despensa (aunque aquí no hay fusión posible: cada
-    fila de Node es siempre UN entreno nuevo si su clave no estaba, nunca se combina con otro)."""
-    existentes_al_empezar = {
-        (fecha, deporte, intensidad, minutos, calorias)
-        for fecha, deporte, intensidad, minutos, calorias in Entreno.objects.filter(
-            persona=persona
-        ).values_list("fecha", "deporte", "intensidad", "minutos", "calorias")
+    fila de Node es siempre UN entreno nuevo si su clave no estaba, nunca se combina con otro).
+
+    Bug 033 — el snapshot es POR PERSONA, no uno solo: dos entrenos con la misma tupla
+    (fecha/deporte/intensidad/minutos/calorías) son "el mismo, repetido" solo si son de la
+    MISMA persona. Un entreno del titular y uno de un miembro de la casa que por casualidad
+    coincidieran en todo menos en quién lo hizo tienen que colgar los DOS, no fundirse en uno."""
+    existentes_por_persona = {
+        id_persona: {
+            (fecha, deporte, intensidad, minutos, calorias)
+            for fecha, deporte, intensidad, minutos, calorias in Entreno.objects.filter(
+                persona_id=id_persona
+            ).values_list("fecha", "deporte", "intensidad", "minutos", "calorias")
+        }
+        for id_persona in _personas_involucradas(persona, mapa_miembros)
     }
 
     nuevos = 0
     ya_estaban = 0
     for fila in origen.entrenos(conexion):
         datos = mapeo.datos_entreno(fila)
+        persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
         clave = mapeo.clave_entreno(datos)
-        if clave in existentes_al_empezar:
+        if clave in existentes_por_persona[persona_fila.id]:
             ya_estaban += 1
             continue
-        apuntar_entreno(persona, datos)
+        apuntar_entreno(persona_fila, datos)
         nuevos += 1
 
     return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
 
 
-def _importar_pesadas(conexion, persona):
+def _importar_pesadas(conexion, persona, mapa_miembros):
     """
     R2/R4 — la clave (persona, fecha) es LA restricción `una_medicion_por_persona_y_dia` de la
     unidad 006. Si ya hay una medición ese día (importada antes, o apuntada a mano por la
@@ -217,14 +278,22 @@ def _importar_pesadas(conexion, persona):
     A DIFERENCIA de las otras tres tablas, aquí la comprobación es VIVA, no solo un snapshot
     tomado al empezar (ronda 1 de revisión, H1). El índice único de Node es
     `(usuario_id, COALESCE(miembro_id, 0), fecha)`: permite DOS pesadas el mismo día si son de
-    personas distintas de la misma casa (`miembro_id` no se lee, "Fuera de alcance" — cuelga
-    todo de la única `Persona` de Django que corresponde a esa cuenta). Con un snapshot congelado, la SEGUNDA fila de Node de
+    personas distintas de la misma casa. Con un snapshot congelado, la SEGUNDA fila de Node de
     ese día no está en `existentes_al_empezar` (la primera solo se guarda en Django DURANTE
     esta misma pasada) y llegaría desnuda a `MedicionPeso.objects.create()`, que revienta con
     `IntegrityError` contra `una_medicion_por_persona_y_dia` — justo lo que R4 prohíbe ("no
     revienta: se salta y lo dice") y con una traza cruda de Python en vez de un aviso (R7). Por
     eso, además de `existentes_al_empezar` (lo que YA había en Django antes de esta pasada, para
     R2), se lleva `vistas_en_esta_pasada`: un segundo set que SÍ se actualiza fila a fila.
+
+    Bug 033 — las dos, `existentes_al_empezar` y `vistas_en_esta_pasada`, son ahora POR
+    PERSONA (un dict de sets, uno por persona involucrada), no una sola pareja compartida.
+    Es la parte que de verdad importa aquí: el titular y un miembro de la casa pueden tener
+    CADA UNO su propia pesada el mismo día (el índice único de Node ya lo permitía, `COALESCE
+    (miembro_id, 0)`) y con un único par de sets compartido entre las dos personas, la segunda
+    fila del día (la del miembro) se habría marcado como "colisión" contra la del titular sin
+    serlo — exactamente el fallo que la unidad 006 y este índice existen para evitar, solo que
+    ahora entre dos personas en vez de dentro de una.
 
     Nótese que esto NO se aplica a despensa/entrenos/recetas: en despensa el snapshot congelado
     es CORRECTO a propósito (es lo que deja que `anadir_producto` funda "1 kg" + "500 g" del
@@ -235,31 +304,36 @@ def _importar_pesadas(conexion, persona):
     clave de idempotencia sin ser la misma fila — de ahí que necesite su propia comprobación,
     y solo ella.
 
-    Una colisión ENTRE DOS FILAS DE NODE (mismo día, ninguna de las dos existía ya en Django) se
-    cuenta aparte, en `colisiones`, y NO se suma a `ya_estaban`: "ya estaba" es honesto para "esa
-    fecha ya tenía una medición en Django antes de esta pasada", no para "otra fila de Node de
-    esta misma pasada se adelantó". `_imprimir_resumen` lo dice con su propia frase (R4: "se
-    salta y lo dice").
+    Una colisión ENTRE DOS FILAS DE NODE DE LA MISMA PERSONA (mismo día, ninguna de las dos
+    existía ya en Django) se cuenta aparte, en `colisiones`, y NO se suma a `ya_estaban`: "ya
+    estaba" es honesto para "esa fecha ya tenía una medición en Django antes de esta pasada",
+    no para "otra fila de Node de esta misma pasada se adelantó". `_imprimir_resumen` lo dice
+    con su propia frase (R4: "se salta y lo dice").
     """
-    existentes_al_empezar = set(
-        MedicionPeso.objects.filter(persona=persona).values_list("fecha", flat=True)
-    )
-    vistas_en_esta_pasada = set()
+    personas = _personas_involucradas(persona, mapa_miembros)
+    existentes_por_persona = {
+        id_persona: set(
+            MedicionPeso.objects.filter(persona_id=id_persona).values_list("fecha", flat=True)
+        )
+        for id_persona in personas
+    }
+    vistas_por_persona = {id_persona: set() for id_persona in personas}
 
     nuevos = 0
     ya_estaban = 0
     colisiones = 0
     for fila in origen.pesadas(conexion):
         datos = mapeo.datos_pesada(fila)
+        persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
         fecha = datos["fecha"]
-        if fecha in existentes_al_empezar:
+        if fecha in existentes_por_persona[persona_fila.id]:
             ya_estaban += 1
             continue
-        if fecha in vistas_en_esta_pasada:
+        if fecha in vistas_por_persona[persona_fila.id]:
             colisiones += 1
             continue
-        MedicionPeso.objects.create(persona=persona, **datos)
-        vistas_en_esta_pasada.add(fecha)
+        MedicionPeso.objects.create(persona=persona_fila, **datos)
+        vistas_por_persona[persona_fila.id].add(fecha)
         nuevos += 1
 
     return {

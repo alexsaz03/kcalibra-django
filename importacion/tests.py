@@ -31,6 +31,7 @@ from django.core.management.base import CommandError
 from django.test import TestCase
 
 from despensa.models import ProductoDespensa
+from entrenos.logica import apuntar_entreno
 from entrenos.models import Entreno
 from hogares.models import Hogar, Persona, crear_hogar_propio
 from perfiles.models import MedicionPeso
@@ -82,13 +83,19 @@ def _crear_sqlite_de_node(
                 "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, tipo TEXT NOT NULL, "
                 "duracion_min INTEGER NOT NULL, intensidad TEXT NOT NULL, "
                 "calorias INTEGER NOT NULL, origen TEXT NOT NULL DEFAULT 'manual', "
-                "strava_id TEXT)"
+                # Bug 033 — `miembro_id` con el MISMO esqueleto que la real (comprobado con
+                # `.schema` contra la SQLite real de la 022, ver la ficha del bug): NULL =
+                # titular, un id = otro miembro de la casa. Se añade aquí, al fixture
+                # COMPARTIDO por los ~50 tests de la 022, en vez de en uno aparte: así CUALQUIER
+                # test que no lo declare (la inmensa mayoría) sigue significando "es del
+                # titular" sin tener que saber que la columna existe.
+                "strava_id TEXT, miembro_id INTEGER)"
             )
             for e in entrenos or []:
                 conexion.execute(
                     "INSERT INTO entrenos "
-                    "(usuario_id, fecha, tipo, duracion_min, intensidad, calorias, origen, strava_id) "
-                    "VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+                    "(usuario_id, fecha, tipo, duracion_min, intensidad, calorias, origen, "
+                    "strava_id, miembro_id) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         e["fecha"],
                         e["tipo"],
@@ -97,6 +104,7 @@ def _crear_sqlite_de_node(
                         e["calorias"],
                         e.get("origen", "manual"),
                         e.get("strava_id"),
+                        e.get("miembro_id"),
                     ),
                 )
         if con_recetas:
@@ -123,13 +131,21 @@ def _crear_sqlite_de_node(
             conexion.execute(
                 "CREATE TABLE pesos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                 "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, peso_kg REAL NOT NULL, "
-                "grasa_pct REAL, cintura_cm REAL)"
+                # Bug 033 — mismo motivo que en `entrenos` de arriba: `miembro_id` en el
+                # fixture compartido, NULL por defecto (titular) salvo que el test lo declare.
+                "grasa_pct REAL, cintura_cm REAL, miembro_id INTEGER)"
             )
             for p in pesos or []:
                 conexion.execute(
-                    "INSERT INTO pesos (usuario_id, fecha, peso_kg, grasa_pct, cintura_cm) "
-                    "VALUES (1, ?, ?, ?, ?)",
-                    (p["fecha"], p["peso_kg"], p.get("grasa_pct"), p.get("cintura_cm")),
+                    "INSERT INTO pesos (usuario_id, fecha, peso_kg, grasa_pct, cintura_cm, "
+                    "miembro_id) VALUES (1, ?, ?, ?, ?, ?)",
+                    (
+                        p["fecha"],
+                        p["peso_kg"],
+                        p.get("grasa_pct"),
+                        p.get("cintura_cm"),
+                        p.get("miembro_id"),
+                    ),
                 )
         if con_strava_cuentas:
             # Trampa deliberada para R8/"Fuera de alcance": si algún día alguien tocara
@@ -167,13 +183,17 @@ class BaseImportacionTests(TestCase):
         crear_hogar_propio(self.usuario)
         self.hogar = self.usuario.hogar
 
-    def _importar(self, *, dry_run=False, cuenta=None, ruta=None):
+    def _importar(self, *, dry_run=False, cuenta=None, ruta=None, miembro_node=None):
+        # Bug 033 — `miembro_node` es opcional y por defecto `None` (== ninguno declarado, el
+        # `[]` de fábrica de `add_arguments`): los ~50 tests de la 022 que NO lo pasan siguen
+        # exactamente igual que antes, sin tener que saber que el parámetro existe.
         salida = io.StringIO()
         call_command(
             "importar_datos_node",
             ruta or self.ruta_db,
             cuenta=cuenta or self.cuenta.email,
             dry_run=dry_run,
+            miembro_node=miembro_node if miembro_node is not None else [],
             stdout=salida,
         )
         return salida.getvalue()
@@ -851,3 +871,343 @@ class OrigenTests(TestCase):
         with self.assertRaises(origen.OrigenNodeInvalido) as cm:
             origen.abrir(self.ruta_db)
         self.assertIn("entrenos", str(cm.exception))
+
+
+# ---------------------------------------------------------------------------------------------
+# BUG 033 — `entrenos`/`pesos` de Node traen `miembro_id` (NULL = titular, un id = otro
+# miembro de la casa) y antes de esta unidad esa columna no se leía: TODO colgaba del titular,
+# sin importar de quién fuera. El arreglo (decisión 1, RESUELTA): un parámetro EXPLÍCITO,
+# `--miembro-node <id-de-node>:<correo-o-id-de-persona>` — nunca un emparejamiento por nombre
+# (medido en la ficha: `Persona.nombre` no es único) y nunca cuelga del titular por defecto
+# (una fila con un `miembro_id` sin declarar hace fallar el comando ANTES de escribir nada).
+# La decisión 2 (RESUELTA: mover, no borrar y reimportar) y la 3 (un comando de gestión propio,
+# con `--dry-run` e idempotente, en vez de un `UPDATE` a mano) viven en
+# `mover_filas_de_miembro.py`, probado más abajo.
+# ---------------------------------------------------------------------------------------------
+
+
+class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
+    """El arreglo de la decisión 1: `importar_datos_node` traduce `miembro_id` a la `Persona`
+    correcta vía `--miembro-node`, y falla en cristiano si a una fila le falta declarar el suyo."""
+
+    MIEMBRO_ID_NODE = 4  # el mismo id que usa Node de verdad para Euridice (ver la ficha)
+
+    def setUp(self):
+        super().setUp()
+        # Una "persona a cargo" (unidad 024, sin cuenta propia) de la misma casa que el
+        # titular — el patrón real de `hogares/views.py:dar_de_alta_persona_a_cargo`. Esta
+        # unidad no crea personas nuevas (fuera de alcance): en el arreglo de verdad esta
+        # persona ya existiría ANTES de importar, aquí se crea porque el test la necesita de
+        # antemano.
+        self.miembro = Persona.objects.create(
+            hogar=self.hogar, nombre="Miembro de la casa", responsable=self.usuario
+        )
+        self.spec_miembro = f"{self.MIEMBRO_ID_NODE}:{self.miembro.id}"
+
+    def test_un_entreno_con_miembro_id_cuelga_del_miembro_no_del_titular(self):
+        """Antes del arreglo este test estaba en ROJO (era
+        `test_un_entreno_con_miembro_id_no_debe_colgar_del_titular` de la sección 2 de la
+        ficha): 0 entrenos bajo el miembro, 2 bajo el titular. Con `--miembro-node` declarado,
+        VERDE — sin haber tocado el test, solo el comando."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            entrenos=[
+                {"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": None},
+                {"fecha": "2026-01-06", "tipo": "nadar", "duracion_min": 40, "intensidad": "alta", "calorias": 400, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+        )
+        self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 1)
+
+    def test_una_pesada_con_miembro_id_cuelga_del_miembro_no_del_titular(self):
+        """Misma reproducción que el test anterior, para `pesos` (la otra mitad del bug)."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            pesos=[
+                {"fecha": "2026-01-05", "peso_kg": 80.0, "miembro_id": None},
+                {"fecha": "2026-01-05", "peso_kg": 60.0, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+        )
+        self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+
+    def test_pesadas_del_titular_y_del_miembro_el_mismo_dia_no_colisionan(self):
+        """El fallo que `existentes_al_empezar`/`vistas_en_esta_pasada` COMPARTIDOS habrían
+        introducido: una pesada del titular y una del miembro el MISMO día no son una colisión
+        (el índice único de Node ya las distingue por persona, `COALESCE(miembro_id, 0)`) — las
+        dos tienen que crearse. Con el código de ANTES del arreglo (todo cuelga del titular sin
+        mirar miembro_id) esto daba: 1 pesada bajo el titular y 0 bajo el miembro (la segunda se
+        contaba como colisión consigo misma) — ROJO. Contraprobado: revertir `_importar_pesadas`
+        a un solo `existentes_al_empezar`/`vistas_en_esta_pasada` (sin miembro_id) reproduce el
+        rojo; con los dos por persona, VERDE."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            pesos=[
+                {"fecha": "2026-01-05", "peso_kg": 80.0, "miembro_id": None},
+                {"fecha": "2026-01-05", "peso_kg": 60.0, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+        )
+        salida = self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+        self.assertNotIn("chocar en fecha", salida)
+
+    def test_miembro_id_sin_correspondencia_revienta_antes_de_escribir_nada(self):
+        """La parte de la decisión 1 que la ficha pidió explícitamente: sin `--miembro-node`
+        declarado para un `miembro_id` que aparece en Node, el comando REVIENTA, dice CUÁL id
+        falta, y no cuelga esa fila del titular por defecto ni la descarta callada — no escribe
+        NADA, ni siquiera el entreno del titular que sí venía limpio."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            entrenos=[
+                {"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": None},
+                {"fecha": "2026-01-06", "tipo": "nadar", "duracion_min": 40, "intensidad": "alta", "calorias": 400, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+        )
+        with self.assertRaises(CommandError) as cm:
+            self._importar()  # sin --miembro-node: nadie declaró el id 4
+        self.assertIn(str(self.MIEMBRO_ID_NODE), str(cm.exception))
+        self.assertEqual(Entreno.objects.count(), 0, "No se ha escrito NADA, ni el entreno limpio del titular.")
+
+    def test_miembro_node_formato_invalido_sin_dos_puntos_revienta(self):
+        _crear_sqlite_de_node(self.ruta_db)
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=["formato-sin-dos-puntos"])
+        self.assertIn("formato-sin-dos-puntos", str(cm.exception))
+
+    def test_miembro_node_id_no_numerico_revienta(self):
+        _crear_sqlite_de_node(self.ruta_db)
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[f"cuatro:{self.miembro.id}"])
+        self.assertIn("cuatro", str(cm.exception))
+
+    def test_miembro_node_correo_inexistente_revienta(self):
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[{"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE}],
+        )
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[f"{self.MIEMBRO_ID_NODE}:no-existe@example.com"])
+        self.assertIn("no-existe@example.com", str(cm.exception))
+
+    def test_miembro_node_id_de_persona_inexistente_revienta(self):
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[{"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE}],
+        )
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[f"{self.MIEMBRO_ID_NODE}:999999"])
+        self.assertIn("999999", str(cm.exception))
+
+    def test_miembro_node_persona_de_otra_casa_revienta(self):
+        """R6, generalizado: `--miembro-node` no puede colgar una fila de una persona que no
+        vive en la casa del titular — la misma frontera que el resto del comando respeta."""
+        otro_hogar = Hogar.objects.create()
+        de_otra_casa = Persona.objects.create(hogar=otro_hogar, nombre="De otra casa")
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[{"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE}],
+        )
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[f"{self.MIEMBRO_ID_NODE}:{de_otra_casa.id}"])
+        self.assertIn("misma casa", str(cm.exception))
+        self.assertEqual(Entreno.objects.count(), 0)
+
+    def test_miembro_node_repetido_revienta(self):
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[{"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE}],
+        )
+        otro_miembro = Persona.objects.create(hogar=self.hogar, nombre="Otro", responsable=self.usuario)
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[self.spec_miembro, f"{self.MIEMBRO_ID_NODE}:{otro_miembro.id}"])
+        self.assertIn(str(self.MIEMBRO_ID_NODE), str(cm.exception))
+
+    def test_miembro_node_con_correo_de_cuenta_propia(self):
+        """La otra forma de `--miembro-node` (la real, para Euridice: SÍ tiene cuenta propia,
+        medido en la ficha): un correo, resuelto igual que `--cuenta`."""
+        cuenta_miembro = Usuario.objects.create_user(email="miembro@example.com", password="x")
+        persona_con_cuenta = Persona.objects.get(usuario=cuenta_miembro)
+        persona_con_cuenta.hogar = self.hogar
+        persona_con_cuenta.save(update_fields=["hogar"])
+
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[{"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": self.MIEMBRO_ID_NODE}],
+        )
+        self._importar(miembro_node=[f"{self.MIEMBRO_ID_NODE}:miembro@example.com"])
+        self.assertEqual(Entreno.objects.filter(persona=persona_con_cuenta).count(), 1)
+
+    def test_segunda_pasada_no_duplica_ni_al_titular_ni_al_miembro(self):
+        """R2, generalizado a más de una persona: repetir el comando NO duplica nada, ni lo del
+        titular ni lo del miembro — el criterio de aceptación del contrato (sección 1 de la
+        ficha: '16 y 2 siguen siendo 16 y 2')."""
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            entrenos=[
+                {"fecha": "2026-01-05", "tipo": "correr", "duracion_min": 30, "intensidad": "media", "calorias": 300, "miembro_id": None},
+                {"fecha": "2026-01-06", "tipo": "nadar", "duracion_min": 40, "intensidad": "alta", "calorias": 400, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+            pesos=[
+                {"fecha": "2026-01-05", "peso_kg": 80.0, "miembro_id": None},
+                {"fecha": "2026-01-06", "peso_kg": 60.0, "miembro_id": self.MIEMBRO_ID_NODE},
+            ],
+        )
+        self._importar(miembro_node=[self.spec_miembro])
+        self._importar(miembro_node=[self.spec_miembro])
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+
+
+# ---------------------------------------------------------------------------------------------
+# BUG 033, decisiones 2 y 3 (RESUELTAS) — `mover_filas_de_miembro`: mueve las filas de
+# `entrenos`/`pesos` que se importaron ANTES del arreglo (todas colgadas del titular) a la
+# `Persona` correcta, identificándolas por su tupla completa (nunca por `id`), con `--dry-run`,
+# de forma idempotente, y sin inventar si algo no está donde se espera.
+# ---------------------------------------------------------------------------------------------
+
+
+class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
+    MIEMBRO_ID_NODE = 4
+
+    def setUp(self):
+        super().setUp()
+        self.miembro = Persona.objects.create(
+            hogar=self.hogar, nombre="Miembro de la casa", responsable=self.usuario
+        )
+        self.spec_miembro = f"{self.MIEMBRO_ID_NODE}:{self.miembro.id}"
+        # La fila de Node "de verdad" (la que el titular importó mal, en su día, con el
+        # comando de ANTES del arreglo): un entreno y una pesada de miembro_id=4.
+        self.fila_entreno_miembro = {
+            "fecha": "2026-06-27", "tipo": "correr", "duracion_min": 48,
+            "intensidad": "media", "calorias": 504, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        self.fila_pesada_miembro = {
+            "fecha": "2026-07-27", "peso_kg": 63.0, "grasa_pct": None, "cintura_cm": None,
+            "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+
+    def _sembrar_entreno_mal_colgado(self):
+        """Simula el estado de la base ANTES del arreglo: este entreno de Euridice/miembro,
+        importado por el comando VIEJO, cuelga hoy del titular. Se crea por la MISMA puerta que
+        usaba el importador (`apuntar_entreno`), no por `create()` a pelo."""
+        datos = mapeo.datos_entreno(self.fila_entreno_miembro)
+        return apuntar_entreno(self.usuario, datos)
+
+    def _sembrar_pesada_mal_colgada(self):
+        datos = mapeo.datos_pesada(self.fila_pesada_miembro)
+        return MedicionPeso.objects.create(persona=self.usuario, **datos)
+
+    def _mover(self, *, dry_run=False, miembro_node=None, cuenta=None, ruta=None):
+        salida = io.StringIO()
+        call_command(
+            "mover_filas_de_miembro",
+            ruta or self.ruta_db,
+            cuenta=cuenta or self.cuenta.email,
+            miembro_node=miembro_node if miembro_node is not None else [self.spec_miembro],
+            dry_run=dry_run,
+            stdout=salida,
+        )
+        return salida.getvalue()
+
+    def test_mueve_un_entreno_mal_colgado_del_titular_al_miembro(self):
+        self._sembrar_entreno_mal_colgado()
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+
+        self._mover()
+
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 0)
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 1)
+
+    def test_mueve_una_pesada_mal_colgada_del_titular_al_miembro(self):
+        self._sembrar_pesada_mal_colgada()
+        _crear_sqlite_de_node(self.ruta_db, pesos=[self.fila_pesada_miembro])
+
+        self._mover()
+
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 0)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+
+    def test_dry_run_no_mueve_nada_pero_informa(self):
+        self._sembrar_entreno_mal_colgado()
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+
+        salida = self._mover(dry_run=True)
+
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 1, "Con --dry-run no se mueve NADA.")
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0)
+        self.assertIn("1 movida", salida)
+
+    def test_segunda_pasada_es_idempotente_no_mueve_nada(self):
+        self._sembrar_entreno_mal_colgado()
+        self._sembrar_pesada_mal_colgada()
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[self.fila_entreno_miembro], pesos=[self.fila_pesada_miembro],
+        )
+
+        self._mover()  # primera pasada: mueve de verdad
+        salida_segunda = self._mover()  # segunda pasada: nada que mover
+
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 1, "Sigue movido, no se duplicó.")
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+        self.assertIn("0 movida(s), 1 ya estaba(n) movida(s)", salida_segunda)
+
+    def test_fila_duplicada_en_origen_y_destino_revienta_y_deshace_lo_ya_movido(self):
+        """El riesgo medido en la ficha (sección 4): si alguien reejecuta el importador VIEJO
+        tras mover, una fila queda EN LOS DOS SITIOS. El comando no adivina cuál es la buena:
+        para, lo dice, y deshace TODO lo de esta pasada — incluida otra fila limpia que ya
+        hubiera movido antes de toparse con la anómala (misma `transaction.atomic()`)."""
+        fila_limpia = {
+            "fecha": "2026-07-08", "tipo": "correr", "duracion_min": 41,
+            "intensidad": "media", "calorias": 431, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(fila_limpia))  # limpia: solo bajo el titular
+
+        self._sembrar_entreno_mal_colgado()  # bajo el titular...
+        Entreno.objects.create(  # ...Y ya bajo el miembro (la duplicación medida)
+            persona=self.miembro, **mapeo.datos_entreno(self.fila_entreno_miembro)
+        )
+
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            entrenos=[fila_limpia, self.fila_entreno_miembro],  # la limpia va primero
+        )
+
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        self.assertIn("no está donde se esperaba", str(cm.exception))
+        # La fila LIMPIA, aunque se hubiera movido ANTES de llegar a la anómala (va primero en
+        # Node), queda deshecha: la transacción completa se revierte, no solo la fila que falló.
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario, fecha="2026-07-08").count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro, fecha="2026-07-08").count(), 0)
+
+    def test_fila_no_encontrada_en_ningun_sitio_revienta_sin_mover_nada(self):
+        """Ni bajo el titular ni bajo el destino: el comando no la inventa, para y lo dice."""
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        self.assertIn("no está donde se esperaba", str(cm.exception))
+        self.assertIn("0 bajo el titular y 0 bajo el destino", str(cm.exception))
+
+    def test_sin_ningun_miembro_node_revienta(self):
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+        with self.assertRaises(CommandError) as cm:
+            self._mover(miembro_node=[])
+        self.assertIn("No se ha declarado ningún --miembro-node", str(cm.exception))
+
+    def test_miembro_id_sin_mapear_revienta_antes_de_mover_nada(self):
+        """Reusa la misma validación que el importador (`miembros.miembros_sin_mapear`): un
+        `miembro_id` de Node sin declarar hace fallar el comando sin mover NADA, ni siquiera
+        las filas de otro miembro que sí estaban bien declaradas."""
+        self._sembrar_entreno_mal_colgado()
+        otro_miembro_id = 7
+        otra_fila = {
+            "fecha": "2026-08-01", "tipo": "bici", "duracion_min": 20,
+            "intensidad": "baja", "calorias": 150, "miembro_id": otro_miembro_id,
+        }
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro, otra_fila])
+
+        with self.assertRaises(CommandError) as cm:
+            self._mover(miembro_node=[self.spec_miembro])  # falta declarar otro_miembro_id=7
+        self.assertIn(str(otro_miembro_id), str(cm.exception))
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0, "No se movió NADA.")

@@ -24,6 +24,13 @@ import sqlite3
 # recetas y las pesadas. Deliberadamente NO incluye `usuarios`, `miembros_hogar` (identidad,
 # "Fuera de alcance") ni `strava_cuentas` (tokens OAuth, "ni leerla") — ver el docstring del
 # módulo hermano `mapeo.py` para el porqué completo de cada exclusión.
+#
+# Bug 033 — matiz sobre `miembros_hogar`: sigue SIN leerse como tabla (la identidad de un
+# miembro de la casa — nombre, fecha de nacimiento, altura, peso — sigue fuera de alcance).
+# Lo que SÍ se lee desde esta unidad es la columna `miembro_id` de `entrenos` y `pesos`: un
+# entero suelto (NULL = titular, un id = un miembro de la casa) que el comando traduce a una
+# `Persona` de KCalibra a través de `--miembro-node` (`importacion/miembros.py`), nunca
+# consultando la tabla de identidad de Node.
 TABLAS_REQUERIDAS = ("productos_stock", "entrenos", "recetas", "pesos")
 
 
@@ -97,9 +104,14 @@ def entrenos(conexion):
     entrenos que ya están en la app Node sea cual sea su origen. `strava_id` NO se lee: el
     modelo `entrenos.models.Entreno` de Django no tiene ningún campo para guardarlo (está
     "preparado" para cuando `conectar-strava` exista, ver su docstring), así que no hay dónde
-    ponerlo ni falta que hace para esta unidad."""
+    ponerlo ni falta que hace para esta unidad.
+
+    Bug 033 — `miembro_id` SÍ se lee (antes no): es lo único que distingue un entreno del
+    titular (`NULL`) de uno de otro miembro de la casa (un id). Es un entero suelto, no la fila
+    de `miembros_hogar` — el comando (`importacion/miembros.py`) es quien lo traduce a una
+    `Persona`, nunca este módulo (que sigue sin tocar `miembros_hogar`, "Fuera de alcance")."""
     cursor = conexion.execute(
-        "SELECT fecha, tipo, intensidad, duracion_min, calorias FROM entrenos ORDER BY id"
+        "SELECT fecha, tipo, intensidad, duracion_min, calorias, miembro_id FROM entrenos ORDER BY id"
     )
     return [dict(fila) for fila in cursor.fetchall()]
 
@@ -115,10 +127,14 @@ def recetas(conexion):
 
 
 def pesadas(conexion):
-    """Las filas de `pesos`, tal cual (fecha, peso, grasa y cintura opcionales). `miembro_id`
-    NO se lee: identifica a una persona de `miembros_hogar` (fuera de alcance, "nada de
-    identidad") y esta unidad cuelga TODO de la única cuenta que se le indica al comando."""
+    """Las filas de `pesos`, tal cual (fecha, peso, grasa y cintura opcionales).
+
+    Bug 033 — `miembro_id` SÍ se lee (antes no, y este docstring lo prometía: "esta unidad
+    cuelga TODO de la única cuenta que se le indica al comando" dejó de ser cierto el día que
+    `hogares.Persona` pudo representar a alguien más de la casa, unidad 023/024). Sigue siendo
+    un entero suelto, nunca la fila de `miembros_hogar` (identidad, fuera de alcance) — la
+    traducción a `Persona` vive en `importacion/miembros.py`, no aquí."""
     cursor = conexion.execute(
-        "SELECT fecha, peso_kg, grasa_pct, cintura_cm FROM pesos ORDER BY id"
+        "SELECT fecha, peso_kg, grasa_pct, cintura_cm, miembro_id FROM pesos ORDER BY id"
     )
     return [dict(fila) for fila in cursor.fetchall()]
