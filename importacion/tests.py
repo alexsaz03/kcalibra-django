@@ -1058,10 +1058,11 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
         self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
 
     def test_H3_no_duplica_un_entreno_que_ya_existe_bajo_otra_persona_del_hogar(self):
-        """H3 de la revisión (ronda 1): si este importador (ya arreglado) corre ANTES de
-        `mover_filas_de_miembro` sobre una fila que el comando VIEJO dejó mal colgada del
-        titular, NO debe crear un duplicado bajo la persona correcta — tiene que saltarla y
-        avisarlo (nunca en silencio, R7)."""
+        """H3 de la revisión (ronda 1), SIGUE cerrado, mecanismo cambiado en la ronda 2 (R2):
+        si este importador corre ANTES de `mover_filas_de_miembro` sobre una fila que el
+        comando VIEJO dejó mal colgada del titular, NO debe duplicarla. La ronda 1 la saltaba
+        fila a fila (que resultó ser una omisión silenciosa, R2); ahora la pasada ENTERA se
+        niega, sin escribir NADA — ni siquiera la fila que estaría limpia."""
         fila = {
             "fecha": "2026-02-15", "tipo": "correr", "duracion_min": 25,
             "intensidad": "baja", "calorias": 150, "miembro_id": self.MIEMBRO_ID_NODE,
@@ -1071,11 +1072,11 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
         apuntar_entreno(self.usuario, mapeo.datos_entreno(fila))
         _crear_sqlite_de_node(self.ruta_db, entrenos=[fila])
 
-        salida = self._importar(miembro_node=[self.spec_miembro])
-
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[self.spec_miembro])
+        self.assertIn("mover_filas_de_miembro", str(cm.exception))
         self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0, "No se ha creado un duplicado.")
-        self.assertEqual(Entreno.objects.count(), 1, "Sigue habiendo solo la fila vieja, mal colgada.")
-        self.assertIn("mover_filas_de_miembro", salida)
+        self.assertEqual(Entreno.objects.count(), 1, "Sigue habiendo solo la fila vieja, mal colgada. No se ha escrito NADA nuevo.")
 
     def test_H3_no_duplica_una_pesada_que_ya_existe_bajo_otra_persona_del_hogar(self):
         """Misma reproducción que el test anterior, para `pesos` — usa la tupla COMPLETA
@@ -1086,11 +1087,54 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
         MedicionPeso.objects.create(persona=self.usuario, **datos)
         _crear_sqlite_de_node(self.ruta_db, pesos=[fila])
 
-        salida = self._importar(miembro_node=[self.spec_miembro])
-
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[self.spec_miembro])
+        self.assertIn("mover_filas_de_miembro", str(cm.exception))
         self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 0)
         self.assertEqual(MedicionPeso.objects.count(), 1)
-        self.assertIn("mover_filas_de_miembro", salida)
+
+    def test_R2_no_hay_tercera_opcion_entre_8_completos_y_negarse_entero(self):
+        """R2 de la revisión (ronda 2), el criterio de aceptación del contrato: si Alejandro ya
+        tiene a mano un entreno con la misma tupla que UNO de los 8 de Euridice en Node, el
+        importador de la ronda 1 (salto por fila) dejaba a Euridice con 7, no 8 — el contrato
+        roto por el lado de la omisión, en vez de por el de la duplicación. Ahora no hay
+        tercera opción: o entran los 8, o el comando se niega ENTERO. Aquí se mide el segundo
+        caso (hay colisión): CERO filas nuevas, ni la que estaría limpia."""
+        filas_miembro = [
+            {
+                "fecha": f"2026-05-{dia:02d}", "tipo": "correr", "duracion_min": 30 + dia,
+                "intensidad": "media", "calorias": 300 + dia, "miembro_id": self.MIEMBRO_ID_NODE,
+            }
+            for dia in range(1, 9)
+        ]
+        # Alejandro YA tiene, a mano, un entreno con la MISMA tupla que una de las 8 filas de
+        # Euridice en Node — el escenario que el revisor midió.
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(filas_miembro[0]))
+        _crear_sqlite_de_node(self.ruta_db, entrenos=filas_miembro)
+
+        with self.assertRaises(CommandError) as cm:
+            self._importar(miembro_node=[self.spec_miembro])
+        self.assertIn("mover_filas_de_miembro", str(cm.exception))
+
+        # No hay tercera opción: nunca queda en 7. Aquí, en 0 (el comando se negó entero).
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0)
+        self.assertEqual(Entreno.objects.count(), 1, "Solo sigue la fila que Alejandro ya tenía.")
+
+    def test_R2_sin_colision_entran_las_8_completas_no_7(self):
+        """La otra mitad del criterio: cuando NO hay ninguna señal de colisión, entran TODAS
+        las filas del miembro — las 8 completas, nunca una menos por un falso salto."""
+        filas_miembro = [
+            {
+                "fecha": f"2026-06-{dia:02d}", "tipo": "correr", "duracion_min": 30 + dia,
+                "intensidad": "media", "calorias": 300 + dia, "miembro_id": self.MIEMBRO_ID_NODE,
+            }
+            for dia in range(1, 9)
+        ]
+        _crear_sqlite_de_node(self.ruta_db, entrenos=filas_miembro)
+
+        self._importar(miembro_node=[self.spec_miembro])
+
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 8)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1147,8 +1191,16 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
         return salida.getvalue()
 
     def test_mueve_un_entreno_mal_colgado_del_titular_al_miembro(self):
+        """R1 de la revisión (ronda 2): una operación de una sola fila no se mueve (el comando
+        se niega — ver `test_operacion_de_una_sola_fila_no_se_mueve_a_ciegas`), así que aquí se
+        siembran DOS (el entreno del foco de este test, y una pesada también mal colgada) para
+        que la operación tenga con qué corroborarse — exactamente como en la Node real, donde
+        entrenos y pesadas del mismo miembro se mueven en la MISMA pasada."""
         self._sembrar_entreno_mal_colgado()
-        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+        self._sembrar_pesada_mal_colgada()
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[self.fila_entreno_miembro], pesos=[self.fila_pesada_miembro],
+        )
 
         self._mover()
 
@@ -1156,8 +1208,13 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
         self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 1)
 
     def test_mueve_una_pesada_mal_colgada_del_titular_al_miembro(self):
+        """Mismo motivo que el test anterior: se siembra también un entreno, para que la
+        operación tenga 2 candidatas y no choque con el límite de una sola fila."""
+        self._sembrar_entreno_mal_colgado()
         self._sembrar_pesada_mal_colgada()
-        _crear_sqlite_de_node(self.ruta_db, pesos=[self.fila_pesada_miembro])
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[self.fila_entreno_miembro], pesos=[self.fila_pesada_miembro],
+        )
 
         self._mover()
 
@@ -1166,7 +1223,10 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
 
     def test_dry_run_no_mueve_nada_pero_informa(self):
         self._sembrar_entreno_mal_colgado()
-        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
+        self._sembrar_pesada_mal_colgada()
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[self.fila_entreno_miembro], pesos=[self.fila_pesada_miembro],
+        )
 
         salida = self._mover(dry_run=True)
 
@@ -1320,3 +1380,93 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
         self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
         self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
         self.assertEqual(MedicionPeso.objects.get(persona=self.miembro).peso_kg, Decimal("55.5"))
+
+    def test_R1_no_mueve_una_pesada_ajena_que_coincide_por_casualidad(self):
+        """R1 de la revisión (ronda 2): el mismo ataque que H1 (ronda 1), pero sobre la PESADA
+        — la forma EXACTA del dato real (el miembro_id real de Node tiene 8 entrenos y UNA
+        sola pesada). Mover de verdad (entrenos + pesada, 9 filas en la operación) → Euridice
+        borra su pesada movida → Alejandro apunta una SUYA ese día con los mismos valores →
+        reejecutar. La pesada de Alejandro tiene que seguir siendo suya."""
+        otra_fila_entreno = {
+            "fecha": "2026-02-12", "tipo": "fuerza", "duracion_min": 30,
+            "intensidad": "media", "calorias": 220, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        self._sembrar_entreno_mal_colgado()
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(otra_fila_entreno))
+        self._sembrar_pesada_mal_colgada()
+        _crear_sqlite_de_node(
+            self.ruta_db,
+            entrenos=[self.fila_entreno_miembro, otra_fila_entreno],
+            pesos=[self.fila_pesada_miembro],
+        )
+
+        # 1. Mover de verdad: operación íntegra de 3 filas (2 entrenos + 1 pesada), se mueven.
+        self._mover()
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+
+        # 2. Euridice borra SU pesada movida.
+        MedicionPeso.objects.filter(persona=self.miembro, fecha=self.fila_pesada_miembro["fecha"]).delete()
+
+        # 3. Alejandro apunta una pesada SUYA, NUEVA, ese mismo día, con los MISMOS valores.
+        datos_coincidentes = mapeo.datos_pesada(self.fila_pesada_miembro)
+        MedicionPeso.objects.create(persona=self.usuario, **datos_coincidentes)
+
+        # 4. Reejecutar el mover: NO debe tocar la pesada nueva de Alejandro.
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        self.assertIn("no están en un estado que el comando pueda explicar", str(cm.exception))
+        self.assertEqual(
+            MedicionPeso.objects.filter(persona=self.usuario, fecha=self.fila_pesada_miembro["fecha"]).count(), 1,
+            "La pesada nueva de Alejandro NO debe haberse movido a Euridice.",
+        )
+        self.assertEqual(
+            MedicionPeso.objects.filter(persona=self.miembro, fecha=self.fila_pesada_miembro["fecha"]).count(), 0,
+        )
+        # Los dos entrenos, que sí seguían correctamente movidos, tampoco se tocan: la
+        # operación entera se para junta.
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 2)
+
+    def test_operacion_de_una_sola_fila_no_se_mueve_a_ciegas(self):
+        """R1 de la revisión (ronda 2), el límite honesto: si TODA la operación (todas las
+        tablas, todos los miembros) es una única fila candidata, no hay con qué corroborar que
+        de verdad es la fila del bug y no una coincidencia — el comando lo dice, en vez de
+        fingir que la comprobación de "toda la operación en el mismo estado" protege algo con
+        un solo dato."""
+        self._sembrar_pesada_mal_colgada()  # SOLO esto, nada de entrenos
+        _crear_sqlite_de_node(self.ruta_db, pesos=[self.fila_pesada_miembro])
+
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        self.assertIn("Solo hay UNA fila", str(cm.exception))
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 0)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+
+    def test_R3_las_filas_del_titular_nunca_entran_en_un_lote_de_miembro(self):
+        """Mutante superviviente (ronda 2, R3): `_agrupar_por_miembro` excluye las filas del
+        titular (`miembro_id is None`) con un `continue`. Si esa línea se debilitara a `pass`,
+        las filas del titular entrarían en el diccionario bajo la clave `None`, y
+        `mapa_miembros[None]` reventaría con un `KeyError` crudo — precisamente en la forma
+        EXACTA del dato real, donde `entrenos`/`pesos` mezclan SIEMPRE filas del titular
+        (`miembro_id=NULL`) y de miembros en la MISMA tabla. Contraprobado con esa mutación
+        exacta: ver la ficha del bug, sección 5."""
+        self._sembrar_entreno_mal_colgado()
+        # Un entreno DEL TITULAR (miembro_id=None), MEZCLADO en la misma tabla de Node que el
+        # del miembro — la forma real de Node, nunca separadas.
+        fila_titular = {
+            "fecha": "2026-04-01", "tipo": "correr", "duracion_min": 20,
+            "intensidad": "media", "calorias": 200, "miembro_id": None,
+        }
+        otra_fila_miembro = {
+            "fecha": "2026-04-02", "tipo": "nadar", "duracion_min": 15,
+            "intensidad": "baja", "calorias": 90, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(otra_fila_miembro))
+        _crear_sqlite_de_node(
+            self.ruta_db, entrenos=[fila_titular, otra_fila_miembro, self.fila_entreno_miembro],
+        )
+
+        # No debe reventar (ni KeyError ni ninguna otra excepción): la fila del titular se
+        # ignora, las dos del miembro se mueven.
+        self._mover()
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 2)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 0)

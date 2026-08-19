@@ -11,48 +11,54 @@ original sin ganar nada a cambio. Se ejecuta DESPUÉS de que el arreglo de la de
 mergeado, nunca antes (medido en la misma sección: reejecutar el comando VIEJO tras mover
 duplica, porque su idempotencia miraba `persona=persona` sin saber de miembros).
 
-## H1 de la revisión (ronda 1) — por qué NO decide fila a fila
+## Por qué NO decide fila a fila, ni siquiera por lote (rondas 1 y 2 de revisión)
 
-La primera versión de este comando decidía cada fila de Node por su cuenta: "¿hay exactamente
+**Ronda 1 (H1):** la primera versión decidía cada fila de Node por su cuenta: "¿hay exactamente
 1 bajo el titular y 0 bajo el destino? la muevo". El revisor lo reventó así: mover 8 filas de
-verdad, borrar UNA desde la app (acción normal de la persona), apuntar OTRA fila nueva con la
-misma tupla exacta (fecha/deporte/intensidad/minutos/calorías) — y la segunda pasada del comando
-"reconocía" esa fila nueva como si fuera la vieja mal colgada y la movía. Los números seguían
-cuadrando (7 ya movidas + 1 "recién encontrada" = 8) y aun así la fila movida era otra: el mismo
-síntoma que esta unidad existe para arreglar, reintroducido por el lado del propio comando.
+verdad, borrar UNA desde la app (acción normal), apuntar OTRA fila nueva con la misma tupla
+exacta — y la segunda pasada "reconocía" la fila nueva como si fuera la vieja mal colgada y la
+movía. Se corrigió agrupando por miembro y tabla: solo actuaba si el LOTE COMPLETO (todas las
+filas de ESE miembro en ESA tabla) estaba uniformemente íntegro o uniformemente ya movido.
 
-La causa es que la tupla de datos NO es un identificador — es una coincidencia de valores, y dos
-filas de Node distintas (o una vieja y una nueva de la persona) pueden compartirla sin ser la
-misma. Fila a fila no hay forma de distinguirlas.
+**Ronda 2 (R1): un lote de UNA fila degenera EXACTAMENTE en la regla vieja.** Y no es teórico:
+la pesada del `miembro_id` real en la Node de verdad es, precisamente, un lote de una fila. El
+revisor reprodujo el mismo ataque de la ronda 1 pero sobre la pesada (que vive sola en su
+lote) y volvió a colarse. La propiedad "todo el lote en el mismo estado" es correcta, pero
+"lote" estaba mal recortado: un miembro con datos en dos tablas (8 entrenos + 1 pesada, el caso
+real) tiene DOS lotes independientes, y decidir cada tabla por separado deja que la pesada
+(el lote débil) decida sola, sin que los 8 entrenos (el lote fuerte, ya migrado) puedan avisar
+de que algo no cuadra.
 
-**La propiedad que sí lo evita:** el comando nunca decide mirando una fila sola. Para cada
-miembro y cada tabla, mira el LOTE COMPLETO de filas que le corresponden y solo actúa si el
-lote entero está en uno de los dos únicos estados que puede explicar:
+**La propiedad ahora es de TODA LA OPERACIÓN, no del lote:** se juntan las filas candidatas de
+TODAS las tablas y TODOS los miembros de esta pasada en una sola lista, y se decide UNA vez:
+íntegra (cada candidata, 1 bajo el titular y 0 bajo el destino: se mueven TODAS), ya movida
+(cada candidata, 0 y 1: no-op), o mezclada (cualquier otra cosa: para, sin mover nada de nada).
+Con esto, el ataque de la ronda 2 SÍ se detecta: los 8 entrenos ya están en "0 y 1" (ya
+movidos) mientras la pesada manipulada aparece en "1 y 0" (parece íntegra) — la operación
+completa es una MEZCLA de los dos estados, así que para entera, sin mover ni la pesada.
 
-- **íntegro:** TODAS sus filas están, cada una, con exactamente 1 copia bajo el titular y 0
-  bajo el destino — el lote entero sigue tal cual lo dejó el bug. Se mueve TODO el lote.
-- **ya movido:** TODAS sus filas están, cada una, con exactamente 0 copias bajo el titular y 1
-  bajo el destino — el lote entero ya se corrigió en una pasada anterior. No-op (idempotencia).
+**El límite honesto, no fingido: una operación de UNA sola fila total no gana nada con este
+diseño** — con un solo dato no hay con qué corroborar nada, y "toda la operación en el mismo
+estado" se reduce, otra vez, a la regla vieja fila a fila. En vez de fingir que la comprobación
+protege igual, el comando lo dice: si la operación completa tiene una única fila candidata Y
+esa fila resultaría "íntegra" (se movería), el comando SE NIEGA explícitamente en vez de mover
+a ciegas (ver el bloque final de `_mover_todo`). Esto es una limitación conocida, no resuelta del
+todo por este diseño — cerrarla de verdad necesitaría que una fila importada llevara marcada su
+procedencia (una columna, no una tupla de valores), y eso es un cambio de contrato que le toca
+decidir al usuario, no a este comando.
 
-Cualquier otra combinación —una sola fila que no encaje, sea porque falta, porque aparece en
-los dos sitios, o porque aparece donde no tocaba (el escenario del revisor)— es un lote
-**mezclado**: la prueba de que pasó algo que el comando no puede razonar. Ninguna fila del lote
-se toca, ni siquiera las que sí encajarían solas — porque si una fila del lote es sospechosa,
-la "identidad" de las demás (la misma tupla, la misma lógica) deja de ser de fiar.
-
-## H2 de la revisión — el choque de `(persona, fecha)` en pesadas, detectado, no crudo
+## H2 de la ronda 1 — el choque de `(persona, fecha)` en pesadas, detectado, no crudo
 
 `MedicionPeso` tiene una restricción real en la base, `una_medicion_por_persona_y_dia`
 `(persona, fecha)` — más corta que la tupla completa que este comando usa para identificar una
 fila. Si la persona de destino YA tiene una pesada esa fecha (con otros valores: la suya
-propia, apuntada a mano), mover una fila "íntegra" hacia ella violaría esa restricción y saldría
-como un `IntegrityError` crudo de Django, no como el `CommandError` en cristiano que el resto
-del comando promete. Por eso, SOLO para pesadas, antes de dar un lote por "íntegro" se comprueba
-también si el destino ya tiene ALGO esa fecha (choque de `(persona, fecha)`, no de la tupla
-completa) — si lo tiene, el lote se trata como mezclado: no se intenta el `UPDATE` que iba a
-reventar.
+propia, apuntada a mano), mover esa fila violaría esa restricción y saldría como un
+`IntegrityError` crudo, no como el `CommandError` en cristiano que el resto del comando
+promete. Por eso, para cada candidata de pesada que fuera a moverse, se comprueba también si el
+destino ya tiene ALGO esa fecha (choque de `(persona, fecha)`, no de la tupla completa) — si lo
+tiene, la operación entera se trata como mezclada: no se intenta el `UPDATE` que iba a reventar.
 
-## H4/PII de la revisión — qué se imprime de una pesada
+## H4/PII de la ronda 1 — qué se imprime de una pesada
 
 Los mensajes de error de pesadas nunca imprimen `peso_kg`/`grasa_pct`/`cintura_cm` (datos de
 salud de una persona real) — solo la fecha, que basta para que quien lee el aviso localice la
@@ -66,11 +72,11 @@ la misma que `importar_datos_node` ya usa para reconocer una fila: `mapeo.clave_
 entrenos; fecha+peso_kg+grasa_pct+cintura_cm para pesadas — y busca, bajo el TITULAR y bajo el
 DESTINO, cuántas filas Django tienen esa tupla exacta. Nunca por `id` de Django.
 
-## Todo o nada (H3 de la revisión, generalizado): sin `--dry-run` real no hay ensayo posible
+## Todo o nada: sin `--dry-run` real no hay ensayo posible
 
 Todo el trabajo vive en UNA `transaction.atomic()`, igual que en `importar_datos_node.py`.
-Cualquier lote mezclado revienta con `CommandError` y deshace TODO lo que esta pasada ya
-hubiera movido de otros lotes/tablas — nunca deja una corrección a medias.
+Cualquier mezcla revienta con `CommandError` y deshace TODO lo que esta pasada ya hubiera
+movido — nunca deja una corrección a medias.
 """
 
 from django.contrib.auth import get_user_model
@@ -100,9 +106,10 @@ class _CanceladoPorDryRun(Exception):
 class Command(BaseCommand):
     help = (
         "Bug 033 — mueve los entrenos y las pesadas que se importaron mal (colgados del "
-        "titular) a la Persona a la que de verdad pertenecen. Solo actúa cuando el lote "
-        "completo de un miembro está íntegro (todo mal) o ya corregido (todo bien); ante "
-        "cualquier mezcla, para y no toca nada. Repetible: la segunda vez no mueve nada."
+        "titular) a la Persona a la que de verdad pertenecen. Solo actúa cuando TODA la "
+        "pasada (todas las tablas, todos los miembros) está íntegra (todo mal) o ya "
+        "corregida (todo bien); ante cualquier mezcla, para y no toca nada. Repetible: la "
+        "segunda vez no mueve nada."
     )
 
     def add_arguments(self, parser):
@@ -185,16 +192,13 @@ class Command(BaseCommand):
         _imprimir_resumen(self.stdout, resumen, dry_run)
 
 
-def _mover_todo(conexion, persona_titular, mapa_miembros):
-    return {
-        "entrenos": _mover_entrenos(conexion, persona_titular, mapa_miembros),
-        "pesadas": _mover_pesadas(conexion, persona_titular, mapa_miembros),
-    }
-
-
 def _agrupar_por_miembro(filas):
     """Filas de origen (con `miembro_id`), agrupadas por `miembro_id`, EXCLUYENDO las del
-    titular (`miembro_id is None`: nunca hay nada que mover para esas)."""
+    titular (`miembro_id is None`: nunca hay nada que mover para esas). R3 de la revisión
+    (ronda 2): esta línea es la que hace que las filas del titular NUNCA lleguen a
+    `mapa_miembros[miembro_id]` con `miembro_id=None` (que reventaría con `KeyError`, crudo,
+    sobre la Node real — que SIEMPRE mezcla filas del titular y de miembros en la misma tabla).
+    Tiene su propia red (`test_R3_...`), contraprobada con esta misma mutación."""
     agrupadas = {}
     for fila in filas:
         miembro_id = fila["miembro_id"]
@@ -202,70 +206,6 @@ def _agrupar_por_miembro(filas):
             continue
         agrupadas.setdefault(miembro_id, []).append(fila)
     return agrupadas
-
-
-def _estado_lote(triples):
-    """`triples`: una `(en_origen, en_destino, colision)` por fila del lote (mismo miembro,
-    misma tabla). Ver el docstring del módulo, 'H1'. Devuelve 'integro', 'ya_movido' o
-    'mezclado' — NUNCA decide fila a fila."""
-    if any(colision for _, _, colision in triples):
-        return "mezclado"
-    if all(en_origen == 1 and en_destino == 0 for en_origen, en_destino, _ in triples):
-        return "integro"
-    if all(en_origen == 0 and en_destino == 1 for en_origen, en_destino, _ in triples):
-        return "ya_movido"
-    return "mezclado"
-
-
-def _mover_lote(
-    *, filas, mapa_miembros, persona_titular, modelo, calcular_clave, etiqueta,
-    describir_clave, hay_colision=None,
-):
-    """Genérico para `entrenos`/`pesadas`: agrupa por miembro, decide el lote COMPLETO de cada
-    uno (H1) y, si está íntegro, mueve TODAS sus filas de una vez; si ya está movido, no hace
-    nada; si está mezclado, para con un `CommandError` — sin mover NADA de ese lote."""
-    movidas = 0
-    ya_movidas = 0
-    for miembro_id, filas_miembro in _agrupar_por_miembro(filas).items():
-        persona_destino = mapa_miembros[miembro_id]
-        claves = [calcular_clave(fila) for fila in filas_miembro]
-        triples = []
-        for clave in claves:
-            en_origen = modelo.objects.filter(persona=persona_titular, **clave).count()
-            en_destino = modelo.objects.filter(persona=persona_destino, **clave).count()
-            # H2 solo tiene sentido como candidata a moverse (en_destino == 0): si en_destino
-            # ya es >= 1, lo que `hay_colision` encontraría es la MISMA fila que constituye el
-            # estado "ya_movido" (o una anomalía que las otras dos cuentas ya van a marcar como
-            # mezclada) — comprobarlo ahí sería un falso positivo contra la propia idempotencia.
-            colision = bool(
-                hay_colision and en_destino == 0 and hay_colision(clave, persona_destino)
-            )
-            triples.append((en_origen, en_destino, colision))
-
-        estado = _estado_lote(triples)
-        if estado == "ya_movido":
-            ya_movidas += len(claves)
-            continue
-        if estado == "integro":
-            for clave in claves:
-                modelo.objects.filter(persona=persona_titular, **clave).update(persona=persona_destino)
-            movidas += len(claves)
-            continue
-
-        # mezclado — PARA, sin mover NADA de este lote (la transacción deshace además
-        # cualquier otro lote/miembro/tabla ya movido en esta misma pasada).
-        detalle = "; ".join(
-            f"{describir_clave(clave)} -> {en_origen} bajo el titular, {en_destino} bajo el "
-            f"destino{' (y ya hay una medición de esa fecha con otro valor)' if colision else ''}"
-            for clave, (en_origen, en_destino, colision) in zip(claves, triples)
-        )
-        raise CommandError(
-            f"Las {etiqueta} del miembro_id={miembro_id} no están en un estado que el comando "
-            "pueda explicar (se esperaba que TODAS estuvieran bajo el titular, o que TODAS ya "
-            f"estuvieran bajo el destino — nunca una mezcla): {detalle}. No se ha movido nada "
-            "de esta pasada."
-        )
-    return {"movidas": movidas, "ya_movidas": ya_movidas}
 
 
 def _clave_entreno(fila):
@@ -280,22 +220,6 @@ def _describir_clave_entreno(clave):
     )
 
 
-def _mover_entrenos(conexion, persona_titular, mapa_miembros):
-    return _mover_lote(
-        filas=origen.entrenos(conexion),
-        mapa_miembros=mapa_miembros,
-        persona_titular=persona_titular,
-        modelo=Entreno,
-        calcular_clave=_clave_entreno,
-        etiqueta="entrenos",
-        describir_clave=_describir_clave_entreno,
-        # Entreno no tiene ninguna restricción de unicidad en la base (solo un índice, ver
-        # entrenos/models.py): no hace falta la comprobación de H2, que es específica de
-        # `una_medicion_por_persona_y_dia`.
-        hay_colision=None,
-    )
-
-
 def _clave_pesada(fila):
     datos = mapeo.datos_pesada(fila)
     return {
@@ -307,31 +231,132 @@ def _clave_pesada(fila):
 
 
 def _describir_clave_pesada(clave):
-    # H4/PII de la revisión: NUNCA el peso, la grasa ni la cintura — solo la fecha, que basta
-    # para localizar la fila en la app.
+    # H4/PII de la revisión (ronda 1): NUNCA el peso, la grasa ni la cintura — solo la fecha,
+    # que basta para localizar la fila en la app.
     return str(clave["fecha"])
 
 
 def _hay_colision_pesada(clave, persona_destino):
-    """H2 de la revisión: `MedicionPeso` exige `(persona, fecha)` único en la base — más corto
-    que la tupla completa que usa este comando para identificar una fila. Si el destino YA
-    tiene una medición esa fecha (con OTROS valores: la suya propia), moverla revienta con
-    `IntegrityError`. Se comprueba ANTES de intentarlo, por `(persona, fecha)` sin más — la
-    misma restricción que la base va a hacer cumplir de todas formas."""
+    """H2 de la revisión (ronda 1): `MedicionPeso` exige `(persona, fecha)` único en la base —
+    más corto que la tupla completa que usa este comando para identificar una fila. Si el
+    destino YA tiene una medición esa fecha (con OTROS valores: la suya propia), moverla
+    revienta con `IntegrityError`. Se comprueba ANTES de intentarlo, por `(persona, fecha)` sin
+    más — la misma restricción que la base va a hacer cumplir de todas formas."""
     return MedicionPeso.objects.filter(persona=persona_destino, fecha=clave["fecha"]).exists()
 
 
-def _mover_pesadas(conexion, persona_titular, mapa_miembros):
-    return _mover_lote(
-        filas=origen.pesadas(conexion),
-        mapa_miembros=mapa_miembros,
-        persona_titular=persona_titular,
-        modelo=MedicionPeso,
-        calcular_clave=_clave_pesada,
-        etiqueta="pesadas",
-        describir_clave=_describir_clave_pesada,
+def _candidatas(*, filas, mapa_miembros, persona_titular, modelo, calcular_clave, etiqueta,
+                 describir_clave, hay_colision=None):
+    """Recorre las filas de UNA tabla (agrupadas por miembro) y, para cada una, calcula su
+    clave y sus recuentos (bajo el titular, bajo el destino) — sin decidir nada todavía: R1 de
+    la revisión (ronda 2) exige que la decisión sea de TODA la operación, no de esta tabla ni
+    de este miembro por separado, así que aquí solo se reúnen los datos."""
+    candidatas = []
+    for miembro_id, filas_miembro in _agrupar_por_miembro(filas).items():
+        persona_destino = mapa_miembros[miembro_id]
+        for fila in filas_miembro:
+            clave = calcular_clave(fila)
+            en_origen = modelo.objects.filter(persona=persona_titular, **clave).count()
+            en_destino = modelo.objects.filter(persona=persona_destino, **clave).count()
+            # H2: solo tiene sentido como candidata a moverse (en_destino == 0); si ya es
+            # >= 1, lo que `hay_colision` encontraría es la MISMA fila del estado "ya movido"
+            # — comprobarlo ahí sería un falso positivo contra la propia idempotencia.
+            colision = bool(
+                hay_colision and en_destino == 0 and hay_colision(clave, persona_destino)
+            )
+            candidatas.append({
+                "modelo": modelo,
+                "clave": clave,
+                "persona_destino": persona_destino,
+                "miembro_id": miembro_id,
+                "etiqueta": etiqueta,
+                "descripcion": describir_clave(clave),
+                "triple": (en_origen, en_destino, colision),
+            })
+    return candidatas
+
+
+def _estado_operacion(triples):
+    """`triples`: una `(en_origen, en_destino, colision)` por CADA candidata de TODA la
+    operación (todas las tablas, todos los miembros de esta pasada) — R1 de la revisión (ronda
+    2: "sube el todo o nada de lote a operación"). Devuelve 'integra', 'ya_movida' o
+    'mezclada'. Con una lista vacía (no hay ningún `--miembro-node` con filas en Node) no hay
+    nada que decidir; quien llama no debería invocar esto en ese caso."""
+    if any(colision for _, _, colision in triples):
+        return "mezclada"
+    if all(en_origen == 1 and en_destino == 0 for en_origen, en_destino, _ in triples):
+        return "integra"
+    if all(en_origen == 0 and en_destino == 1 for en_origen, en_destino, _ in triples):
+        return "ya_movida"
+    return "mezclada"
+
+
+def _mover_todo(conexion, persona_titular, mapa_miembros):
+    candidatas_entrenos = _candidatas(
+        filas=origen.entrenos(conexion), mapa_miembros=mapa_miembros,
+        persona_titular=persona_titular, modelo=Entreno, calcular_clave=_clave_entreno,
+        etiqueta="entrenos", describir_clave=_describir_clave_entreno,
+        # Entreno no tiene ninguna restricción de unicidad en la base (solo un índice, ver
+        # entrenos/models.py): no hace falta H2, que es específica de
+        # `una_medicion_por_persona_y_dia`.
+        hay_colision=None,
+    )
+    candidatas_pesadas = _candidatas(
+        filas=origen.pesadas(conexion), mapa_miembros=mapa_miembros,
+        persona_titular=persona_titular, modelo=MedicionPeso, calcular_clave=_clave_pesada,
+        etiqueta="pesadas", describir_clave=_describir_clave_pesada,
         hay_colision=_hay_colision_pesada,
     )
+    todas = candidatas_entrenos + candidatas_pesadas
+
+    resumen_vacio = {"entrenos": {"movidas": 0, "ya_movidas": 0}, "pesadas": {"movidas": 0, "ya_movidas": 0}}
+    if not todas:
+        return resumen_vacio
+
+    estado = _estado_operacion([c["triple"] for c in todas])
+
+    if estado == "mezclada":
+        detalle = "; ".join(
+            f"{c['etiqueta']} {c['descripcion']} (miembro_id={c['miembro_id']}) -> "
+            f"{c['triple'][0]} bajo el titular, {c['triple'][1]} bajo el destino"
+            + (" (y ya hay una medición de esa fecha con otro valor)" if c["triple"][2] else "")
+            for c in todas
+        )
+        raise CommandError(
+            "Las filas de esta pasada no están en un estado que el comando pueda explicar (se "
+            "esperaba que TODA la operación — todas las tablas, todos los miembros — estuviera "
+            "íntegra bajo el titular, o que TODA ya estuviera bajo su destino — nunca una "
+            f"mezcla): {detalle}. No se ha movido nada."
+        )
+
+    if estado == "ya_movida":
+        return {
+            "entrenos": {"movidas": 0, "ya_movidas": len(candidatas_entrenos)},
+            "pesadas": {"movidas": 0, "ya_movidas": len(candidatas_pesadas)},
+        }
+
+    # integra — pero antes de mover, el límite honesto de la ronda 2: con una sola fila en
+    # TODA la operación no hay con qué corroborar que de verdad es la del bug y no una
+    # coincidencia (ver el docstring del módulo, "El límite honesto"). El comando no finge.
+    if len(todas) == 1:
+        c = todas[0]
+        raise CommandError(
+            f"Solo hay UNA fila que mover en toda esta pasada ({c['etiqueta']} "
+            f"{c['descripcion']}, miembro_id={c['miembro_id']}): con un único dato no hay con "
+            "qué corroborar que de verdad es la fila que dejó mal colgada el bug y no una "
+            "coincidencia — el comando no la mueve a ciegas. Revísala a mano, o declara más "
+            "--miembro-node si hay más filas que mover en la misma pasada. No se ha movido nada."
+        )
+
+    for c in candidatas_entrenos:
+        c["modelo"].objects.filter(persona=persona_titular, **c["clave"]).update(persona=c["persona_destino"])
+    for c in candidatas_pesadas:
+        c["modelo"].objects.filter(persona=persona_titular, **c["clave"]).update(persona=c["persona_destino"])
+
+    return {
+        "entrenos": {"movidas": len(candidatas_entrenos), "ya_movidas": 0},
+        "pesadas": {"movidas": len(candidatas_pesadas), "ya_movidas": 0},
+    }
 
 
 def _imprimir_resumen(stdout, resumen, dry_run):
