@@ -1057,6 +1057,41 @@ class Bug033_ImportacionPorMiembroTests(BaseImportacionTests):
         self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
         self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
 
+    def test_H3_no_duplica_un_entreno_que_ya_existe_bajo_otra_persona_del_hogar(self):
+        """H3 de la revisión (ronda 1): si este importador (ya arreglado) corre ANTES de
+        `mover_filas_de_miembro` sobre una fila que el comando VIEJO dejó mal colgada del
+        titular, NO debe crear un duplicado bajo la persona correcta — tiene que saltarla y
+        avisarlo (nunca en silencio, R7)."""
+        fila = {
+            "fecha": "2026-02-15", "tipo": "correr", "duracion_min": 25,
+            "intensidad": "baja", "calorias": 150, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        # Simula el estado "recién detectado el bug, todavía sin mover": ya está, mal
+        # colgado, bajo el titular — como lo dejó el comando VIEJO.
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(fila))
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[fila])
+
+        salida = self._importar(miembro_node=[self.spec_miembro])
+
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0, "No se ha creado un duplicado.")
+        self.assertEqual(Entreno.objects.count(), 1, "Sigue habiendo solo la fila vieja, mal colgada.")
+        self.assertIn("mover_filas_de_miembro", salida)
+
+    def test_H3_no_duplica_una_pesada_que_ya_existe_bajo_otra_persona_del_hogar(self):
+        """Misma reproducción que el test anterior, para `pesos` — usa la tupla COMPLETA
+        (fecha+peso+grasa+cintura), no solo la fecha: dos personas de la misma casa SÍ pueden
+        tener, legítimamente, cada una su propia pesada el mismo día (eso no es un bug)."""
+        fila = {"fecha": "2026-02-16", "peso_kg": 72.0, "grasa_pct": None, "cintura_cm": None, "miembro_id": self.MIEMBRO_ID_NODE}
+        datos = mapeo.datos_pesada(fila)
+        MedicionPeso.objects.create(persona=self.usuario, **datos)
+        _crear_sqlite_de_node(self.ruta_db, pesos=[fila])
+
+        salida = self._importar(miembro_node=[self.spec_miembro])
+
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 0)
+        self.assertEqual(MedicionPeso.objects.count(), 1)
+        self.assertIn("mover_filas_de_miembro", salida)
+
 
 # ---------------------------------------------------------------------------------------------
 # BUG 033, decisiones 2 y 3 (RESUELTAS) — `mover_filas_de_miembro`: mueve las filas de
@@ -1075,14 +1110,16 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
             hogar=self.hogar, nombre="Miembro de la casa", responsable=self.usuario
         )
         self.spec_miembro = f"{self.MIEMBRO_ID_NODE}:{self.miembro.id}"
-        # La fila de Node "de verdad" (la que el titular importó mal, en su día, con el
-        # comando de ANTES del arreglo): un entreno y una pesada de miembro_id=4.
+        # R8 ("sin un solo dato real dentro del repositorio"): fecha, deporte y peso
+        # INVENTADOS aquí — ninguno coincide con los de la SQLite real de Node citada en la
+        # ficha (id, fecha ni valores). La fila de Node "de mentira" que simula la que el
+        # titular importó mal, en su día, con el comando de ANTES del arreglo.
         self.fila_entreno_miembro = {
-            "fecha": "2026-06-27", "tipo": "correr", "duracion_min": 48,
-            "intensidad": "media", "calorias": 504, "miembro_id": self.MIEMBRO_ID_NODE,
+            "fecha": "2026-02-10", "tipo": "bici", "duracion_min": 55,
+            "intensidad": "baja", "calorias": 210, "miembro_id": self.MIEMBRO_ID_NODE,
         }
         self.fila_pesada_miembro = {
-            "fecha": "2026-07-27", "peso_kg": 63.0, "grasa_pct": None, "cintura_cm": None,
+            "fecha": "2026-03-03", "peso_kg": 70.5, "grasa_pct": None, "cintura_cm": None,
             "miembro_id": self.MIEMBRO_ID_NODE,
         }
 
@@ -1157,8 +1194,8 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
         para, lo dice, y deshace TODO lo de esta pasada — incluida otra fila limpia que ya
         hubiera movido antes de toparse con la anómala (misma `transaction.atomic()`)."""
         fila_limpia = {
-            "fecha": "2026-07-08", "tipo": "correr", "duracion_min": 41,
-            "intensidad": "media", "calorias": 431, "miembro_id": self.MIEMBRO_ID_NODE,
+            "fecha": "2026-02-11", "tipo": "nadar", "duracion_min": 20,
+            "intensidad": "alta", "calorias": 180, "miembro_id": self.MIEMBRO_ID_NODE,
         }
         apuntar_entreno(self.usuario, mapeo.datos_entreno(fila_limpia))  # limpia: solo bajo el titular
 
@@ -1174,11 +1211,13 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
 
         with self.assertRaises(CommandError) as cm:
             self._mover()
-        self.assertIn("no está donde se esperaba", str(cm.exception))
-        # La fila LIMPIA, aunque se hubiera movido ANTES de llegar a la anómala (va primero en
-        # Node), queda deshecha: la transacción completa se revierte, no solo la fila que falló.
-        self.assertEqual(Entreno.objects.filter(persona=self.usuario, fecha="2026-07-08").count(), 1)
-        self.assertEqual(Entreno.objects.filter(persona=self.miembro, fecha="2026-07-08").count(), 0)
+        self.assertIn("no están en un estado que el comando pueda explicar", str(cm.exception))
+        # La fila LIMPIA, aunque hubiera sido segura por sí sola (va primero en Node), NO se
+        # mueve: H1 de la revisión exige que el LOTE ENTERO del miembro esté íntegro para
+        # tocar cualquiera de sus filas, y este lote no lo está (una de sus dos filas aparece
+        # en los dos sitios a la vez).
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario, fecha="2026-02-11").count(), 1)
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro, fecha="2026-02-11").count(), 0)
 
     def test_fila_no_encontrada_en_ningun_sitio_revienta_sin_mover_nada(self):
         """Ni bajo el titular ni bajo el destino: el comando no la inventa, para y lo dice."""
@@ -1186,8 +1225,8 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
 
         with self.assertRaises(CommandError) as cm:
             self._mover()
-        self.assertIn("no está donde se esperaba", str(cm.exception))
-        self.assertIn("0 bajo el titular y 0 bajo el destino", str(cm.exception))
+        self.assertIn("no están en un estado que el comando pueda explicar", str(cm.exception))
+        self.assertIn("0 bajo el titular, 0 bajo el destino", str(cm.exception))
 
     def test_sin_ningun_miembro_node_revienta(self):
         _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro])
@@ -1211,3 +1250,73 @@ class Bug033_MoverFilasDeMiembroTests(BaseImportacionTests):
             self._mover(miembro_node=[self.spec_miembro])  # falta declarar otro_miembro_id=7
         self.assertIn(str(otro_miembro_id), str(cm.exception))
         self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 0, "No se movió NADA.")
+
+    def test_H1_no_mueve_una_fila_ajena_que_coincide_por_casualidad(self):
+        """Reproducción EXACTA del hueco de la revisión (ronda 1, H1): mover de verdad; Euridice
+        borra su entreno movido (acción normal); Alejandro apunta un entreno SUYO nuevo con la
+        MISMA tupla exacta; al reejecutar el mover, el comando NO tiene que mover ese entreno
+        nuevo de Alejandro — tiene que parar, porque el lote del miembro (dos filas) ya no está
+        íntegro (una encaja, la otra no)."""
+        otra_fila = {
+            "fecha": "2026-02-12", "tipo": "fuerza", "duracion_min": 30,
+            "intensidad": "media", "calorias": 220, "miembro_id": self.MIEMBRO_ID_NODE,
+        }
+        self._sembrar_entreno_mal_colgado()  # self.fila_entreno_miembro, bajo el titular
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(otra_fila))  # también bajo el titular
+        _crear_sqlite_de_node(self.ruta_db, entrenos=[self.fila_entreno_miembro, otra_fila])
+
+        # 1. Mover de verdad: lote íntegro de 2, las dos se mueven.
+        self._mover()
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro).count(), 2)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 0)
+
+        # 2. Euridice borra SU entreno movido (self.fila_entreno_miembro) — acción normal.
+        Entreno.objects.filter(persona=self.miembro, fecha=self.fila_entreno_miembro["fecha"]).delete()
+
+        # 3. Alejandro apunta un entreno NUEVO, SUYO, con la MISMA tupla que el que Euridice
+        #    acaba de borrar — coincidencia real de valores, no la misma fila.
+        apuntar_entreno(self.usuario, mapeo.datos_entreno(self.fila_entreno_miembro))
+
+        # 4. Reejecutar el mover: NO debe tocar el entreno nuevo de Alejandro.
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        self.assertIn("no están en un estado que el comando pueda explicar", str(cm.exception))
+        # El entreno NUEVO de Alejandro sigue siendo SUYO.
+        self.assertEqual(
+            Entreno.objects.filter(persona=self.usuario, fecha=self.fila_entreno_miembro["fecha"]).count(), 1,
+            "El entreno nuevo de Alejandro NO debe haberse movido a Euridice.",
+        )
+        self.assertEqual(
+            Entreno.objects.filter(persona=self.miembro, fecha=self.fila_entreno_miembro["fecha"]).count(), 0,
+        )
+        # La otra fila del lote, que SÍ seguía correctamente movida, tampoco se toca: el lote
+        # entero se para junto, nunca se separa fila a fila (H1: "todo o nada").
+        self.assertEqual(Entreno.objects.filter(persona=self.miembro, fecha=otra_fila["fecha"]).count(), 1)
+
+    def test_H2_choque_de_persona_y_fecha_para_con_commanderror_no_integrityerror(self):
+        """La restricción real de la base (`una_medicion_por_persona_y_dia`, persona+fecha) es
+        MÁS CORTA que la tupla que usa este comando para identificar una fila. Si el destino ya
+        tiene una pesada esa fecha con OTROS valores (la suya propia, autoapuntada), mover no
+        debe reventar con un IntegrityError crudo: tiene que pararse con un CommandError en
+        cristiano, sin mover nada, y SIN imprimir el peso real de nadie (H4/PII de la revisión)."""
+        self._sembrar_pesada_mal_colgada()  # bajo el titular, la del miembro, mal colgada
+        # El miembro YA tiene SU PROPIA pesada esa misma fecha, con otro peso — el choque real
+        # que la restricción de la base impediría.
+        MedicionPeso.objects.create(
+            persona=self.miembro, fecha=self.fila_pesada_miembro["fecha"],
+            peso_kg=Decimal("55.5"), grasa_pct=None, cintura_cm=None,
+        )
+        _crear_sqlite_de_node(self.ruta_db, pesos=[self.fila_pesada_miembro])
+
+        with self.assertRaises(CommandError) as cm:
+            self._mover()
+        mensaje = str(cm.exception)
+        self.assertIn("no están en un estado que el comando pueda explicar", mensaje)
+        # H4/PII de la revisión: el mensaje NUNCA lleva ningún peso, propio ni ajeno.
+        self.assertNotIn("70.5", mensaje)
+        self.assertNotIn("55.5", mensaje)
+        self.assertNotIn("peso_kg", mensaje)
+        # Nada se movió.
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.usuario).count(), 1)
+        self.assertEqual(MedicionPeso.objects.filter(persona=self.miembro).count(), 1)
+        self.assertEqual(MedicionPeso.objects.get(persona=self.miembro).peso_kg, Decimal("55.5"))

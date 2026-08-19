@@ -11,44 +11,66 @@ original sin ganar nada a cambio. Se ejecuta DESPUÉS de que el arreglo de la de
 mergeado, nunca antes (medido en la misma sección: reejecutar el comando VIEJO tras mover
 duplica, porque su idempotencia miraba `persona=persona` sin saber de miembros).
 
-## Por qué es un comando, con su --dry-run y su test — y no un UPDATE tecleado a mano
+## H1 de la revisión (ronda 1) — por qué NO decide fila a fila
 
-La medición que decidió esta corrección fue, literalmente, dos sentencias de `psql` contra una
-copia. Tal cual, contra la base real (la única vez que este movimiento se ejecuta de verdad) es
-un cambio sin ensayo, sin test que lo contrapruebe y sin nada que lo repita si algo sale mal a
-medio camino. Choca además con la doctrina que la propia 022 se puso: pasar por mecanismos
-verificables, no por `create()`/`UPDATE` sueltos. Un comando de gestión, con `--dry-run` y su
-propia suite, cuesta poco más que el `UPDATE` y lo vuelve repetible, ensayable y verificable —
-exactamente lo que una corrección que se ejecuta UNA sola vez, contra datos reales, más falta
-le hace.
+La primera versión de este comando decidía cada fila de Node por su cuenta: "¿hay exactamente
+1 bajo el titular y 0 bajo el destino? la muevo". El revisor lo reventó así: mover 8 filas de
+verdad, borrar UNA desde la app (acción normal de la persona), apuntar OTRA fila nueva con la
+misma tupla exacta (fecha/deporte/intensidad/minutos/calorías) — y la segunda pasada del comando
+"reconocía" esa fila nueva como si fuera la vieja mal colgada y la movía. Los números seguían
+cuadrando (7 ya movidas + 1 "recién encontrada" = 8) y aun así la fila movida era otra: el mismo
+síntoma que esta unidad existe para arreglar, reintroducido por el lado del propio comando.
+
+La causa es que la tupla de datos NO es un identificador — es una coincidencia de valores, y dos
+filas de Node distintas (o una vieja y una nueva de la persona) pueden compartirla sin ser la
+misma. Fila a fila no hay forma de distinguirlas.
+
+**La propiedad que sí lo evita:** el comando nunca decide mirando una fila sola. Para cada
+miembro y cada tabla, mira el LOTE COMPLETO de filas que le corresponden y solo actúa si el
+lote entero está en uno de los dos únicos estados que puede explicar:
+
+- **íntegro:** TODAS sus filas están, cada una, con exactamente 1 copia bajo el titular y 0
+  bajo el destino — el lote entero sigue tal cual lo dejó el bug. Se mueve TODO el lote.
+- **ya movido:** TODAS sus filas están, cada una, con exactamente 0 copias bajo el titular y 1
+  bajo el destino — el lote entero ya se corrigió en una pasada anterior. No-op (idempotencia).
+
+Cualquier otra combinación —una sola fila que no encaje, sea porque falta, porque aparece en
+los dos sitios, o porque aparece donde no tocaba (el escenario del revisor)— es un lote
+**mezclado**: la prueba de que pasó algo que el comando no puede razonar. Ninguna fila del lote
+se toca, ni siquiera las que sí encajarían solas — porque si una fila del lote es sospechosa,
+la "identidad" de las demás (la misma tupla, la misma lógica) deja de ser de fiar.
+
+## H2 de la revisión — el choque de `(persona, fecha)` en pesadas, detectado, no crudo
+
+`MedicionPeso` tiene una restricción real en la base, `una_medicion_por_persona_y_dia`
+`(persona, fecha)` — más corta que la tupla completa que este comando usa para identificar una
+fila. Si la persona de destino YA tiene una pesada esa fecha (con otros valores: la suya
+propia, apuntada a mano), mover una fila "íntegra" hacia ella violaría esa restricción y saldría
+como un `IntegrityError` crudo de Django, no como el `CommandError` en cristiano que el resto
+del comando promete. Por eso, SOLO para pesadas, antes de dar un lote por "íntegro" se comprueba
+también si el destino ya tiene ALGO esa fecha (choque de `(persona, fecha)`, no de la tupla
+completa) — si lo tiene, el lote se trata como mezclado: no se intenta el `UPDATE` que iba a
+reventar.
+
+## H4/PII de la revisión — qué se imprime de una pesada
+
+Los mensajes de error de pesadas nunca imprimen `peso_kg`/`grasa_pct`/`cintura_cm` (datos de
+salud de una persona real) — solo la fecha, que basta para que quien lee el aviso localice la
+fila en la app. Los de entrenos sí llevan la tupla completa: no son datos de salud y localizar
+la fila exacta (puede haber varias el mismo día) lo necesita.
 
 ## Cómo identifica qué mover — la MISMA clave que ya usa la importación, nunca `id` a pelo
 
 Para cada fila de Node con un `miembro_id` mapeado (no `NULL`), calcula su tupla de identidad —
 la misma que `importar_datos_node` ya usa para reconocer una fila: `mapeo.clave_entreno` para
-entrenos (fecha, deporte, intensidad, minutos, calorías); fecha+peso_kg+grasa_pct+cintura_cm
-para pesadas (el índice único de Node es por fecha, pero se compara la fila COMPLETA: una
-coincidencia de fecha con datos distintos no es la misma fila, es una pesada de verdad del
-titular ese mismo día que no hay que tocar) — y busca, bajo el TITULAR, una fila Django con esa
-tupla exacta. Nunca por `id` de Django: un `id` no significa nada en Node, y guiarse por él
-sería inventar una correspondencia que nadie declaró.
+entrenos; fecha+peso_kg+grasa_pct+cintura_cm para pesadas — y busca, bajo el TITULAR y bajo el
+DESTINO, cuántas filas Django tienen esa tupla exacta. Nunca por `id` de Django.
 
-## No inventa: idempotente, y para en vez de aproximar
+## Todo o nada (H3 de la revisión, generalizado): sin `--dry-run` real no hay ensayo posible
 
-Antes de mover cada fila, mira DOS sitios: bajo el titular (de donde tendría que desaparecer) y
-bajo la persona de destino (donde tendría que estar). Solo hay dos estados sanos:
-
-- **1 bajo el titular, 0 bajo el destino** → todavía no se movió: la mueve (o dice que la
-  movería, en `--dry-run`).
-- **0 bajo el titular, 1 bajo el destino** → ya se movió en una pasada anterior: no hace nada.
-  Es lo que hace que la SEGUNDA pasada no mueva nada (idempotente, como pide el contrato).
-
-Cualquier otra combinación (0 y 0: la fila no está en ningún sitio; 1 y 1: está duplicada —
-exactamente el riesgo medido de reejecutar el comando viejo tras mover; o más de una en
-cualquiera de los dos lados) es una anomalía que el comando NO intenta adivinar cómo resolver:
-para con un `CommandError` que dice cuál fila y qué encontró, y no mueve NADA de esta pasada
-(la `transaction.atomic()` deshace lo que ya se hubiera movido en las filas anteriores de la
-misma ejecución) — "no inventa" también significa no dejar una corrección a medias.
+Todo el trabajo vive en UNA `transaction.atomic()`, igual que en `importar_datos_node.py`.
+Cualquier lote mezclado revienta con `CommandError` y deshace TODO lo que esta pasada ya
+hubiera movido de otros lotes/tablas — nunca deja una corrección a medias.
 """
 
 from django.contrib.auth import get_user_model
@@ -78,8 +100,9 @@ class _CanceladoPorDryRun(Exception):
 class Command(BaseCommand):
     help = (
         "Bug 033 — mueve los entrenos y las pesadas que se importaron mal (colgados del "
-        "titular) a la Persona a la que de verdad pertenecen. Repetible: la segunda vez no "
-        "mueve nada."
+        "titular) a la Persona a la que de verdad pertenecen. Solo actúa cuando el lote "
+        "completo de un miembro está íntegro (todo mal) o ya corregido (todo bien); ante "
+        "cualquier mezcla, para y no toca nada. Repetible: la segunda vez no mueve nada."
     )
 
     def add_arguments(self, parser):
@@ -107,7 +130,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Enseña qué movería, fila a fila resumida por tabla, sin mover nada.",
+            help="Enseña qué movería, resumido por tabla, sin mover nada.",
         )
 
     def handle(self, *args, **options):
@@ -169,75 +192,146 @@ def _mover_todo(conexion, persona_titular, mapa_miembros):
     }
 
 
-def _decidir(en_origen, en_destino):
-    """Ver el docstring del módulo, 'No inventa'. Solo dos combinaciones son sanas; cualquier
-    otra es una anomalía que quien llama tiene que parar a reportar, nunca resolver a ciegas."""
-    if en_origen == 1 and en_destino == 0:
-        return "mover"
-    if en_origen == 0 and en_destino == 1:
-        return "ya_movida"
-    return "anomalia"
-
-
-def _mover_entrenos(conexion, persona_titular, mapa_miembros):
-    movidas = 0
-    ya_movidas = 0
-    for fila in origen.entrenos(conexion):
-        miembro_id = fila["miembro_id"]
-        if miembro_id is None:
-            continue  # es del titular: nunca hubo nada mal colgado que mover
-        persona_destino = mapa_miembros[miembro_id]
-        datos = mapeo.datos_entreno(fila)
-        clave = dict(zip(_CAMPOS_CLAVE_ENTRENO, mapeo.clave_entreno(datos)))
-
-        en_origen = Entreno.objects.filter(persona=persona_titular, **clave).count()
-        en_destino = Entreno.objects.filter(persona=persona_destino, **clave).count()
-        decision = _decidir(en_origen, en_destino)
-        if decision == "mover":
-            Entreno.objects.filter(persona=persona_titular, **clave).update(persona=persona_destino)
-            movidas += 1
-        elif decision == "ya_movida":
-            ya_movidas += 1
-        else:
-            raise CommandError(
-                f"Un entreno de Node (miembro_id={miembro_id}, {clave}) no está donde se "
-                f"esperaba: {en_origen} bajo el titular y {en_destino} bajo el destino (se "
-                "esperaba 1 y 0, o 0 y 1). No se ha movido nada de esta pasada."
-            )
-    return {"movidas": movidas, "ya_movidas": ya_movidas}
-
-
-def _mover_pesadas(conexion, persona_titular, mapa_miembros):
-    movidas = 0
-    ya_movidas = 0
-    for fila in origen.pesadas(conexion):
+def _agrupar_por_miembro(filas):
+    """Filas de origen (con `miembro_id`), agrupadas por `miembro_id`, EXCLUYENDO las del
+    titular (`miembro_id is None`: nunca hay nada que mover para esas)."""
+    agrupadas = {}
+    for fila in filas:
         miembro_id = fila["miembro_id"]
         if miembro_id is None:
             continue
-        persona_destino = mapa_miembros[miembro_id]
-        datos = mapeo.datos_pesada(fila)
-        clave = {
-            "fecha": datos["fecha"],
-            "peso_kg": datos["peso_kg"],
-            "grasa_pct": datos["grasa_pct"],
-            "cintura_cm": datos["cintura_cm"],
-        }
+        agrupadas.setdefault(miembro_id, []).append(fila)
+    return agrupadas
 
-        en_origen = MedicionPeso.objects.filter(persona=persona_titular, **clave).count()
-        en_destino = MedicionPeso.objects.filter(persona=persona_destino, **clave).count()
-        decision = _decidir(en_origen, en_destino)
-        if decision == "mover":
-            MedicionPeso.objects.filter(persona=persona_titular, **clave).update(persona=persona_destino)
-            movidas += 1
-        elif decision == "ya_movida":
-            ya_movidas += 1
-        else:
-            raise CommandError(
-                f"Una pesada de Node (miembro_id={miembro_id}, {clave}) no está donde se "
-                f"esperaba: {en_origen} bajo el titular y {en_destino} bajo el destino (se "
-                "esperaba 1 y 0, o 0 y 1). No se ha movido nada de esta pasada."
+
+def _estado_lote(triples):
+    """`triples`: una `(en_origen, en_destino, colision)` por fila del lote (mismo miembro,
+    misma tabla). Ver el docstring del módulo, 'H1'. Devuelve 'integro', 'ya_movido' o
+    'mezclado' — NUNCA decide fila a fila."""
+    if any(colision for _, _, colision in triples):
+        return "mezclado"
+    if all(en_origen == 1 and en_destino == 0 for en_origen, en_destino, _ in triples):
+        return "integro"
+    if all(en_origen == 0 and en_destino == 1 for en_origen, en_destino, _ in triples):
+        return "ya_movido"
+    return "mezclado"
+
+
+def _mover_lote(
+    *, filas, mapa_miembros, persona_titular, modelo, calcular_clave, etiqueta,
+    describir_clave, hay_colision=None,
+):
+    """Genérico para `entrenos`/`pesadas`: agrupa por miembro, decide el lote COMPLETO de cada
+    uno (H1) y, si está íntegro, mueve TODAS sus filas de una vez; si ya está movido, no hace
+    nada; si está mezclado, para con un `CommandError` — sin mover NADA de ese lote."""
+    movidas = 0
+    ya_movidas = 0
+    for miembro_id, filas_miembro in _agrupar_por_miembro(filas).items():
+        persona_destino = mapa_miembros[miembro_id]
+        claves = [calcular_clave(fila) for fila in filas_miembro]
+        triples = []
+        for clave in claves:
+            en_origen = modelo.objects.filter(persona=persona_titular, **clave).count()
+            en_destino = modelo.objects.filter(persona=persona_destino, **clave).count()
+            # H2 solo tiene sentido como candidata a moverse (en_destino == 0): si en_destino
+            # ya es >= 1, lo que `hay_colision` encontraría es la MISMA fila que constituye el
+            # estado "ya_movido" (o una anomalía que las otras dos cuentas ya van a marcar como
+            # mezclada) — comprobarlo ahí sería un falso positivo contra la propia idempotencia.
+            colision = bool(
+                hay_colision and en_destino == 0 and hay_colision(clave, persona_destino)
             )
+            triples.append((en_origen, en_destino, colision))
+
+        estado = _estado_lote(triples)
+        if estado == "ya_movido":
+            ya_movidas += len(claves)
+            continue
+        if estado == "integro":
+            for clave in claves:
+                modelo.objects.filter(persona=persona_titular, **clave).update(persona=persona_destino)
+            movidas += len(claves)
+            continue
+
+        # mezclado — PARA, sin mover NADA de este lote (la transacción deshace además
+        # cualquier otro lote/miembro/tabla ya movido en esta misma pasada).
+        detalle = "; ".join(
+            f"{describir_clave(clave)} -> {en_origen} bajo el titular, {en_destino} bajo el "
+            f"destino{' (y ya hay una medición de esa fecha con otro valor)' if colision else ''}"
+            for clave, (en_origen, en_destino, colision) in zip(claves, triples)
+        )
+        raise CommandError(
+            f"Las {etiqueta} del miembro_id={miembro_id} no están en un estado que el comando "
+            "pueda explicar (se esperaba que TODAS estuvieran bajo el titular, o que TODAS ya "
+            f"estuvieran bajo el destino — nunca una mezcla): {detalle}. No se ha movido nada "
+            "de esta pasada."
+        )
     return {"movidas": movidas, "ya_movidas": ya_movidas}
+
+
+def _clave_entreno(fila):
+    datos = mapeo.datos_entreno(fila)
+    return dict(zip(_CAMPOS_CLAVE_ENTRENO, mapeo.clave_entreno(datos)))
+
+
+def _describir_clave_entreno(clave):
+    return (
+        f"{clave['fecha']} {clave['deporte']}/{clave['intensidad']}/{clave['minutos']}min/"
+        f"{clave['calorias']}kcal"
+    )
+
+
+def _mover_entrenos(conexion, persona_titular, mapa_miembros):
+    return _mover_lote(
+        filas=origen.entrenos(conexion),
+        mapa_miembros=mapa_miembros,
+        persona_titular=persona_titular,
+        modelo=Entreno,
+        calcular_clave=_clave_entreno,
+        etiqueta="entrenos",
+        describir_clave=_describir_clave_entreno,
+        # Entreno no tiene ninguna restricción de unicidad en la base (solo un índice, ver
+        # entrenos/models.py): no hace falta la comprobación de H2, que es específica de
+        # `una_medicion_por_persona_y_dia`.
+        hay_colision=None,
+    )
+
+
+def _clave_pesada(fila):
+    datos = mapeo.datos_pesada(fila)
+    return {
+        "fecha": datos["fecha"],
+        "peso_kg": datos["peso_kg"],
+        "grasa_pct": datos["grasa_pct"],
+        "cintura_cm": datos["cintura_cm"],
+    }
+
+
+def _describir_clave_pesada(clave):
+    # H4/PII de la revisión: NUNCA el peso, la grasa ni la cintura — solo la fecha, que basta
+    # para localizar la fila en la app.
+    return str(clave["fecha"])
+
+
+def _hay_colision_pesada(clave, persona_destino):
+    """H2 de la revisión: `MedicionPeso` exige `(persona, fecha)` único en la base — más corto
+    que la tupla completa que usa este comando para identificar una fila. Si el destino YA
+    tiene una medición esa fecha (con OTROS valores: la suya propia), moverla revienta con
+    `IntegrityError`. Se comprueba ANTES de intentarlo, por `(persona, fecha)` sin más — la
+    misma restricción que la base va a hacer cumplir de todas formas."""
+    return MedicionPeso.objects.filter(persona=persona_destino, fecha=clave["fecha"]).exists()
+
+
+def _mover_pesadas(conexion, persona_titular, mapa_miembros):
+    return _mover_lote(
+        filas=origen.pesadas(conexion),
+        mapa_miembros=mapa_miembros,
+        persona_titular=persona_titular,
+        modelo=MedicionPeso,
+        calcular_clave=_clave_pesada,
+        etiqueta="pesadas",
+        describir_clave=_describir_clave_pesada,
+        hay_colision=_hay_colision_pesada,
+    )
 
 
 def _imprimir_resumen(stdout, resumen, dry_run):

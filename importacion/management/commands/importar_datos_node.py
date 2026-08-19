@@ -183,8 +183,8 @@ def _importar_todo(conexion, persona, hogar, mapa_miembros):
     cuatro son independientes entre sí."""
     return {
         "despensa": _importar_despensa(conexion, hogar),
-        "entrenos": _importar_entrenos(conexion, persona, mapa_miembros),
-        "pesadas": _importar_pesadas(conexion, persona, mapa_miembros),
+        "entrenos": _importar_entrenos(conexion, persona, mapa_miembros, hogar),
+        "pesadas": _importar_pesadas(conexion, persona, mapa_miembros, hogar),
         "recetas": _importar_recetas(conexion, hogar),
     }
 
@@ -231,7 +231,23 @@ def _importar_despensa(conexion, hogar):
     return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
 
 
-def _importar_entrenos(conexion, persona, mapa_miembros):
+def _existentes_del_hogar_entrenos(hogar):
+    """H3 de la revisión (033): TODOS los entrenos de TODO el hogar (no solo de las personas
+    involucradas en esta pasada), agrupados por su tupla de identidad, con el conjunto de
+    `persona_id` que YA tiene cada una. Una sola consulta, barata (un hogar de verdad no tiene
+    miles de entrenos), para poder preguntar 'esta fila que voy a crear para X ¿ya existe,
+    idéntica, colgada de otra persona de la MISMA casa?' sin una query por fila."""
+    mapa = {}
+    filas = Entreno.objects.filter(persona__hogar=hogar).values_list(
+        "persona_id", "fecha", "deporte", "intensidad", "minutos", "calorias"
+    )
+    for persona_id, fecha, deporte, intensidad, minutos, calorias in filas:
+        clave = (fecha, deporte, intensidad, minutos, calorias)
+        mapa.setdefault(clave, set()).add(persona_id)
+    return mapa
+
+
+def _importar_entrenos(conexion, persona, mapa_miembros, hogar):
     """R2/R4 — clave de idempotencia: la tupla completa (ver el porqué en `mapeo.py`). Snapshot
     tomado al empezar, mismo motivo que en la despensa (aunque aquí no hay fusión posible: cada
     fila de Node es siempre UN entreno nuevo si su clave no estaba, nunca se combina con otro).
@@ -239,7 +255,18 @@ def _importar_entrenos(conexion, persona, mapa_miembros):
     Bug 033 — el snapshot es POR PERSONA, no uno solo: dos entrenos con la misma tupla
     (fecha/deporte/intensidad/minutos/calorías) son "el mismo, repetido" solo si son de la
     MISMA persona. Un entreno del titular y uno de un miembro de la casa que por casualidad
-    coincidieran en todo menos en quién lo hizo tienen que colgar los DOS, no fundirse en uno."""
+    coincidieran en todo menos en quién lo hizo tienen que colgar los DOS, no fundirse en uno.
+
+    H3 de la revisión (ronda 1): si esta importación se corre ANTES de `mover_filas_de_miembro`
+    sobre datos que el comando VIEJO ya dejó mal colgados, una fila de un miembro parecería
+    "nueva" para su persona correcta (el snapshot de ESA persona está vacío) y se crearía — sin
+    que la copia vieja, mal colgada del titular, desaparezca. Resultado: la misma fila duplicada
+    dentro de la misma casa (16 se vuelven 24), y encima `mover_filas_de_miembro` ya no puede
+    arreglarlo solo (H1 lo detecta como lote mezclado y para). Por eso, antes de crear, se
+    comprueba también si esa tupla exacta ya existe bajo OTRA persona del hogar
+    (`_existentes_del_hogar_entrenos`): si la hay, la fila se SALTA (no se crea el duplicado) y
+    se cuenta aparte, `en_otra_persona` — con un aviso en el resumen (R7: nunca en silencio).
+    """
     existentes_por_persona = {
         id_persona: {
             (fecha, deporte, intensidad, minutos, calorias)
@@ -249,9 +276,11 @@ def _importar_entrenos(conexion, persona, mapa_miembros):
         }
         for id_persona in _personas_involucradas(persona, mapa_miembros)
     }
+    existentes_del_hogar = _existentes_del_hogar_entrenos(hogar)
 
     nuevos = 0
     ya_estaban = 0
+    en_otra_persona = 0
     for fila in origen.entrenos(conexion):
         datos = mapeo.datos_entreno(fila)
         persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
@@ -259,13 +288,37 @@ def _importar_entrenos(conexion, persona, mapa_miembros):
         if clave in existentes_por_persona[persona_fila.id]:
             ya_estaban += 1
             continue
+        if existentes_del_hogar.get(clave, set()) - {persona_fila.id}:
+            en_otra_persona += 1
+            continue
         apuntar_entreno(persona_fila, datos)
         nuevos += 1
 
-    return {"origen": nuevos + ya_estaban, "nuevos": nuevos, "ya_estaban": ya_estaban}
+    return {
+        "origen": nuevos + ya_estaban + en_otra_persona,
+        "nuevos": nuevos,
+        "ya_estaban": ya_estaban,
+        "en_otra_persona": en_otra_persona,
+    }
 
 
-def _importar_pesadas(conexion, persona, mapa_miembros):
+def _existentes_del_hogar_pesadas(hogar):
+    """H3 de la revisión (033), misma idea que `_existentes_del_hogar_entrenos`: TODAS las
+    pesadas del hogar, agrupadas por su tupla COMPLETA (fecha, peso, grasa, cintura — NUNCA
+    solo `fecha`: dos personas de la misma casa pueden, legítimamente, tener CADA UNA su propia
+    pesada el mismo día, eso no es un duplicado). Solo una coincidencia de los CUATRO valores a
+    la vez es sospechosa de ser la misma fila mal colgada, todavía no movida."""
+    mapa = {}
+    filas = MedicionPeso.objects.filter(persona__hogar=hogar).values_list(
+        "persona_id", "fecha", "peso_kg", "grasa_pct", "cintura_cm"
+    )
+    for persona_id, fecha, peso_kg, grasa_pct, cintura_cm in filas:
+        clave = (fecha, peso_kg, grasa_pct, cintura_cm)
+        mapa.setdefault(clave, set()).add(persona_id)
+    return mapa
+
+
+def _importar_pesadas(conexion, persona, mapa_miembros, hogar):
     """
     R2/R4 — la clave (persona, fecha) es LA restricción `una_medicion_por_persona_y_dia` de la
     unidad 006. Si ya hay una medición ese día (importada antes, o apuntada a mano por la
@@ -274,6 +327,13 @@ def _importar_pesadas(conexion, persona, mapa_miembros):
     datos_pesada`). Por eso se crea con `MedicionPeso.objects.create(...)` directamente: es la
     misma llamada que hace `apuntar_medicion` en su rama de "no había nada", sin su rama de
     `update_or_create` que aquí sería peligrosa.
+
+    H3 de la revisión (ronda 1): mismo riesgo que en `_importar_entrenos` — si esta importación
+    corre ANTES de `mover_filas_de_miembro` sobre datos que el comando VIEJO dejó mal colgados,
+    una pesada de un miembro parecería "nueva" para su persona correcta y se duplicaría dentro
+    de la misma casa. Se comprueba con `_existentes_del_hogar_pesadas` (tupla completa, no solo
+    `fecha` — ver su docstring) ANTES de crear; si ya existe idéntica bajo otra persona del
+    hogar, se salta y se cuenta en `en_otra_persona`, con aviso en el resumen (R7).
 
     A DIFERENCIA de las otras tres tablas, aquí la comprobación es VIVA, no solo un snapshot
     tomado al empezar (ronda 1 de revisión, H1). El índice único de Node es
@@ -318,10 +378,12 @@ def _importar_pesadas(conexion, persona, mapa_miembros):
         for id_persona in personas
     }
     vistas_por_persona = {id_persona: set() for id_persona in personas}
+    existentes_del_hogar = _existentes_del_hogar_pesadas(hogar)
 
     nuevos = 0
     ya_estaban = 0
     colisiones = 0
+    en_otra_persona = 0
     for fila in origen.pesadas(conexion):
         datos = mapeo.datos_pesada(fila)
         persona_fila = miembros.persona_de_fila(fila, persona, mapa_miembros)
@@ -332,15 +394,20 @@ def _importar_pesadas(conexion, persona, mapa_miembros):
         if fecha in vistas_por_persona[persona_fila.id]:
             colisiones += 1
             continue
+        clave_completa = (fecha, datos["peso_kg"], datos["grasa_pct"], datos["cintura_cm"])
+        if existentes_del_hogar.get(clave_completa, set()) - {persona_fila.id}:
+            en_otra_persona += 1
+            continue
         MedicionPeso.objects.create(persona=persona_fila, **datos)
         vistas_por_persona[persona_fila.id].add(fecha)
         nuevos += 1
 
     return {
-        "origen": nuevos + ya_estaban + colisiones,
+        "origen": nuevos + ya_estaban + colisiones + en_otra_persona,
         "nuevos": nuevos,
         "ya_estaban": ya_estaban,
         "colisiones": colisiones,
+        "en_otra_persona": en_otra_persona,
     }
 
 
@@ -395,6 +462,21 @@ def _imprimir_resumen(stdout, resumen, dry_run):
                 f"{etiqueta}: {colisiones} más {verbo} por chocar en fecha con otra fila de "
                 "Node de esta misma pasada (una persona no puede tener dos pesadas el mismo "
                 "día)."
+            )
+        # H3 de la revisión (ronda 2, bug 033): esta fila YA existe, idéntica, bajo OTRA
+        # persona del mismo hogar — probable señal de que falta ejecutar
+        # `mover_filas_de_miembro` sobre una importación anterior (hecha con el comando
+        # VIEJO, antes de que este supiera separar por miembro). Nunca en silencio (R7): si
+        # se creara iguales, la casa acabaría con la fila duplicada, una vez por persona.
+        en_otra_persona = datos.get("en_otra_persona", 0)
+        if en_otra_persona:
+            verbo = "no se ha creado" if en_otra_persona == 1 else "no se han creado"
+            stdout.write(
+                f"{etiqueta}: {en_otra_persona} más {verbo} porque ya existen, idénticas, "
+                "colgadas de OTRA persona de esta misma casa — probablemente falta ejecutar "
+                "'mover_filas_de_miembro' sobre una importación anterior. Revísalo antes de "
+                "repetir esta importación: crearlas también habría duplicado la fila dentro "
+                "de la casa."
             )
     if dry_run:
         stdout.write("[DRY-RUN] Fin. No se ha escrito ni una fila.")
