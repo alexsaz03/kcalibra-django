@@ -755,7 +755,14 @@ class Bug030_LaPuertaCompartidaSinRedEnAisladoTests(PruebaConRegistroAbierto):
         # usuario.id, así que la coincidencia numérica del montaje sin red deja de darse.
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
         self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
-        self.assertNotEqual(self.alejandro.id, self.alejandro.usuario_id)  # control del desfase
+        # Control estructural del desfase (no por el orden numérico: a escala de suite otros
+        # tests ya pueden haber desalineado las secuencias por su cuenta, y entonces comparar
+        # ids por casualidad deja de decir nada — 18ª cara operando sobre la red
+        # anti-19ª-cara). Marta existe SIN Usuario y se creó ANTES que Alejandro: si el alta
+        # falla o alguien la borra junto con sus asserts, este `.get()` revienta él solo, sin
+        # depender de qué id le tocara a nadie.
+        marta = Persona.objects.get(nombre="Marta", usuario__isnull=True)
+        self.assertLess(marta.id, self.alejandro.id)  # control del desfase, estructural
 
     def test_alejandro_cierra_su_propio_dia_con_los_ids_desincronizados(self):
         respuesta = self.client.post(

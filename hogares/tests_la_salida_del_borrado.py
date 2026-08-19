@@ -72,7 +72,12 @@ class _ConAlejandroMartaYEuridice(PruebaConRegistroAbierto):
         respuesta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO, follow=True
         )
-        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido (bug 032): lo que de verdad prueba que el alta no falló es
+        # que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", hogar=self.alejandro.hogar).exists()
+        )  # control: el alta no falló
         self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)
 
         self.client.logout()
@@ -280,10 +285,13 @@ class R4_SinNadieMasConCuentaTests(PruebaConRegistroAbierto):
 
     def test_lo_dice_claro_en_la_pantalla(self):
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        # Sin `follow=True`: un alta válida SIEMPRE redirige (302); con `follow=True` este
+        # assert pasaría igual si el formulario fuera inválido (bug 032, mismo 200 en los dos
+        # casos), sin llegar a probar que Marta quedó dada de alta.
         respuesta = self.client.post(
-            "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO, follow=True
+            "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO
         )
-        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.status_code, 302)
 
         respuesta = self.client.get("/hogares/mi-hogar/")
         self.assertContains(respuesta, "la única salida es borrar su ficha")

@@ -83,7 +83,12 @@ class _ConAlejandroYEuridiceACargo(PruebaConRegistroAbierto):
         respuesta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_EURIDICE_A_CARGO, follow=True
         )
-        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido (bug 032): lo que de verdad prueba que el alta no falló es
+        # que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Euridice", hogar=self.alejandro.hogar).exists()
+        )  # control: el alta no falló
         self.euridice = Persona.objects.get(nombre="Euridice", hogar=self.alejandro.hogar)
 
 
@@ -171,7 +176,12 @@ class R2_AltaDeUnaPersonaACargoTests(PruebaConRegistroAbierto):
         respuesta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_EURIDICE_A_CARGO, follow=True
         )
-        self.assertEqual(respuesta.status_code, 200)
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido (bug 032): lo que de verdad prueba el criterio (R2, "queda
+        # creada su ficha") es que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Euridice", hogar=self.alejandro.hogar).exists()
+        )
 
         euridice = Persona.objects.get(nombre="Euridice", hogar=self.alejandro.hogar)
         self.assertIsNone(euridice.usuario_id)  # no tiene ni tendrá cuenta

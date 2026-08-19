@@ -450,13 +450,45 @@ class R6_R7_LaReglaVivaEnUnSoloSitioTests(PruebaConRegistroAbierto):
 
     def setUp(self):
         super().setUp()
+        # "Relleno" da de alta una Persona SIN Usuario (Martina) ANTES de que Alejandro
+        # registre su cuenta: desincroniza la secuencia de `Persona` un paso por delante de
+        # la de `Usuario`, para que el autochequeo de Alejandro sobre sí mismo (más abajo) no
+        # acierte por casualidad si `puede_cambiar_lo_de` comparase algún día el campo
+        # equivocado (18ª/19ª cara, `tests-que-no-fallan-cuando-deben.md`) — el mismo defecto
+        # que ya se cerró en `entrenos/`, `cierres/`, `perfiles/` y `progreso/`.
+        self.registrar_y_verificar("relleno@example.com", sexo="mujer")
+        respuesta_relleno = self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {**DATOS_DE_MARTA_A_CARGO, "nombre": "Martina"},
+        )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_relleno.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Martina", usuario__isnull=True).exists()
+        )
+        self.client.logout()
+
         self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
         self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+        # Control estructural del desfase (no por el orden numérico: a escala de suite otros
+        # tests ya pueden haber desalineado las secuencias por su cuenta, y entonces comparar
+        # ids por casualidad deja de decir nada — 18ª cara operando sobre la red
+        # anti-19ª-cara). Martina existe SIN Usuario y se creó ANTES que Alejandro: si el alta
+        # falla o alguien la borra junto con sus asserts, este `.get()` revienta él solo, sin
+        # depender de qué id le tocara a nadie.
+        martina = Persona.objects.get(nombre="Martina", usuario__isnull=True)
+        self.assertLess(martina.id, self.alejandro.id)  # control del desfase, estructural
 
         respuesta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO, follow=True
         )
-        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido (bug 032): lo que de verdad prueba que el alta no falló es
+        # que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", hogar=self.alejandro.hogar).exists()
+        )  # control: el alta no falló
         self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)
 
         self.client.logout()

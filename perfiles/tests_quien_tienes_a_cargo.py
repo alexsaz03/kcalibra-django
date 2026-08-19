@@ -51,7 +51,12 @@ class _ConAlejandroMartaYEuridice(PruebaConRegistroAbierto):
         respuesta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/", DATOS_DE_MARTA_A_CARGO, follow=True
         )
-        self.assertEqual(respuesta.status_code, 200)  # control: el alta no falló
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido (bug 032): lo que de verdad prueba que el alta no falló es
+        # que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", hogar=self.alejandro.hogar).exists()
+        )  # control: el alta no falló
         self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)
 
         self.client.logout()
