@@ -172,7 +172,7 @@ class R1_EuridicePorHTTPTests(PruebaConRegistroAbierto):
         # Desincroniza las secuencias de `Persona` y `Usuario` (ver docstring). No necesita
         # "hoy" congelado: a nadie de aquí se le comprueban calorías.
         self.registrar_y_verificar("relleno@example.com", sexo="mujer")
-        self.client.post(
+        respuesta_alta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/",
             {
                 "nombre": "Marta",
@@ -189,11 +189,25 @@ class R1_EuridicePorHTTPTests(PruebaConRegistroAbierto):
                 "no_le_gusta": "",
             },
         )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_alta.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", usuario__isnull=True).exists()
+        )
         self.client.logout()
 
         with _con_hoy_fijo():
             self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
             alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+            # Control estructural del desfase (no por el orden numérico: a escala de suite
+            # otros tests ya pueden haber desalineado las secuencias por su cuenta, y entonces
+            # comparar ids por casualidad deja de decir nada — 18ª cara operando sobre la red
+            # anti-19ª-cara). Marta existe SIN Usuario y se creó ANTES que Alejandro: si el
+            # alta falla o alguien la borra junto con sus asserts, este `.get()` revienta él
+            # solo, sin depender de qué id le tocara a nadie.
+            marta = Persona.objects.get(nombre="Marta", usuario__isnull=True)
+            self.assertLess(marta.id, alejandro.id)  # control del desfase, estructural
             self.client.logout()
 
             self.registrar_y_verificar(

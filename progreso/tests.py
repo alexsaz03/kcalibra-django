@@ -412,7 +412,7 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
         # sino por la coincidencia. Dar de alta a Marta (una `Persona` SIN `Usuario`, R2 de la
         # unidad 024) adelanta la secuencia de `Persona` un paso por delante de la de
         # `Usuario`, para que el id de Euridice YA NO pueda coincidir con el de su cuenta.
-        self.client.post(
+        respuesta_alta = self.client.post(
             "/hogares/mi-hogar/dar-de-alta/",
             {
                 "nombre": "Marta",
@@ -429,6 +429,12 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
                 "no_le_gusta": "",
             },
         )
+        # El montaje se afirma, no se supone (19ª cara): un alta que falla en silencio (form
+        # inválido, redirect distinto) dejaría el desfase sin crear.
+        self.assertEqual(respuesta_alta.status_code, 302)
+        self.assertTrue(
+            Persona.objects.filter(nombre="Marta", usuario__isnull=True).exists()
+        )
         self.client.logout()
 
         self.registrar_y_verificar(
@@ -436,6 +442,14 @@ class EsperandoAceptacionEnElHogarTests(PruebaConRegistroAbierto):
         )
         euridice = Persona.objects.get(usuario__email="euridice@example.com")
         self.assertIsNone(euridice.hogar_id)  # control: sigue "esperando que le acepten"
+        # Control estructural del desfase (no por el orden numérico: a escala de suite otros
+        # tests ya pueden haber desalineado las secuencias por su cuenta, y entonces comparar
+        # ids por casualidad deja de decir nada — 18ª cara operando sobre la red
+        # anti-19ª-cara). Marta existe SIN Usuario y se creó ANTES que Euridice: si el alta
+        # falla o alguien la borra junto con sus asserts, este `.get()` revienta él solo, sin
+        # depender de qué id le tocara a nadie.
+        marta = Persona.objects.get(nombre="Marta", usuario__isnull=True)
+        self.assertLess(marta.id, euridice.id)  # control del desfase, estructural
 
         _fijar_mediciones(euridice, [{"dias_atras": 0, "peso_kg": 61}])
 
