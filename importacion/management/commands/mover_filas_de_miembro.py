@@ -2,6 +2,25 @@
 `python manage.py mover_filas_de_miembro <ruta-a-la-sqlite-de-node> --cuenta <correo>
 --miembro-node <id-de-node>:<correo-o-id-de-persona> [...] [--dry-run]`
 
+## YA EJECUTADO: no lo reejecutes a ciegas
+
+Este comando es de un solo uso y **ya cumplió su propósito**: se ejecutó sobre la base real
+el 2026-08-20, sobre los datos reales de Alejandro/Euridice que el bug 033 describe. Es
+idempotente por diseño (ver `test_segunda_pasada_es_idempotente_no_mueve_nada` en
+`importacion/tests.py`, parte de la suite): una segunda pasada sobre las mismas filas no
+mueve nada — su salida dice literalmente `"0 movida(s), N ya estaba(n) movida(s)"` — así que
+volver a correrlo no duplica ni revienta, pero tampoco hace falta: no queda ninguna fila mal
+colgada pendiente de mover. Se queda en el repositorio (no se borra) porque es la red que
+documenta H1/R1/R2 de la ronda de revisión y sus tres límites de diseño — no porque haga
+falta ejecutarlo de nuevo. Los límites **A** (una operación de una sola fila candidata se
+rechaza), **B** (un estado parcial entre miembros es irreparable con esta herramienta) y **C**
+(el umbral `len(candidatas) == 1` es un corte elegido, no una propiedad demostrada) — ninguno
+se activó en la ejecución real — están escritos con su detalle completo en
+`docs/bugs/033-la-importacion-colgo-de-alejandro-lo-de-euridice.md` (sección "Revisión ronda
+3", "Los tres límites del diseño de `mover_filas_de_miembro`"). Si algún día hace falta
+volver a moverse (otra importación con miembros sin mapear todavía), este comando sigue
+sirviendo — pero antes de correrlo, lee esa ficha para conocer sus límites de antemano.
+
 Bug 033, decisión 2 (RESUELTA, ficha del bug, sección 4): las filas de `entrenos`/`pesos` que
 se importaron ANTES de que `importar_datos_node` supiera traducir `miembro_id` colgaban TODAS
 del titular, sin importar de quién fueran de verdad (el bug). Este comando las MUEVE a la

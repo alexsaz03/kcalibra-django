@@ -34,21 +34,31 @@ pertenece lo que pide, no que ese "a quién" sea el correcto. `filter(hogar=hoga
 pasaría. Quien decide que el hogar es el bueno es la puerta, y por eso el mensaje de fallo manda
 a la puerta en vez de sugerir un `filter` a mano.
 
-**Y admitir `usuario` ENSANCHA ese hueco, no lo deja igual.** Conviene saberlo con nombres y
+**Y admitir `persona` ENSANCHA ese hueco, no lo deja igual.** Conviene saberlo con nombres y
 apellidos, porque en abstracto no avisa a nadie: en este repositorio un `hogar` sale casi
-siempre de `request.user.hogar` (lo pone el servidor), mientras que un `usuario_id` sale
-rutinariamente **de la URL** (lo pone quien llama). Una vista que copiara
-`planes/views.py:apuntar_plan` y se saltara `usuario_del_hogar_o_404` —
+siempre de `hogares.acceso.hogar_actual(request)` (lo pone el servidor, a partir de la
+`Persona` de quien hizo login), mientras que un `persona_id` sale rutinariamente **de la
+URL** (lo pone quien llama). Unidad 023 — antes de ella este ejemplo se contaba con
+`request.user.hogar` y `usuario_id`: el desfase Persona/Usuario de esa unidad borró
+`Usuario.hogar` (vive en `hogares.Persona.hogar` desde entonces) y renombró la puerta
+(`usuario_del_hogar_o_404` pasó a `persona_del_hogar_o_404`) — cambió QUIÉN es el vector, no
+si lo hay. Una vista que copiara `planes/views.py:apuntar_plan` y se saltara
+`persona_del_hogar_o_404` —
 
-    def ver_plan(request, usuario_id):
-        plan = PlanDeDia.objects.filter(usuario_id=usuario_id, fecha=hoy).first()
+    def ver_plan(request, persona_id):
+        plan = PlanDeDia.objects.filter(persona_id=persona_id, fecha=hoy).first()
 
 — **pasa este check en VERDE** y sirve el plan de cualquier persona de cualquier hogar a quien
-pruebe ids. Es una fuga real, comprobada en la revisión de la 020, y **no es cazable
-estáticamente**: `usuario_id=usuario_id` es indistinguible de la versión legítima. Lo único que
-la impide sigue siendo la puerta. Si algún día se busca red para esto, la forma que puede
-funcionar no es mirar el `filter`, es exigir que toda vista con un `usuario_id` en su firma
-llame a `usuario_del_hogar_o_404` — otro check, y otra unidad.
+pruebe ids. Es una fuga real, comprobada primero en la revisión de la 020 (entonces con la
+forma de antes de la 023, `usuario_id`) y **re-verificada por la unidad 034 con la forma que
+tiene HOY** — la misma vista de sonda de arriba, pasada por `consultas_sin_acotar()`, sigue
+devolviendo `[]` (ninguna infracción) — y **no es cazable estáticamente**: `persona_id=
+persona_id` es indistinguible de la versión legítima (la que usa
+`planes/logica.py:obtener_plan_de`, con una `persona` que YA pasó por la puerta). Lo único
+que la impide sigue siendo la puerta. Si algún día se busca red para esto, la forma que puede
+funcionar no es mirar el `filter`, es exigir que toda vista con un `persona_id` en su firma
+llame a una puerta (`persona_del_hogar_o_404` u otra de `hogares.acceso`) — otro check, y
+otra unidad.
 
 ## Excepciones (R4): declaradas una a una, con su motivo, en `EXCEPCIONES`
 
@@ -69,14 +79,21 @@ El análisis es **estático y por nombre**: ve `PlanDeDia.objects...` porque el 
 - una variable que se reasigna a OTRA cosa ya acotada dentro del mismo ámbito
   (`qs = ProductoDespensa.objects.all()` y tres líneas después `qs = otra.filter(hogar=h)`):
   el seguimiento de variables es por nombre, no por flujo de datos,
-- **un `usuario_id` que viene de la URL en vez de la puerta** (el caso de arriba,
-  `filter(usuario_id=usuario_id)`): estructuralmente idéntico al legítimo,
+- **un `persona_id` que viene de la URL en vez de la puerta** (el caso de arriba,
+  `filter(persona_id=persona_id)`): estructuralmente idéntico al legítimo,
 - lo que ocurra dentro de una librería.
 
 Ninguno de esos huecos existe hoy en el repositorio (medido: ver `hallazgos.md` de la unidad
-020). Se dejan escritos porque un check cuyo perímetro no está escrito acaba creyéndose más
-grande de lo que es, que es justo lo que el bug 019 enseñó a temer: una red que caza la mitad de
-los peces **parece** una red.
+020, y re-medido por la 034 — las dieciséis vistas que hoy reciben un `persona_id` por la URL
+[`planes/views.py:apuntar_plan`; `cierres/views.py:responder/saltar/cerrar`;
+`progreso/views.py:ver_progreso`; `hogares/views.py:pasar_responsable/borrar_persona_a_cargo`;
+`perfiles/views.py:ver_perfil/actualizar_perfil/ver_peso/apuntar_peso/borrar_peso`;
+`entrenos/views.py:ver_entrenos/apuntar/corregir/borrar`] pasan TODAS por una puerta —
+`persona_del_hogar_o_404`, `persona_editable_o_404`, `persona_propia_o_404`,
+`persona_visible_o_404`, `perfil_editable_o_404`, `perfil_visible_o_404` o
+`persona_a_cargo_o_404` — antes de tocar el `persona_id` crudo). Se dejan escritos porque un
+check cuyo perímetro no está escrito acaba creyéndose más grande de lo que es, que es justo lo
+que el bug 019 enseñó a temer: una red que caza la mitad de los peces **parece** una red.
 
 ## Trampas ya pisadas al escribir esto (para quien lo toque después)
 
