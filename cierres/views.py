@@ -11,6 +11,7 @@ está pendiente, la foto del menú) vive en `cierres/logica.py` y `servicios/cie
 """
 
 from django.contrib.auth.decorators import login_required
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_POST
@@ -18,7 +19,7 @@ from django.views.decorators.http import require_POST
 from hogares.acceso import persona_actual
 from planes.logica import obtener_plan_de
 
-from .acceso import persona_propia_o_404
+from .acceso import persona_propia_o_404, persona_visible_o_404, puede_editar_cierres
 from .forms import FormularioCierre, FormularioRespuestaRapida
 from .logica import cerrar_dia, dia_pendiente_de_preguntar, saltar_dia_pendiente
 from .models import CierreDeDia
@@ -94,11 +95,20 @@ def cerrar(request, persona_id):
 
     Unidad 025, R3/G-43 — `persona_id` puede ser una persona a cargo de quien pregunta
     (`persona_propia_o_404` delega en `hogares.acceso.persona_editable_o_404`).
+
+    Unidad 036, R4/R5/R6/R7/R8 — la pantalla se queda de UNA pieza (GET enseña, POST guarda,
+    misma URL — decisión (1) de la especificación): el GET pasa a `persona_visible_o_404`
+    (cualquiera del hogar ve el histórico), y el POST gana un guarda de SERVIDOR propio, antes
+    de tocar el formulario: sin `puede_editar_cierres`, ni un 404 disfrazado de formulario
+    escondido (ADR-019, decisión (2) — esconder el botón es presentación, no permiso).
     """
-    persona = persona_propia_o_404(request, persona_id)
+    persona = persona_visible_o_404(request, persona_id)
     quien_pregunta = persona_actual(request)
+    puede_editar = puede_editar_cierres(request, persona_id)
 
     if request.method == "POST":
+        if not puede_editar:
+            raise Http404("No existe.")
         form = FormularioCierre(request.POST)
         if form.is_valid():
             cerrar_dia(persona, form.cleaned_data)
@@ -124,11 +134,13 @@ def cerrar(request, persona_id):
     contexto = {
         "persona_objetivo": persona,
         # Unidad 025, R3/R5/G-43 — misma separación que perfiles/ y entrenos/: `es_propio`
-        # decide el TEXTO, `puede_editar` decide si se enseña el formulario. `puede_editar`
-        # es siempre `True` aquí (la puerta ya filtró antes de renderizar; no hay, en esta
-        # unidad, un tercer estado "lo veo pero no lo cambio" para cierres).
+        # decide el TEXTO, `puede_editar` decide si se enseña el formulario. Unidad 036, R4/R6
+        # — `puede_editar` ya no es siempre `True`: se calcula con `puede_editar_cierres`
+        # (delegado en `hogares.acceso.puede_cambiar_lo_de`), la misma fuente que ya usó el
+        # guarda del POST de arriba, para que la pantalla nunca ofrezca algo que el servidor
+        # vaya a rechazar.
         "es_propio": persona.id == quien_pregunta.id,
-        "puede_editar": True,
+        "puede_editar": puede_editar,
         "form": form,
         "cierres": CierreDeDia.objects.filter(persona=persona),
     }

@@ -14,8 +14,12 @@
   {# patrón que entrenos/templates/entrenos/ver.html y perfiles/templates/perfiles/peso.html #}
   {#                                                                                        #}
   {# Unidad 025, R3/R5/G-43 — `es_propio` decide el TEXTO ("tus últimos cierres" / "últimos #}
-  {# cierres de Marta"); `puede_editar` decide si se enseña el formulario. Hoy `puede_editar`#}
-  {# es siempre `True` aquí (la puerta ya filtró antes de renderizar).                      #}
+  {# cierres de Marta"); `puede_editar` decide si se enseña el formulario. Unidad 036,      #}
+  {# R4/R5/R6 — ya NO es siempre `True`: ahora también llega aquí quien solo puede MIRAR    #}
+  {# (cualquiera del hogar, R-23/G-43), y `cierres/views.py:cerrar` calcula `puede_editar`  #}
+  {# de verdad con `puede_editar_cierres` (delegado en `hogares.acceso.puede_cambiar_lo_de`)#}
+  {# — la MISMA fuente que guarda el POST, para que esta plantilla nunca ofrezca un         #}
+  {# formulario o un enlace que el servidor vaya a rechazar.                                #}
   {# -------------------------------------------------------------------------------------- #}
   {% partialdef historico_de_cierres %}
   <div id="historico-de-cierres">

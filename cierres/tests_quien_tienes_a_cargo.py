@@ -139,12 +139,20 @@ class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
         self.assertEqual(respuesta.status_code, 404)
         self.assertFalse(DiaSaltado.objects.filter(persona=self.marta).exists())
 
-    def test_euridice_no_puede_ver_ni_cerrar_a_mano_el_dia_de_marta(self):
+    def test_euridice_ve_pero_no_puede_cerrar_a_mano_el_dia_de_marta(self):
+        """
+        Actualizado por la unidad 036 (R4/R5/R7/R-23/G-43): antes de esa unidad, VER y
+        CAMBIAR el día de otra persona eran la MISMA puerta, así que el GET daba 404. Desde
+        la 036, todo el hogar VE el histórico de cualquiera de dentro; lo que sigue dando 404
+        —con el guarda de SERVIDOR del POST, no solo escondiendo el formulario (ADR-019)— es
+        CAMBIARLO.
+        """
         self.client.logout()
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
 
         respuesta_ver = self.client.get(f"/cierres/{self.marta.id}/")
-        self.assertEqual(respuesta_ver.status_code, 404)
+        self.assertEqual(respuesta_ver.status_code, 200)
+        self.assertNotIn("Guardar", respuesta_ver.content.decode())
 
         respuesta_post = self.client.post(
             f"/cierres/{self.marta.id}/",
@@ -158,9 +166,25 @@ class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
         self.assertEqual(respuesta_post.status_code, 404)
         self.assertFalse(CierreDeDia.objects.filter(persona=self.marta).exists())
 
-    def test_alejandro_no_puede_cerrar_el_dia_de_euridice_aunque_tenga_a_marta_a_cargo(self):
+    def test_alejandro_ve_pero_no_puede_cerrar_el_dia_de_euridice_aunque_tenga_a_marta_a_cargo(self):
+        """Actualizado por la unidad 036 (R7, caso límite explícito del contrato): ser
+        responsable de Marta no da mando sobre Euridice, pero sí la deja VER — antes de la
+        036 esto daba 404 porque VER y CAMBIAR eran la misma puerta."""
         respuesta = self.client.get(f"/cierres/{self.euridice.id}/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotIn("Guardar", respuesta.content.decode())
+
+        respuesta_post = self.client.post(
+            f"/cierres/{self.euridice.id}/",
+            {
+                "fecha": timezone.localdate().isoformat(),
+                "respuesta": "lo_segui",
+                "calorias_comidas": "",
+                "nota": "",
+            },
+        )
+        self.assertEqual(respuesta_post.status_code, 404)
+        self.assertFalse(CierreDeDia.objects.filter(persona=self.euridice).exists())
 
 
 class R7_LaPuertaMiraResponsableNoPerfilTests(_ConAlejandroMartaYEuridice):
@@ -188,8 +212,15 @@ class R7_LaPuertaMiraResponsableNoPerfilTests(_ConAlejandroMartaYEuridice):
         self.assertEqual(respuesta.status_code, 200)
         self.assertTrue(CierreDeDia.objects.filter(persona=self.sin_perfil).exists())
 
-    def test_euridice_no_puede_cerrar_el_dia_de_una_persona_a_cargo_de_otro_sin_perfil(self):
+    def test_euridice_ve_pero_no_puede_cerrar_el_dia_de_una_persona_a_cargo_de_otro_sin_perfil(
+        self,
+    ):
+        """Actualizado por la unidad 036: `persona_visible_o_404` tampoco depende de que
+        exista un `Perfil` (misma garantía que ya tenía la puerta de editar, R7 caso límite),
+        así que Euridice VE la pantalla sin reventar, aunque no pueda cerrar nada."""
         self.client.logout()
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
         respuesta = self.client.get(f"/cierres/{self.sin_perfil.id}/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertNotEqual(respuesta.status_code, 500)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotIn("Guardar", respuesta.content.decode())
