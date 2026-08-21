@@ -1039,6 +1039,23 @@ class R9_ElResponsableVeElRotuloDeCambiarEnLosEntrenosDeSuCargoTests(_ConAlejand
         self.assertIn("Ver y apuntarle entrenos a Marta", contenido)
 
 
+class R9_ElResponsableVeElRotuloDeCambiarEnLosDiasDeSuCargoTests(_ConAlejandroYMartaACargo):
+    """Simétrico de la clase anterior, para el enlace a los DÍAS: Alejandro, responsable de
+    Marta, ve el rótulo de CAMBIAR ("Cerrar un día de Marta"), nunca el de mirar. Hueco H1 de
+    la revisión — el bug 028 ya lo fijaba para quien SOLO mira (Euridice, en
+    `Bug028_LaAmpliacionNoSeVaDeMadreTests`), pero ningún test afirmaba el lado del
+    responsable, y el `href` a `cierres:cerrar` pasó a ser incondicional con esta unidad: sin
+    este test, borrar la rama `{% elif puede_editar %}` de la plantilla no lo caza nadie."""
+
+    def test_alejandro_ve_el_rotulo_de_cambiar_en_los_dias_de_marta(self):
+        respuesta = self.client.get(f"/progreso/{self.marta.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/cierres/{self.marta.id}/"', contenido)
+        self.assertIn("Cerrar un día de Marta", contenido)
+        self.assertNotIn("Ver los días cerrados de Marta", contenido)
+
+
 class R9_R10_LaDueñaVeSusPropiosEnlacesTests(BaseProgresoTests):
     """
     R9/R-10 — hueco medido en el cierre del bug 028 y nunca cerrado hasta ahora: ningún test
