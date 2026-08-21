@@ -138,12 +138,28 @@ class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
             intensidad="media", minutos=20, calorias=100, calorias_manuales=True,
         )
 
-    def test_euridice_no_ve_la_pantalla_de_entrenos_de_marta(self):
+    def test_euridice_ve_pero_no_puede_tocar_la_pantalla_de_entrenos_de_marta(self):
+        """
+        Actualizado por la unidad 036 (R1/R7/R-23/G-43): antes de esa unidad, VER y CAMBIAR
+        eran la MISMA puerta, así que este GET daba 404. Desde la 036, todo el hogar VE los
+        entrenos de cualquiera de dentro —Euridice no es responsable de Marta, pero ambas
+        viven en la misma casa—, y lo que sigue dando 404 (probado en los tests de abajo) es
+        CAMBIARLOS. Este test se queda con las dos mitades juntas, para que la ampliación de
+        la 036 no se lleve por delante lo que R4 protegía: la pantalla se ve, pero no ofrece
+        ninguna forma de tocar nada ajeno.
+        """
         self.client.logout()
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
         respuesta = self.client.get(f"/entrenos/{self.marta.id}/")
-        self.assertNotEqual(respuesta.status_code, 403)
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertNotIn(f"/entrenos/{self.marta.id}/apuntar/", contenido)
+        self.assertNotIn(
+            f"/entrenos/{self.marta.id}/{self.entreno_de_marta.id}/corregir/", contenido
+        )
+        self.assertNotIn(
+            f"/entrenos/{self.marta.id}/{self.entreno_de_marta.id}/borrar/", contenido
+        )
 
     def test_euridice_no_puede_apuntar_un_entreno_a_marta(self):
         self.client.logout()
@@ -174,9 +190,15 @@ class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
         self.entreno_de_marta.refresh_from_db()
         self.assertEqual(self.entreno_de_marta.minutos, 20)  # intacto
 
-    def test_alejandro_no_puede_tocar_los_entrenos_de_euridice_aunque_tenga_a_marta_a_cargo(self):
+    def test_alejandro_ve_pero_no_puede_tocar_los_entrenos_de_euridice_aunque_tenga_a_marta_a_cargo(
+        self,
+    ):
+        """Actualizado por la unidad 036 (R7, caso límite explícito del contrato): ser
+        responsable de Marta no da mando sobre Euridice, pero sí la deja VER — antes de la
+        036 esto daba 404 porque VER y CAMBIAR eran la misma puerta."""
         respuesta = self.client.get(f"/entrenos/{self.euridice.id}/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotIn(f"/entrenos/{self.euridice.id}/apuntar/", respuesta.content.decode())
 
 
 class R7_LaPuertaMiraResponsableNoPerfilTests(_ConAlejandroMartaYEuridice):
@@ -213,8 +235,15 @@ class R7_LaPuertaMiraResponsableNoPerfilTests(_ConAlejandroMartaYEuridice):
         self.assertEqual(respuesta.status_code, 200)
         self.assertTrue(Entreno.objects.filter(persona=self.sin_perfil, calorias=50).exists())
 
-    def test_euridice_no_puede_ver_la_pantalla_de_una_persona_a_cargo_de_otro_sin_perfil(self):
+    def test_euridice_ve_pero_no_puede_tocar_la_pantalla_de_una_persona_a_cargo_de_otro_sin_perfil(
+        self,
+    ):
+        """Actualizado por la unidad 036: `persona_visible_o_404` tampoco depende de que
+        exista un `Perfil` (misma garantía que ya tenía la puerta de editar, R7 caso límite),
+        así que Euridice VE la pantalla sin reventar, aunque no pueda tocar nada."""
         self.client.logout()
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
         respuesta = self.client.get(f"/entrenos/{self.sin_perfil.id}/")
-        self.assertEqual(respuesta.status_code, 404)
+        self.assertNotEqual(respuesta.status_code, 500)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotIn(f"/entrenos/{self.sin_perfil.id}/apuntar/", respuesta.content.decode())

@@ -16,10 +16,11 @@
   {#                                                                                        #}
   {# Unidad 025, R2/R5/G-43 — `es_propio` decide el TEXTO ("tus"/"sus"); `puede_editar`     #}
   {# decide si se enseña el formulario y los botones de corregir/borrar — misma separación  #}
-  {# que perfiles/templates/perfiles/peso.html. Hoy `puede_editar` es siempre `True` aquí   #}
-  {# (la puerta ya filtró antes de renderizar: no hay "lo veo pero no lo cambio" para       #}
-  {# entrenos en esta unidad), pero se escribe explícito para no tener que tocar esta       #}
-  {# plantilla el día que se abra esa lectura.                                              #}
+  {# que perfiles/templates/perfiles/peso.html. Unidad 036, R1/R2/R6 — ya NO es siempre     #}
+  {# `True`: ahora también llega aquí quien solo puede MIRAR (cualquiera del hogar,         #}
+  {# R-23/G-43), y `entrenos/views.py:ver_entrenos` calcula `puede_editar` de verdad con    #}
+  {# `puede_editar_entrenos` (delegado en `hogares.acceso.puede_cambiar_lo_de`), para que    #}
+  {# esta plantilla nunca ofrezca un formulario o un enlace que el servidor va a rechazar.  #}
   {# ------------------------------------------------------------------------------------ #}
   {% partialdef entrenos_de_hoy %}
   <div id="entrenos-de-hoy">

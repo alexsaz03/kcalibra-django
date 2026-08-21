@@ -182,19 +182,41 @@
   </p>
 
   {# -------------------------------------------------------------------------------------- #}
-  {# Bug 028, unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para los entrenos y #}
-  {# el cierre del día: los dos solo son accesibles a quien puede editar (dueña o             #}
-  {# responsable), así que el enlace vive DENTRO de este `{% if puede_editar %}` — no de       #}
-  {# `{% if es_propio %}` ("soy yo", a secas), que es lo que esta pantalla usaba hasta este    #}
-  {# bug y lo que dejaba sin el enlace al responsable de una persona a cargo, aunque           #}
-  {# `cierres/acceso.py` (unidad 025) ya le deja pasar sin discusión.                          #}
+  {# Unidad 036, R9 — desde Progreso se llega a los entrenos y a los días de la persona que  #}
+  {# se está mirando: los dos enlaces existen SIEMPRE (R-23/G-43: todo el hogar los ve), y el #}
+  {# rótulo cambia según `puede_editar` (mirar vs. cambiar) — igual que el enlace al peso de  #}
+  {# arriba. Antes de esta unidad `entrenos:ver` no tenía NINGÚN enlace en toda la app        #}
+  {# (Decisión (3) de la especificación); sin él la mejora sería invisible.                  #}
   {# -------------------------------------------------------------------------------------- #}
-  {% if puede_editar %}
-    <p class="mt-3 text-sm">
-      <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+  <p class="mt-3 text-sm">
+    <a href="{% url 'entrenos:ver' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+      {% if es_propio %}
+        Ver tus entrenos →
+      {% elif puede_editar %}
+        Ver y apuntarle entrenos a {{ persona_objetivo.nombre }} →
+      {% else %}
+        Ver los entrenos de {{ persona_objetivo.nombre }} →
+      {% endif %}
+    </a>
+  </p>
+
+  {# -------------------------------------------------------------------------------------- #}
+  {# Bug 028, unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para el cierre del  #}
+  {# día. Unidad 036, R9 — el enlace ya NO vive dentro de `{% if puede_editar %}`: ahora      #}
+  {# también quien solo MIRA llega a los días cerrados de esa persona (R-23/G-43), con el     #}
+  {# rótulo cambiando según pueda cambiar o solo ver — `cierres/acceso.py` (unidad 036) deja   #}
+  {# pasar el GET a todo el hogar, así que el enlace nunca lleva a un 404.                    #}
+  {# -------------------------------------------------------------------------------------- #}
+  <p class="mt-3 text-sm">
+    <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+      {% if es_propio %}
         Cerrar un día (¿cumpliste el plan?) →
-      </a>
-    </p>
-  {% endif %}
+      {% elif puede_editar %}
+        Cerrar un día de {{ persona_objetivo.nombre }} →
+      {% else %}
+        Ver los días cerrados de {{ persona_objetivo.nombre }} →
+      {% endif %}
+    </a>
+  </p>
 </div>
 {% endblock %}

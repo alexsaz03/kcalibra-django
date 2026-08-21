@@ -979,9 +979,85 @@ class Bug028_LaAmpliacionNoSeVaDeMadreTests(_ConAlejandroYMartaACargo):
         self.client.login(username="euridice@example.com", password=CLAVE_VALIDA)
 
     def test_euridice_no_ve_el_enlace_de_cerrar_el_dia_de_marta(self):
+        """
+        Actualizado por la unidad 036 (R9): desde esa unidad, `cierres:cerrar` es visible para
+        TODO el hogar (R-23/G-43 completo), así que el `href` en sí ya no es lo que distingue
+        a Euridice de Alejandro — los dos lo tienen. Lo que sigue protegiendo esta clase, y lo
+        que la ampliación de la 036 NO puede llevarse por delante, es el RÓTULO: Euridice ve
+        una invitación a MIRAR ("Ver los días cerrados de Marta"), nunca a CAMBIAR ("Cerrar un
+        día de Marta"), porque `puede_editar` para ella sigue siendo `False` (no es responsable
+        de Marta). Mismo criterio para el peso, sin tocar.
+        """
         respuesta = self.client.get(f"/progreso/{self.marta.id}/")
         self.assertEqual(respuesta.status_code, 200)  # control: R7, sí la ve (solo lectura)
         contenido = respuesta.content.decode()
-        self.assertNotIn(f'href="/cierres/{self.marta.id}/"', contenido)
+        self.assertIn(f'href="/cierres/{self.marta.id}/"', contenido)  # unidad 036: ahora SÍ
+        self.assertIn("Ver los días cerrados de Marta", contenido)
+        self.assertNotIn("Cerrar un día de Marta", contenido)
         self.assertIn("Ver su histórico →", contenido)
         self.assertNotIn("apuntarle una pesada", contenido)
+
+
+# ---------------------------------------------------------------------------------------- #
+# Unidad 036 (R9 de su especificación) — los enlaces desde Progreso a los entrenos y a los
+# días de la persona que se está mirando, con el rótulo cambiando según se pueda mirar o
+# cambiar. Decisión (3) de la especificación: antes de esta unidad no existía en toda la app
+# un solo enlace para llegar a los entrenos de otra persona.
+# ---------------------------------------------------------------------------------------- #
+
+
+class R9_EnlacesDeSoloMirarParaOtroDelHogarTests(BaseProgresoTests):
+    """Alejandro mirando el progreso de Euridice (mismo hogar, sin ser su responsable): los
+    enlaces a sus entrenos y a sus días existen (R-23/G-43: todo el hogar los ve), con el
+    rótulo de MIRAR, nunca el de CAMBIAR."""
+
+    def test_ve_el_enlace_a_los_entrenos_de_euridice_con_rotulo_de_mirar(self):
+        respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/entrenos/{self.euridice.id}/"', contenido)
+        self.assertIn("Ver los entrenos de Euridice", contenido)
+        self.assertNotIn("apuntarle entrenos", contenido)
+
+    def test_ve_el_enlace_a_los_dias_de_euridice_con_rotulo_de_mirar(self):
+        respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/cierres/{self.euridice.id}/"', contenido)
+        self.assertIn("Ver los días cerrados de Euridice", contenido)
+        self.assertNotIn("Cerrar un día de Euridice", contenido)
+
+
+class R9_ElResponsableVeElRotuloDeCambiarEnLosEntrenosDeSuCargoTests(_ConAlejandroYMartaACargo):
+    """Alejandro, responsable de Marta: el enlace a sus entrenos lleva el rótulo de CAMBIAR,
+    no el de mirar — mismo criterio que el bug 028 ya fijó para el enlace de cerrar el día."""
+
+    def test_alejandro_ve_el_rotulo_de_cambiar_en_los_entrenos_de_marta(self):
+        respuesta = self.client.get(f"/progreso/{self.marta.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/entrenos/{self.marta.id}/"', contenido)
+        self.assertIn("Ver y apuntarle entrenos a Marta", contenido)
+
+
+class R9_R10_LaDueñaVeSusPropiosEnlacesTests(BaseProgresoTests):
+    """
+    R9/R-10 — hueco medido en el cierre del bug 028 y nunca cerrado hasta ahora: ningún test
+    de toda la suite afirmaba que la PROPIA dueña ve su enlace de "Cerrar un día" en su
+    Progreso. Mutar `puede_editar_progreso` a `return False` se lo quita a TODO el mundo, y
+    antes de esta unidad solo caían los dos tests del bug 028 (sobre Marta, la persona a
+    cargo) — ninguno sobre Alejandro mirando lo SUYO. Este test cierra ese hueco, y de paso
+    fija el mismo criterio para el enlace nuevo a los propios entrenos (R9).
+    """
+
+    def test_alejandro_ve_su_propio_enlace_de_cerrar_un_dia(self):
+        respuesta = self.client.get("/progreso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/cierres/{self.alejandro.id}/"', contenido)
+        self.assertIn("Cerrar un día (¿cumpliste el plan?) →", contenido)
+
+    def test_alejandro_ve_su_propio_enlace_a_sus_entrenos(self):
+        respuesta = self.client.get("/progreso/")
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/entrenos/{self.alejandro.id}/"', contenido)
+        self.assertIn("Ver tus entrenos →", contenido)

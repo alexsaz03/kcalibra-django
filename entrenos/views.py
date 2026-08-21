@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 from hogares.acceso import persona_actual
 from perfiles.logica import calcular_objetivo_del_dia
 
-from .acceso import persona_propia_o_404
+from .acceso import persona_propia_o_404, persona_visible_o_404, puede_editar_entrenos
 from .forms import FormularioEntreno
 from .logica import (
     SinPesoParaEstimar,
@@ -35,21 +35,21 @@ from .models import Entreno
 NOMBRE_DEL_PARTIAL = "entrenos/ver.html#entrenos_de_hoy"
 
 
-def _contexto(persona, quien_pregunta, form=None):
+def _contexto(persona, quien_pregunta, form=None, puede_editar=True):
     """
     Unidad 025, R2/R5/G-43 — `es_propio` decide el TEXTO ("tus entrenos" / "entrenos de
     Marta"); `puede_editar` decide si la plantilla enseña el formulario y los botones de
-    borrar/corregir — misma separación que `perfiles/`. Aquí `puede_editar` es SIEMPRE `True`
-    para quien llega a este contexto: la puerta (`persona_propia_o_404`, delegada en
-    `hogares.acceso.persona_editable_o_404`) ya filtró antes de construirlo — no hay, en esta
-    unidad, un tercer estado "lo veo pero no lo cambio" para entrenos (fuera de alcance: eso
-    es abrir la mitad de VER de R-23 a todo el hogar). Se deja explícito, y no fijo a `True`
-    en la plantilla, para que el día que se abra esa lectura baste con calcularlo aquí.
+    borrar/corregir — misma separación que `perfiles/`. Unidad 036 (R2/R6) — `puede_editar` ya
+    no es siempre `True`: `ver_entrenos` lo calcula de verdad con `puede_editar_entrenos`
+    (delegado en `hogares.acceso.puede_cambiar_lo_de`), porque ahora también llega aquí quien
+    solo puede MIRAR (R1/R-23). `apuntar`, `corregir` y `borrar` siguen detrás de
+    `persona_propia_o_404`, así que para ellas `puede_editar` sigue siendo `True` por
+    construcción (el valor por defecto de este parámetro).
     """
     return {
         "persona_objetivo": persona,
         "es_propio": persona.id == quien_pregunta.id,
-        "puede_editar": True,
+        "puede_editar": puede_editar,
         "form": form if form is not None else FormularioEntreno(),
         "entrenos": todos_los_entrenos(persona),
         "calorias_hoy": calorias_de_hoy(persona),
@@ -68,10 +68,18 @@ def ver_entrenos(request, persona_id=None):
 
     Unidad 025, R2 — `persona_id` puede ser una persona a cargo de quien pregunta: la
     pantalla se ve, y se puede apuntar, corregir y borrar (R2/G-43).
+
+    Unidad 036, R1/R6/R7/R8 — la puerta pasa de `persona_propia_o_404` a
+    `persona_visible_o_404`: cualquiera del MISMO hogar ve los entrenos de cualquiera de
+    dentro (R-23/G-43), de otro hogar sigue dando 404. `puede_editar_entrenos` decide, aparte,
+    si además puede tocarlos (R2/R6): las dos preguntas están separadas a propósito, para que
+    ver más no signifique poder más.
     """
     persona_id = persona_id if persona_id is not None else persona_actual(request).id
-    persona = persona_propia_o_404(request, persona_id)
-    return render(request, "entrenos/ver.html", _contexto(persona, persona_actual(request)))
+    persona = persona_visible_o_404(request, persona_id)
+    puede_editar = puede_editar_entrenos(request, persona_id)
+    contexto = _contexto(persona, persona_actual(request), puede_editar=puede_editar)
+    return render(request, "entrenos/ver.html", contexto)
 
 
 @login_required
