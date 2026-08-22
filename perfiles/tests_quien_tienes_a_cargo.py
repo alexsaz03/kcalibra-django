@@ -115,6 +115,73 @@ class R1_ApuntarYBorrarElPesoDeUnaPersonaACargoTests(_ConAlejandroMartaYEuridice
         self.assertFalse(MedicionPeso.objects.filter(id=medicion.id).exists())
 
 
+class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridice):
+    """BUG 042 — `perfiles/templates/perfiles/peso.html`, rama del responsable, decía
+    *"apúntalas solo si su báscula TE las da"*: ese "te" señala a quien mira, no a la dueña de
+    la báscula. Es el mismo tuteo que la unidad 038 limpió en las demás pantallas, **en el
+    fichero que la especificación de la 038 pone de MODELO a copiar** — resolvía bien la
+    estructura de tres ramas y mal una palabra.
+
+    Lo vio el revisor de la 038 y NO lo arregló allí, porque caía fuera de su contrato. El test
+    va en este fichero, y no en `perfiles/tests.py`, porque aquí ya vive el montaje de
+    Alejandro-responsable-de-Marta que hace falta para llegar a esa rama de la plantilla.
+    """
+
+    def test_el_responsable_no_lee_un_tu_al_apuntarle_el_peso_a_su_cargo(self):
+        respuesta = self.client.get(f"/perfiles/{self.marta.id}/peso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        # La zona acotada (17ª cara: un mensaje de otra petición cuela el texto que buscabas).
+        subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
+        self.assertIn("Apunta el peso de Marta", subtitulo)
+        # Ancla POSITIVA de la frase en disputa (H1 de la revisión): sin esto, un "arreglo"
+        # que borrase la segunda frase entera también pasaría el test.
+        self.assertIn("su báscula", subtitulo)
+        self.assertNotIn("te las da", subtitulo)
+        self.assertNotIn("tu báscula", subtitulo)
+        # H2 de la revisión: el acotado dice QUÉ zona falla, pero da falso VERDE si mañana el
+        # subtítulo se parte en dos <p> y el "te" se queda fuera de la zona recortada. El
+        # negativo sobre la PÁGINA ENTERA es lo que impide que el bug vuelva por otro sitio —
+        # los dos se necesitan, igual que en la unidad 038.
+        # H4 de la 2ª vuelta y su afinado en la 3ª. El negativo empezó siendo demasiado
+        # ESTRECHO (solo la frase de hoy), y 16 líneas más abajo hay otro "tu báscula" con su
+        # propia guarda (`peso.html:52`): si esa se pierde, el responsable lee "Lo que marcó
+        # TU báscula" encima de los kilos de Marta. Ensancharlo lo arreglaba, pero la 3ª vuelta
+        # midió que un "tu báscula" en la BARRA compartida daría un rojo falso. Así que no se
+        # persiguen literales: se acota al CUERPO de esta pantalla (el partial que la pinta) y
+        # se barre ahí la segunda persona entera. Medido por la revisión: 0 coincidencias
+        # legítimas en esta página, y sigue cazando la mutación de la tarjeta.
+        # Se deja de perseguir literales: una lista de frases concretas siempre se queda
+        # corta —la vuelta final midió que la de cuatro dejaba fuera "tus calorías", "tus
+        # últimos 7 días", "Tu histórico" y "tu progreso"—. Se acota al CUERPO de esta
+        # pantalla (fuera queda la barra compartida, donde "Tu peso" es correcto) y se barre
+        # ahí la segunda persona ENTERA. Medido por la revisión: 0 apariciones legítimas.
+        cuerpo = contenido.split('id="historico-de-peso"', 1)[1]
+        texto_visible = re.sub(r"<[^>]+>", " ", cuerpo)
+        segunda_persona = re.findall(r"\b(?:tu|tus|te|ti|tú)\b", texto_visible, re.IGNORECASE)
+        self.assertEqual(
+            segunda_persona,
+            [],
+            f"la pantalla tutea a quien rellena lo de Marta: {segunda_persona}",
+        )
+
+    def test_la_dueña_sigue_leyendo_su_texto_de_siempre_en_segunda_persona(self):
+        """El negativo del negativo: quitar el tuteo de la rama del responsable no puede
+        llevarse por delante el de la rama propia, que ahí SÍ es correcto."""
+        # La sesión ya está en Alejandro (lo deja así el montaje); su propio peso es
+        # justo la rama `es_propio` de la misma plantilla.
+        respuesta = self.client.get("/perfiles/peso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
+        self.assertIn("Apunta tu peso", subtitulo)
+        self.assertIn("tu báscula", subtitulo)
+        # H1 de la revisión: ESTA es la palabra que el gemelo existe para proteger. Sin ella,
+        # el arreglo podía desbordarse y quitarle el "te" también a la dueña —donde SÍ es
+        # correcto— sin que nada se quejara. Medido: la suite se quedaba verde.
+        self.assertIn("te las da", subtitulo)
+
+
 class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
     """
     R4 (la puerta) — Euridice, que vive en el MISMO hogar que Marta pero no es su responsable,
