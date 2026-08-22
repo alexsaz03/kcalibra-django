@@ -22,6 +22,7 @@ import json
 import os
 import sqlite3
 import tempfile
+from unittest import mock
 from datetime import date
 from decimal import Decimal
 
@@ -871,6 +872,41 @@ class OrigenTests(TestCase):
         with self.assertRaises(origen.OrigenNodeInvalido) as cm:
             origen.abrir(self.ruta_db)
         self.assertIn("entrenos", str(cm.exception))
+
+    def test_bug040_el_error_que_solo_salta_al_leer_las_tablas_tambien_se_explica_en_cristiano(self):
+        """BUG 040 — el mismo fichero-que-no-es-una-base-de-datos, pero con el ORDEN de SQLite
+        en LINUX, que es donde va a correr esto en producción (Hetzner, ADR-007).
+
+        Por qué hace falta simular el orden en vez de escribir el fichero y ya: el test que ya
+        existía (`test_fichero_que_no_es_una_sqlite_falla_en_cristiano`) **pasa en macOS**,
+        porque aquí el `SELECT 1` de `abrir()` ya fuerza la comprobación de cabecera y el error
+        salta DENTRO del `try`. En el SQLite de Linux ese `SELECT 1` no toca ninguna tabla y no
+        falla: el error real aparece después, al leer `sqlite_master`, que es la línea que se
+        quedó FUERA de la misma red. Así que en este portátil el bug es **invisible** salvo que
+        se reproduzca ese orden a propósito — y un arreglo que nadie ha visto fallar no vale
+        (`conocimiento/tests-que-no-fallan-cuando-deben.md`).
+        """
+        ruta_basura = os.path.join(self._tmp.name, "no-es-una-db.db")
+        with open(ruta_basura, "w", encoding="utf-8") as f:
+            f.write("esto no es una base de datos SQLite")
+
+        class ConexionAlEstiloDeLinux:
+            """`SELECT 1` pasa (no toca tablas); el fallo llega al mirar `sqlite_master`."""
+
+            row_factory = None
+
+            def execute(self, sentencia, *args, **kwargs):
+                if "sqlite_master" in sentencia:
+                    raise sqlite3.DatabaseError("file is not a database")
+                return []
+
+            def close(self):
+                pass
+
+        with mock.patch.object(origen.sqlite3, "connect", return_value=ConexionAlEstiloDeLinux()):
+            with self.assertRaises(origen.OrigenNodeInvalido) as cm:
+                origen.abrir(ruta_basura)
+        self.assertIn("no se puede leer como una base de datos SQLite", str(cm.exception))
 
 
 # ---------------------------------------------------------------------------------------------

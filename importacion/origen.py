@@ -65,15 +65,22 @@ def abrir(ruta):
         # de verdad (una SQLite corrupta o un fichero cualquiera con extensión .db no falla al
         # `connect()`, solo al primer uso real).
         conexion.execute("SELECT 1")
+        # BUG 040 — esta consulta va DENTRO del mismo `try` a propósito, y no es una
+        # precaución teórica: el `SELECT 1` de arriba fuerza la comprobación de cabecera en el
+        # SQLite de macOS, pero NO en el de Linux (no toca ninguna tabla, así que no falla
+        # ahí). Con la lectura de `sqlite_master` fuera de esta red, un fichero que no es una
+        # base de datos escupía en Linux la traza cruda de Python en vez del mensaje en
+        # cristiano que R7 promete — y Linux es donde va a correr esto (ADR-007, Hetzner).
+        # Lo encontró el CI en su primera ejecución (unidad 039).
+        tablas_presentes = {
+            fila["name"]
+            for fila in conexion.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     except sqlite3.Error as exc:
         raise OrigenNodeInvalido(
             f"'{ruta}' no se puede leer como una base de datos SQLite: {exc}"
         ) from exc
 
-    tablas_presentes = {
-        fila["name"]
-        for fila in conexion.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
     faltan = [tabla for tabla in TABLAS_REQUERIDAS if tabla not in tablas_presentes]
     if faltan:
         conexion.close()
