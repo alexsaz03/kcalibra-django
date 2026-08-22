@@ -446,6 +446,7 @@ class R7_CasoVacioLosTresEstadosTests(_ConAlejandroMartaEuridiceYCarlos):
             "Marta todavía no tiene ningún entreno apuntado. Apúntale el primero aquí abajo.",
             contenido,
         )
+        self.assertNotIn("Todavía no has apuntado ningún entreno", contenido)
 
     def test_uno_mismo_sigue_viendo_su_propio_texto(self):
         respuesta = self.client.get(f"/entrenos/{self.alejandro.id}/")
