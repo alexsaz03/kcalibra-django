@@ -115,6 +115,41 @@ class R1_ApuntarYBorrarElPesoDeUnaPersonaACargoTests(_ConAlejandroMartaYEuridice
         self.assertFalse(MedicionPeso.objects.filter(id=medicion.id).exists())
 
 
+class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridice):
+    """BUG 042 — `perfiles/templates/perfiles/peso.html`, rama del responsable, decía
+    *"apúntalas solo si su báscula TE las da"*: ese "te" señala a quien mira, no a la dueña de
+    la báscula. Es el mismo tuteo que la unidad 038 limpió en las demás pantallas, **en el
+    fichero que la especificación de la 038 pone de MODELO a copiar** — resolvía bien la
+    estructura de tres ramas y mal una palabra.
+
+    Lo vio el revisor de la 038 y NO lo arregló allí, porque caía fuera de su contrato. El test
+    va en este fichero, y no en `perfiles/tests.py`, porque aquí ya vive el montaje de
+    Alejandro-responsable-de-Marta que hace falta para llegar a esa rama de la plantilla.
+    """
+
+    def test_el_responsable_no_lee_un_tu_al_apuntarle_el_peso_a_su_cargo(self):
+        respuesta = self.client.get(f"/perfiles/{self.marta.id}/peso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        # La zona acotada (17ª cara: un mensaje de otra petición cuela el texto que buscabas).
+        subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
+        self.assertIn("Apunta el peso de Marta", subtitulo)
+        self.assertNotIn("te las da", subtitulo)
+        self.assertNotIn("tu báscula", subtitulo)
+
+    def test_la_dueña_sigue_leyendo_su_texto_de_siempre_en_segunda_persona(self):
+        """El negativo del negativo: quitar el tuteo de la rama del responsable no puede
+        llevarse por delante el de la rama propia, que ahí SÍ es correcto."""
+        # La sesión ya está en Alejandro (lo deja así el montaje); su propio peso es
+        # justo la rama `es_propio` de la misma plantilla.
+        respuesta = self.client.get("/perfiles/peso/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
+        self.assertIn("Apunta tu peso", subtitulo)
+        self.assertIn("tu báscula", subtitulo)
+
+
 class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
     """
     R4 (la puerta) — Euridice, que vive en el MISMO hogar que Marta pero no es su responsable,
