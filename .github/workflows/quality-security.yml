@@ -27,7 +27,7 @@ jobs:
 
       - name: Lint
         env:
-          DJANGO_SECRET_KEY: valor-de-pega-solo-para-ci-nunca-un-secreto-real
+          DJANGO_SECRET_KEY: valor-de-pega-solo-para-este-ci-nunca-un-secreto-real-de-verdad
           DB_NAME: kcalibra_ci
           DB_USER: kcalibra
           DB_PASSWORD: kcalibra
@@ -53,7 +53,7 @@ jobs:
 
       - name: Security
         env:
-          DJANGO_SECRET_KEY: valor-de-pega-solo-para-ci-nunca-un-secreto-real
+          DJANGO_SECRET_KEY: valor-de-pega-solo-para-este-ci-nunca-un-secreto-real-de-verdad
           DB_NAME: kcalibra_ci
           DB_USER: kcalibra
           DB_PASSWORD: kcalibra
