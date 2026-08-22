@@ -189,6 +189,13 @@ class Command(BaseCommand):
                     f"La base de Node trae un dato que no se sabe traducir: {exc} "
                     "No se ha escrito nada (se deshizo todo)."
                 ) from exc
+        # BUG 041/H1 — la red de `origen._leer` sólo sirve si LLEGA hasta aquí. El
+        # `except OrigenNodeInvalido` de arriba envuelve únicamente a `abrir()`, y las cuatro
+        # lectoras se llaman DESPUÉS: `miembros_sin_mapear` ya lee la base en ESTE bloque, no
+        # en el interior. Sin este `except`, el usuario seguía viendo la traza cruda de Python
+        # (medido de punta a punta por la revisión del 041, con el comando de verdad).
+        except origen.OrigenNodeInvalido as exc:
+            raise CommandError(f"{exc} No se ha escrito nada.") from exc
         finally:
             conexion.close()
 
