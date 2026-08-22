@@ -93,13 +93,35 @@ def abrir(ruta):
     return conexion
 
 
+def _leer(conexion, sentencia, que):
+    """Ejecuta una consulta contra la SQLite de Node traduciendo CUALQUIER fallo suyo al
+    mensaje en cristiano que promete R7.
+
+    BUG 041 — las cuatro lectoras de abajo consultaban sin ninguna red, igual que le pasaba a
+    `abrir()` antes del bug 040: es la misma forma del defecto, y por eso se cura de una vez en
+    un solo sitio en vez de repetir cuatro `try`. No es teórico: `abrir()` comprueba que existan
+    las cuatro TABLAS, nunca sus COLUMNAS, así que una base de Node con el esquema anterior al
+    bug 033 —sin `miembro_id` en `entrenos`/`pesos`— pasa su visto bueno y revienta AQUÍ. Los dos
+    comandos que llaman a estas funciones solo atrapan `OrigenNodeInvalido`, así que traducir a
+    esa excepción es lo que hace que el usuario vea una frase en vez de una traza.
+    """
+    try:
+        return [dict(fila) for fila in conexion.execute(sentencia).fetchall()]
+    except sqlite3.Error as exc:
+        raise OrigenNodeInvalido(
+            f"No se pudo leer {que} de la base de datos de Node: {exc}. "
+            "Puede que sea de una versión anterior y le falte alguna columna."
+        ) from exc
+
+
 def productos_despensa(conexion):
     """Las filas de `productos_stock`, tal cual, como diccionarios. Ni una columna de más:
     esta tabla no tiene ningún dato de identidad ni de Strava, así que se lee entera."""
-    cursor = conexion.execute(
-        "SELECT nombre, cantidad, unidad, categoria FROM productos_stock ORDER BY id"
+    return _leer(
+        conexion,
+        "SELECT nombre, cantidad, unidad, categoria FROM productos_stock ORDER BY id",
+        "la despensa (productos_stock)",
     )
-    return [dict(fila) for fila in cursor.fetchall()]
 
 
 def entrenos(conexion):
@@ -117,20 +139,22 @@ def entrenos(conexion):
     titular (`NULL`) de uno de otro miembro de la casa (un id). Es un entero suelto, no la fila
     de `miembros_hogar` — el comando (`importacion/miembros.py`) es quien lo traduce a una
     `Persona`, nunca este módulo (que sigue sin tocar `miembros_hogar`, "Fuera de alcance")."""
-    cursor = conexion.execute(
-        "SELECT fecha, tipo, intensidad, duracion_min, calorias, miembro_id FROM entrenos ORDER BY id"
+    return _leer(
+        conexion,
+        "SELECT fecha, tipo, intensidad, duracion_min, calorias, miembro_id FROM entrenos ORDER BY id",
+        "los entrenos",
     )
-    return [dict(fila) for fila in cursor.fetchall()]
 
 
 def recetas(conexion):
     """Las filas de `recetas`, tal cual (nombre, raciones, tipo_comida, ingredientes en JSON
     de texto, preparación literal)."""
-    cursor = conexion.execute(
+    return _leer(
+        conexion,
         "SELECT nombre, raciones_base, tipo_comida, ingredientes, preparacion "
-        "FROM recetas ORDER BY id"
+        "FROM recetas ORDER BY id",
+        "las recetas",
     )
-    return [dict(fila) for fila in cursor.fetchall()]
 
 
 def pesadas(conexion):
@@ -141,7 +165,8 @@ def pesadas(conexion):
     `hogares.Persona` pudo representar a alguien más de la casa, unidad 023/024). Sigue siendo
     un entero suelto, nunca la fila de `miembros_hogar` (identidad, fuera de alcance) — la
     traducción a `Persona` vive en `importacion/miembros.py`, no aquí."""
-    cursor = conexion.execute(
-        "SELECT fecha, peso_kg, grasa_pct, cintura_cm, miembro_id FROM pesos ORDER BY id"
+    return _leer(
+        conexion,
+        "SELECT fecha, peso_kg, grasa_pct, cintura_cm, miembro_id FROM pesos ORDER BY id",
+        "las pesadas (pesos)",
     )
-    return [dict(fila) for fila in cursor.fetchall()]

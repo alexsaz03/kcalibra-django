@@ -873,6 +873,82 @@ class OrigenTests(TestCase):
             origen.abrir(self.ruta_db)
         self.assertIn("entrenos", str(cm.exception))
 
+    def _crear_sqlite_con_el_esquema_ANTERIOR_al_bug_033(self, ruta):
+        """Las cuatro tablas, pero `entrenos` y `pesos` SIN la columna `miembro_id`.
+
+        No es un esquema inventado: es el que describe el propio docstring de `origen.entrenos()`
+        como "antes" del bug 033, y el que tendría cualquier copia de la app Node anterior a esa
+        fecha. `abrir()` comprueba que existan las cuatro TABLAS, nunca sus COLUMNAS, así que da
+        el visto bueno a esta base y el fallo llega después, al leerla.
+        """
+        conexion = sqlite3.connect(ruta)
+        try:
+            conexion.execute(
+                "CREATE TABLE productos_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, cantidad REAL NOT NULL, "
+                "unidad TEXT NOT NULL, categoria TEXT NOT NULL)"
+            )
+            conexion.execute(
+                "CREATE TABLE entrenos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, tipo TEXT NOT NULL, "
+                "duracion_min INTEGER NOT NULL, intensidad TEXT NOT NULL, "
+                "calorias INTEGER NOT NULL, origen TEXT NOT NULL DEFAULT 'manual')"
+            )
+            conexion.execute(
+                "CREATE TABLE recetas (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, raciones_base INTEGER, "
+                "tipo_comida TEXT, ingredientes TEXT, preparacion TEXT)"
+            )
+            conexion.execute(
+                "CREATE TABLE pesos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, peso_kg REAL NOT NULL, "
+                "grasa_pct REAL, cintura_cm REAL)"
+            )
+            conexion.commit()
+        finally:
+            conexion.close()
+
+    def test_bug041_abrir_da_el_visto_bueno_a_una_base_con_el_esquema_viejo(self):
+        """Hecho de partida del bug 041, medido para que quede escrito: `abrir()` NO comprueba
+        columnas, así que esta base pasa. El defecto no está aquí — está en que lo que viene
+        DESPUÉS no tiene red."""
+        self._crear_sqlite_con_el_esquema_ANTERIOR_al_bug_033(self.ruta_db)
+        conexion = origen.abrir(self.ruta_db)
+        self.addCleanup(conexion.close)
+        self.assertEqual(origen.productos_despensa(conexion), [])
+
+    def test_bug041_entrenos_con_el_esquema_viejo_falla_en_cristiano(self):
+        """BUG 041 — la MISMA forma del bug 040 en otras cuatro funciones: la consulta a la
+        SQLite de Node sin ninguna red. Hoy sube `sqlite3.OperationalError: no such column:
+        miembro_id` CRUDA a la cara del usuario, y R7 promete un mensaje en cristiano."""
+        self._crear_sqlite_con_el_esquema_ANTERIOR_al_bug_033(self.ruta_db)
+        conexion = origen.abrir(self.ruta_db)
+        self.addCleanup(conexion.close)
+        with self.assertRaises(origen.OrigenNodeInvalido) as cm:
+            origen.entrenos(conexion)
+        self.assertIn("entrenos", str(cm.exception))
+
+    def test_bug041_pesadas_con_el_esquema_viejo_falla_en_cristiano(self):
+        """El gemelo de `entrenos`: `pesos` tampoco tiene `miembro_id` en el esquema viejo."""
+        self._crear_sqlite_con_el_esquema_ANTERIOR_al_bug_033(self.ruta_db)
+        conexion = origen.abrir(self.ruta_db)
+        self.addCleanup(conexion.close)
+        with self.assertRaises(origen.OrigenNodeInvalido) as cm:
+            origen.pesadas(conexion)
+        self.assertIn("pesos", str(cm.exception))
+
+    def test_bug041_las_cuatro_lectoras_traducen_cualquier_fallo_de_sqlite(self):
+        """El barrido de la FORMA, no de los dos casos conocidos (lección de la 026 y la 033:
+        un defecto de forma nunca viene solo, y se mide sitio a sitio). Con la conexión ya
+        cerrada, las CUATRO tienen que dar `OrigenNodeInvalido`, nunca un error crudo."""
+        _crear_sqlite_de_node(self.ruta_db)
+        conexion = origen.abrir(self.ruta_db)
+        conexion.close()
+        for lectora in (origen.productos_despensa, origen.entrenos, origen.recetas, origen.pesadas):
+            with self.subTest(lectora=lectora.__name__):
+                with self.assertRaises(origen.OrigenNodeInvalido):
+                    lectora(conexion)
+
     def test_bug040_el_error_que_solo_salta_al_leer_las_tablas_tambien_se_explica_en_cristiano(self):
         """BUG 040 — el mismo fichero-que-no-es-una-base-de-datos, pero con el ORDEN de SQLite
         en LINUX, que es donde va a correr esto en producción (Hetzner, ADR-007).
