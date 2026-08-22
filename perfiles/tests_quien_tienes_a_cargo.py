@@ -143,7 +143,12 @@ class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridi
         # subtítulo se parte en dos <p> y el "te" se queda fuera de la zona recortada. El
         # negativo sobre la PÁGINA ENTERA es lo que impide que el bug vuelva por otro sitio —
         # los dos se necesitan, igual que en la unidad 038.
-        self.assertNotIn("báscula te las da", contenido)
+        # H4 de la 2ª vuelta: este negativo era DEMASIADO ESTRECHO — solo cubría la frase
+        # exacta de hoy, y 16 líneas más abajo hay otro "tu báscula" con su propia guarda
+        # (`peso.html:52`, la tarjeta de R6). Si esa guarda se pierde, el responsable lee
+        # "Lo que marcó TU báscula" encima de los kilos de Marta. El negativo ancho cubre
+        # las dos, y cualquier otra que aparezca en esta página.
+        self.assertNotIn("tu báscula", contenido)
 
     def test_la_dueña_sigue_leyendo_su_texto_de_siempre_en_segunda_persona(self):
         """El negativo del negativo: quitar el tuteo de la rama del responsable no puede
