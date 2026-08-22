@@ -174,14 +174,31 @@ def _variables_de_interes_en_funcion(func, nombres_helper):
     return variables
 
 
+def _es_receptor_de_cliente(receptor):
+    """¿Es `receptor` (lo que hay antes del `.get`/`.post`/...) el cliente de test? `self.client`
+    o `self.<algo>.client` (cualquier cadena de atributos que termine en `.client`), o una
+    variable local llamada `client` a secas. Lo que NO cuenta: `Persona.objects` (termina en
+    `.objects`, no en `.client`) ni ningún otro receptor -- sin esto, `Persona.objects.get(
+    **filtros)` (el idioma más común de la ORM de Django) parecía una llamada de cliente solo
+    porque el método se llama `get` (R2 de la 037: hueco 1)."""
+    if isinstance(receptor, ast.Attribute) and receptor.attr == "client":
+        return True
+    if isinstance(receptor, ast.Name) and receptor.id == "client":
+        return True
+    return False
+
+
 def _es_llamada_de_cliente(nodo):
     """¿Es esto una llamada tipo `self.client.get(...)`/`self.client.post(...)`/
-    `cliente.get(...)`? No exige el nombre exacto `client`: basta con que sea un `Call` cuyo
-    `func` es un `Attribute` con nombre de método HTTP habitual."""
+    `self.<algo>.client.post(...)`/`client.get(...)`? Además del nombre del método
+    (`get`/`post`/`put`/`patch`/`delete`), hace falta que el RECEPTOR sea el cliente de test
+    (`_es_receptor_de_cliente`): mirar solo el nombre del método sin mirar sobre QUÉ se llama
+    convertía cualquier `<modelo>.objects.get(**filtros)` en "llamada de cliente"."""
     return (
         isinstance(nodo, ast.Call)
         and isinstance(nodo.func, ast.Attribute)
         and nodo.func.attr in {"get", "post", "put", "patch", "delete"}
+        and _es_receptor_de_cliente(nodo.func.value)
     )
 
 
@@ -210,11 +227,17 @@ def descubrir_helpers(raiz):
     ninguno añada nada nuevo).
 
     Lo que NO reconoce, y queda así a propósito (alternativa descartada en la especificación de
-    la 037: seguir el flujo de datos de verdad es un intérprete de Python a medias): un helper
-    guardado en una lista o un diccionario, una respuesta guardada en el atributo de un objeto
-    que no sea `self`, una indirección a través de una variable que apunta a la función
-    (`x = self.helper; x()`), o un helper envuelto en un decorador. Es un límite escrito, no un
-    hueco escondido."""
+    la 037: seguir el flujo de datos de verdad es un intérprete de Python a medias): el
+    DESEMPAQUETADO de tupla (`respuesta, extra = self.ayuda_tupla()`) -- que es, de hecho, la
+    ÚNICA forma de escribir la forma 4 (`return x, y`) que puede EJECUTARSE de verdad, porque
+    `respuesta = self.ayuda_tupla()` sin desempaquetar deja `respuesta` como una tupla y
+    `respuesta.status_code` reventaría con `AttributeError` antes de llegar a ningún assert --,
+    un helper guardado en una lista o un diccionario, una indirección a través de una variable
+    que apunta a la función (`x = self.helper; x()`), o un helper envuelto en un decorador. (Lo
+    que SÍ reconoce, y no es un límite: guardar la respuesta en el atributo de CUALQUIER objeto,
+    no solo `self` -- `caja.resp = ...` se cuenta igual, porque `_nombre_asignable` acepta
+    cualquier `ast.Attribute` sobre un `ast.Name`, no solo `self.algo`.) Es un límite escrito, no
+    un hueco escondido."""
     funciones = []
     for rel in _ficheros_py(raiz):
         try:

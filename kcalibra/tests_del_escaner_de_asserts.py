@@ -11,14 +11,17 @@ test (R7): si se escribieran dentro del repo, el propio escáner los contaría c
 y fallaría él solo.
 """
 
+import io
 import os
 import shutil
+import subprocess
 import tempfile
+import unittest
 
 from django.conf import settings
 from django.test import SimpleTestCase
 
-from kcalibra.tests_asserts_de_estado import sitios_de_hoy
+from kcalibra.tests_asserts_de_estado import descubrir_helpers, sitios_de_hoy
 
 
 def _escribir(directorio, nombre, contenido):
@@ -235,6 +238,95 @@ class SeisFormasQueElEscanerDebeVerTests(SimpleTestCase):
         self.assertNotIn(("test_dos_saltos_sin_follow", "respuesta"), self._sitios())
 
 
+class ElDocstringDeDescubrirHelpersDiceLaVerdadTests(SimpleTestCase):
+    """Hueco 2 de la revisión (R6): el docstring de `descubrir_helpers` decía una mentira (que
+    NO reconoce una respuesta guardada en el atributo de un objeto que no sea `self`) y omitía
+    el límite real (el desempaquetado de tupla). Estos dos tests fijan lo que el docstring dice
+    AHORA, uno por afirmación."""
+
+    databases = set()
+
+    def setUp(self):
+        self.directorio = tempfile.mkdtemp(prefix="kcalibra_escaner_037_")
+        self.addCleanup(shutil.rmtree, self.directorio, ignore_errors=True)
+
+    def test_guardado_en_el_atributo_de_otro_objeto_que_no_es_self_si_se_reconoce(self):
+        _escribir(
+            self.directorio,
+            "tests_otro_objeto.py",
+            (
+                "class Prueba:\n"
+                "    def ayuda_en_caja(self, caja):\n"
+                '        caja.resp = self.client.post("/algo/", {}, follow=True)\n'
+                "        return caja.resp\n"
+                "\n"
+                "    def test_guardado_en_otro_objeto(self):\n"
+                "        respuesta = self.ayuda_en_caja(self.objeto)\n"
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertIn(("test_guardado_en_otro_objeto", "respuesta"), sitios)
+
+    def test_el_desempaquetado_de_tupla_sigue_siendo_ciego(self):
+        """La única forma de escribir la forma 4 que puede EJECUTARSE de verdad
+        (`respuesta, extra = self.ayuda_tupla()`): límite escrito, no arreglado."""
+        _escribir(
+            self.directorio,
+            "tests_desempaquetado.py",
+            (
+                "class Prueba:\n"
+                "    def ayuda_tupla_desempaquetada(self):\n"
+                '        return self.client.post("/algo/", {}, follow=True), "extra"\n'
+                "\n"
+                "    def test_desempaquetado_de_tupla(self):\n"
+                "        respuesta, extra = self.ayuda_tupla_desempaquetada()\n"
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertNotIn(("test_desempaquetado_de_tupla", "respuesta"), sitios)
+
+
+class LaOrmConKwargsNoEsUnaLlamadaDeClienteTests(SimpleTestCase):
+    """Hueco 1 de la revisión (R2): `_es_llamada_de_cliente` solo miraba el nombre del método
+    (`get`/`post`/...) sin mirar el RECEPTOR, así que `Persona.objects.get(**filtros)` -- el
+    idioma más común de la ORM de Django, sin cliente ni `follow` por ninguna parte -- se
+    contaba como sitio, y de paso su helper contaminaba por nombre la FASE 2 en todo el repo.
+    Fixture íntegro del revisor, pegado en `hallazgos.md`."""
+
+    databases = set()
+
+    def setUp(self):
+        self.directorio = tempfile.mkdtemp(prefix="kcalibra_escaner_037_")
+        self.addCleanup(shutil.rmtree, self.directorio, ignore_errors=True)
+
+    def _escribir_fixture_del_revisor(self):
+        _escribir(
+            self.directorio,
+            "tests_falso_positivo.py",
+            (
+                "def buscar_persona(**filtros):\n"
+                "    return Persona.objects.get(**filtros)      # ni cliente, ni follow\n"
+                "\n"
+                "class PruebaDeAlgo:\n"
+                "    def test_la_ficha_se_pinta(self):\n"
+                "        respuesta = buscar_persona(id=1)\n"
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+
+    def test_el_kwargs_de_la_orm_no_se_cuenta_como_sitio(self):
+        self._escribir_fixture_del_revisor()
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertNotIn(("test_la_ficha_se_pinta", "respuesta"), sitios)
+
+    def test_buscar_persona_no_contamina_el_diccionario_de_helpers(self):
+        self._escribir_fixture_del_revisor()
+        helpers = descubrir_helpers(self.directorio)
+        self.assertNotIn("buscar_persona", helpers)
+
+
 class CarpetaConPyvenvCfgSeSaltaTests(SimpleTestCase):
     """R4: la marca canónica de un entorno virtual es el `pyvenv.cfg`, se llame la carpeta como
     se llame -- no una lista de nombres adivinados."""
@@ -273,28 +365,80 @@ class FicheroIlegibleNoTumbaElEscaneoTests(SimpleTestCase):
         self.directorio = tempfile.mkdtemp(prefix="kcalibra_escaner_037_")
         self.addCleanup(shutil.rmtree, self.directorio, ignore_errors=True)
 
+    def _escribir_sitio_bueno(self):
+        _escribir(
+            self.directorio,
+            "bueno.py",
+            (
+                "class Prueba:\n"
+                "    def test_sitio_bueno(self):\n"
+                '        respuesta = self.client.post("/algo/", {}, follow=True)\n'
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+
     def test_sintaxis_rota_no_tumba_el_escaneo(self):
+        """No basta con que no lance: junto al fichero roto va uno bueno, y ese SÍ tiene que
+        aparecer -- si no, "no encuentro nada" (por ejemplo, un escaneo que devolviera lista
+        vacía) pasaría este test igual de verde (015)."""
         _escribir(self.directorio, "roto.py", "def test_algo(self:\n    pasa\n")
-        sitios_de_hoy(self.directorio)  # no debe lanzar excepción
+        self._escribir_sitio_bueno()
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertIn(("test_sitio_bueno", "respuesta"), sitios)
 
     def test_bytes_no_utf8_no_tumban_el_escaneo(self):
         ruta = os.path.join(self.directorio, "binario.py")
         with open(ruta, "wb") as f:
             f.write(b"\xff\xfe\x00\x01 esto no es utf-8 valido \x80\x81")
-        sitios_de_hoy(self.directorio)  # no debe lanzar excepción
+        self._escribir_sitio_bueno()
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertIn(("test_sitio_bueno", "respuesta"), sitios)
 
 
 class ElRepoNoCambiaAlCorrerEstaSuiteTests(SimpleTestCase):
-    """R7: los fixtures de este fichero nunca se escriben dentro del repo -- si se escribieran,
-    el propio guardián de la unidad 035/037 los contaría como sitios nuevos y fallaría. Aquí se
-    demuestra que cualquier directorio temporal que usa esta suite cae FUERA de `BASE_DIR`."""
+    """R7: hueco 3 de la revisión. El test anterior (`assertNotEqual(commonpath(...), raiz)`)
+    medía una propiedad de `tempfile`, no de esta suite: pasaría igual el día que un fixture se
+    escribiera de verdad dentro del repo. R7 pide el observable literal del contrato --
+    `git status` sin cambios TRAS CORRER la suite del escáner-- así que aquí se corren de
+    verdad, en proceso, las clases de este fichero que escriben fixtures (todas menos esta
+    misma, para no recursar), y se compara `git status --porcelain` de antes y de después."""
 
     databases = set()
 
-    def test_los_fixtures_temporales_quedan_fuera_del_repo(self):
+    def _git_status_porcelain(self, raiz):
+        return subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=raiz,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_correr_las_clases_que_escriben_fixtures_deja_el_repo_igual(self):
         raiz = str(settings.BASE_DIR)
-        directorio = tempfile.mkdtemp(prefix="kcalibra_escaner_037_")
-        try:
-            self.assertNotEqual(os.path.commonpath([directorio, raiz]), raiz)
-        finally:
-            shutil.rmtree(directorio, ignore_errors=True)
+        antes = self._git_status_porcelain(raiz)
+
+        cargador = unittest.TestLoader()
+        suite = unittest.TestSuite()
+        for clase in (
+            SeisFormasQueElEscanerDebeVerTests,
+            ElDocstringDeDescubrirHelpersDiceLaVerdadTests,
+            LaOrmConKwargsNoEsUnaLlamadaDeClienteTests,
+            CarpetaConPyvenvCfgSeSaltaTests,
+            FicheroIlegibleNoTumbaElEscaneoTests,
+        ):
+            suite.addTests(cargador.loadTestsFromTestCase(clase))
+        resultado = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+        self.assertTrue(
+            resultado.wasSuccessful(),
+            f"las clases de fixtures de esta suite deberían pasar limpiamente: "
+            f"{len(resultado.failures)} fallo(s), {len(resultado.errors)} error(es)",
+        )
+
+        despues = self._git_status_porcelain(raiz)
+        self.assertEqual(
+            antes,
+            despues,
+            "el repo cambió tras correr la suite del escáner: algún fixture se escribió dentro "
+            "de BASE_DIR en vez de en un temporal fuera del árbol",
+        )
