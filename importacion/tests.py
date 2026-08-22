@@ -870,6 +870,10 @@ class Bug041_ElComandoEnteroFallaEnCristianoTests(BaseImportacionTests):
                 stdout=io.StringIO(),
             )
         self.assertIn("No se pudo leer", str(cm.exception))
+        # H5 de la tercera vuelta: esta coletilla es la MITAD del mensaje que ve el usuario y
+        # el commit anterior decía afirmarla sin hacerlo — la sustitución de texto no encontró
+        # su ancla y falló EN SILENCIO. Misma familia que el `|| true`.
+        self.assertIn("No se ha movido nada", str(cm.exception))
 
 
 class R8_NiSecretosNiDatosRealesTests(BaseImportacionTests):
