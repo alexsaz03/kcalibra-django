@@ -1,0 +1,3 @@
+# Herramientas de CI (unidad 039), versiones fijadas como el resto.
+ruff==0.16.4
+pip-audit==2.10.1

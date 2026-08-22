@@ -1,0 +1,48 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: kcalibra
+          POSTGRES_PASSWORD: kcalibra
+          POSTGRES_DB: kcalibra_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kcalibra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DJANGO_SECRET_KEY: valor-de-pega-solo-para-este-ci-nunca-un-secreto-real-de-verdad
+      DB_NAME: kcalibra_ci
+      DB_USER: kcalibra
+      DB_PASSWORD: kcalibra
+      DB_HOST: localhost
+      DB_PORT: 5432
+
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Correr la suite completa
+        run: scripts/ci/full-suite

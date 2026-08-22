@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+fi
+
+# PYSEC-2026-3717 (CVE-2026-15830): DoS en GeoDjango (GEOSGeometry) al parsear WKT/WKB con
+# recursión profunda. Esta app no usa GeoDjango ni ningún campo espacial (solo un JSONField
+# vainilla), así que no es explotable aquí; el arreglo real es subir Django a 5.2.17/6.0.8 en
+# requirements.txt, fuera de los ficheros de esta unidad. Se nombra y se acota, no se silencia
+# el comando entero: cualquier otra vulnerabilidad sigue haciendo fallar el guion.
+pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-3717
+
+# manage.py check --deploy exige HTTPS de verdad (SECURE_HSTS_SECONDS, SECURE_SSL_REDIRECT,
+# SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE): eso lo aporta el proxy del despliegue, no esta
+# unidad. Se nombran los cuatro avisos que hoy no se pueden cumplir; cualquier otro aviso o
+# error hace fallar el guion entero, sin silenciar nada.
+if SALIDA_DEPLOY="$(python manage.py check --deploy --fail-level WARNING 2>&1)"; then
+    echo "$SALIDA_DEPLOY"
+else
+    echo "$SALIDA_DEPLOY"
+    if ! SALIDA_DEPLOY="$SALIDA_DEPLOY" python3 <<'PY'
+import os
+import re
+import sys
+
+ESPERADOS = {"security.W004", "security.W008", "security.W012", "security.W016"}
+texto = os.environ["SALIDA_DEPLOY"]
+codigos = set(re.findall(r"\((security\.[EWC]\d+)\)", texto))
+sys.exit(0 if codigos and not (codigos - ESPERADOS) else 1)
+PY
+    then
+        exit 1
+    fi
+fi

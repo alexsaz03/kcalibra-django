@@ -263,6 +263,24 @@ de hoy.
 | `assets/tailwind/input.css` | el fichero de entrada de Tailwind | de aquí sale `static/css/tailwind.css` al compilar (paso 1.6). Incluye los estilos base de los formularios (`@layer base`) para que cualquier campo de `allauth` salga con aspecto consistente sin tocarlo campo a campo |
 | `static/` | CSS generado + HTMX y Alpine vendidos | todo lo que Tailwind necesita servir sin depender de Node ni de una CDN |
 
+## 5. El CI (unidad 039): los mismos guiones en local y en GitHub
+
+Tres guiones en `scripts/ci/`, shell con `set -euo pipefail`, sin nada específico de GitHub
+dentro: lo que corre el CI es exactamente lo que puedes correr tú, con el entorno virtual del
+paso 1 ya activado.
+
+```bash
+scripts/ci/full-suite   # python manage.py test --noinput --parallel 4 — la red que bloquea el merge
+scripts/ci/lint         # ruff (solo E9/F63/F7/F82: errores de verdad, no estilo) + manage.py check
+scripts/ci/security     # pip-audit sobre requirements.txt + manage.py check --deploy
+```
+
+`scripts/ci/security` necesita `pip install -r requirements-dev.txt` además de
+`requirements.txt` (trae `ruff` y `pip-audit`, no usados por la app en producción). En GitHub,
+`.github/workflows/tests.yml` corre `full-suite` en cada pull request y en `main` (bloqueante);
+`.github/workflows/quality-security.yml` corre `lint` y `security` en pull request, en `main` y
+una vez por semana (avisan, todavía no bloquean — ver ADR-028).
+
 ## Variables de entorno obligatorias
 
 Si falta cualquiera de estas, la app **se niega a arrancar** y dice cuál falta (no arranca con
