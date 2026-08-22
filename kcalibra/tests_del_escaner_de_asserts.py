@@ -239,10 +239,14 @@ class SeisFormasQueElEscanerDebeVerTests(SimpleTestCase):
 
 
 class ElDocstringDeDescubrirHelpersDiceLaVerdadTests(SimpleTestCase):
-    """Hueco 2 de la revisión (R6): el docstring de `descubrir_helpers` decía una mentira (que
-    NO reconoce una respuesta guardada en el atributo de un objeto que no sea `self`) y omitía
-    el límite real (el desempaquetado de tupla). Estos dos tests fijan lo que el docstring dice
-    AHORA, uno por afirmación."""
+    """Hueco 2 de la revisión (R6), primera y segunda vuelta. El docstring de `descubrir_helpers`
+    ha dicho, en distintos momentos, cosas que no eran ciertas: que NO reconoce una respuesta
+    guardada en el atributo de un objeto que no sea `self` (falso, primera vuelta); que SÍ
+    reconoce `self.<algo>.<verbo>(..., follow=True)` para cualquier `<algo>` (falso desde
+    `bcb12a7`, segunda vuelta: el receptor tiene que ser `self.client`/algo que termine en
+    `.client`/una variable `client`); y que NO reconoce un helper envuelto en un decorador
+    (falso siempre: `descubrir_helpers` no mira el `decorator_list`). Cada test de esta clase
+    fija UNA afirmación del docstring de hoy, con el fixture que la comprueba."""
 
     databases = set()
 
@@ -286,6 +290,49 @@ class ElDocstringDeDescubrirHelpersDiceLaVerdadTests(SimpleTestCase):
         )
         sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
         self.assertNotIn(("test_desempaquetado_de_tupla", "respuesta"), sitios)
+
+    def test_un_receptor_que_no_es_self_punto_client_no_se_cuenta(self):
+        """La forma ciega nueva que nació con el arreglo del hueco 1 (R2, `_es_receptor_de_
+        cliente`): `self.navegador` no termina en `.client`, así que aunque sea idéntico a
+        `self.client.post(..., follow=True)` en todo lo demás, no se cuenta."""
+        _escribir(
+            self.directorio,
+            "tests_receptor_no_client.py",
+            (
+                "class Prueba:\n"
+                "    def ayuda_navegador(self):\n"
+                '        return self.navegador.post("/algo/", {}, follow=True)\n'
+                "\n"
+                "    def test_receptor_no_client(self):\n"
+                "        respuesta = self.ayuda_navegador()\n"
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertNotIn(("test_receptor_no_client", "respuesta"), sitios)
+
+    def test_un_helper_envuelto_en_decorador_si_se_reconoce(self):
+        """`descubrir_helpers` recorre los `FunctionDef` sin mirar el `decorator_list`: un
+        decorador no le tapa el helper de debajo."""
+        _escribir(
+            self.directorio,
+            "tests_helper_decorado.py",
+            (
+                "def mi_decorador(f):\n"
+                "    return f\n"
+                "\n"
+                "class Prueba:\n"
+                "    @mi_decorador\n"
+                "    def ayuda_decorada(self):\n"
+                '        return self.client.post("/algo/", {}, follow=True)\n'
+                "\n"
+                "    def test_helper_decorado(self):\n"
+                "        respuesta = self.ayuda_decorada()\n"
+                "        self.assertEqual(respuesta.status_code, 200)\n"
+            ),
+        )
+        sitios = {(test, variable) for (_f, _l, test, variable) in sitios_de_hoy(self.directorio)}
+        self.assertIn(("test_helper_decorado", "respuesta"), sitios)
 
 
 class LaOrmConKwargsNoEsUnaLlamadaDeClienteTests(SimpleTestCase):

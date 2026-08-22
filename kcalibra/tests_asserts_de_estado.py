@@ -211,11 +211,13 @@ def _arbol_de(rel, raiz):
 def descubrir_helpers(raiz):
     """FASE 1 — encuentra "helpers": toda función NO-test (su nombre no empieza por `test_`, y
     no es `setUp`/`setUpClass`/`setUpTestData` — esos no DEVUELVEN nada, no pueden alimentar un
-    assert) que hace una llamada tipo `self.client.<verbo>(..., follow=True)` o
-    `self.<algo>.<verbo>(..., follow=True)` (ver `_tiene_follow_true` para las formas de
-    escribir ese `follow=True`) Y la DEVUELVE. Por COMPORTAMIENTO, no por el nombre de la
-    función: así un helper nuevo no se pierde por no coincidir con un patrón de nombre escrito
-    de memoria (21ª cara).
+    assert) que hace una llamada tipo `self.client.<verbo>(..., follow=True)` -- el receptor
+    tiene que ser `self.client`, cualquier cadena de atributos que termine en `.client`, o una
+    variable local llamada `client` a secas (ver `_es_receptor_de_cliente`); un `self.<algo>`
+    cualquiera YA NO cuenta, aunque llame a `.get`/`.post`/... con `follow=True` (ver
+    `_tiene_follow_true` para las formas de escribir ese `follow=True`) Y la DEVUELVE. Por
+    COMPORTAMIENTO, no por el nombre de la función: así un helper nuevo no se pierde por no
+    coincidir con un patrón de nombre escrito de memoria (21ª cara).
 
     Lo que reconoce como "la devuelve", nombrado uno a uno (las seis formas de la unidad 037,
     medidas contra el repo real antes de escribirlas): la llamada directa, una variable
@@ -233,11 +235,18 @@ def descubrir_helpers(raiz):
     `respuesta = self.ayuda_tupla()` sin desempaquetar deja `respuesta` como una tupla y
     `respuesta.status_code` reventaría con `AttributeError` antes de llegar a ningún assert --,
     un helper guardado en una lista o un diccionario, una indirección a través de una variable
-    que apunta a la función (`x = self.helper; x()`), o un helper envuelto en un decorador. (Lo
-    que SÍ reconoce, y no es un límite: guardar la respuesta en el atributo de CUALQUIER objeto,
-    no solo `self` -- `caja.resp = ...` se cuenta igual, porque `_nombre_asignable` acepta
-    cualquier `ast.Attribute` sobre un `ast.Name`, no solo `self.algo`.) Es un límite escrito, no
-    un hueco escondido."""
+    que apunta a la función (`x = self.helper; x()`), o un receptor de la llamada de cliente que
+    no sea `self.client`, una cadena de atributos que termine en `.client`, o una variable local
+    `client` a secas -- `self.navegador.post(..., follow=True)` NO se cuenta, aunque haga
+    exactamente la misma llamada que `self.client.post(...)` (ver `_es_receptor_de_cliente`);
+    es la forma ciega que nació con el arreglo del hueco 1 de la unidad 037 (R2: estrechar el
+    receptor para que `Persona.objects.get(**filtros)` dejara de contar se llevó por delante
+    también los alias de cliente que no siguen ese patrón). (Lo que SÍ reconoce, y no es un
+    límite: guardar la respuesta en el atributo de CUALQUIER objeto, no solo `self` --
+    `caja.resp = ...` se cuenta igual, porque `_nombre_asignable` acepta cualquier
+    `ast.Attribute` sobre un `ast.Name`, no solo `self.algo`; y un helper envuelto en un
+    decorador -- `descubrir_helpers` recorre los `FunctionDef` sin mirar el `decorator_list`, así
+    que el decorador no le tapa nada.) Es un límite escrito, no un hueco escondido."""
     funciones = []
     for rel in _ficheros_py(raiz):
         try:
