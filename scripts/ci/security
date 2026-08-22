@@ -27,7 +27,7 @@ import sys
 
 ESPERADOS = {"security.W004", "security.W008", "security.W012", "security.W016"}
 texto = os.environ["SALIDA_DEPLOY"]
-codigos = set(re.findall(r"\((security\.[EWC]\d+)\)", texto))
+codigos = set(re.findall(r"\(([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*\.[EWC]\d+)\)", texto))
 sys.exit(0 if codigos and not (codigos - ESPERADOS) else 1)
 PY
     then
