@@ -372,10 +372,12 @@ class R4_ElTituloYElSubtituloHablanSegunQuienMiraTests(_ConAlejandroMartaEuridic
         respuesta = self._como("euridice@example.com").get(f"/cierres/{self.alejandro.id}/")
         zona_titulo = self._zona_titulo(respuesta)
         zona_h1 = self._zona_h1(respuesta)
+        contenido = self._normalizado(respuesta)
         self.assertIn("Ver los días cerrados de Alejandro", zona_titulo)
         self.assertNotIn("Cerrar un día de Alejandro", zona_titulo)
         self.assertIn("Ver los días cerrados de Alejandro", zona_h1)
         self.assertNotIn("Cerrar un día de Alejandro", zona_h1)
+        self.assertNotIn("Cerrar un día de Alejandro", contenido)
 
     def test_quien_solo_mira_no_ve_la_frase_si_ya_lo_habias_cerrado(self):
         """R4, la incoherencia concreta del contrato: quien solo mira no cerró nada, así que
@@ -434,8 +436,10 @@ class R4_ElTituloYElSubtituloHablanSegunQuienMiraTests(_ConAlejandroMartaEuridic
         self.assertContains(respuesta_progreso, "Ver los días cerrados de Alejandro →")
         respuesta_cierres = cliente.get(f"/cierres/{self.alejandro.id}/")
         zona_titulo = self._zona_titulo(respuesta_cierres)
+        contenido = self._normalizado(respuesta_cierres)
         self.assertIn("Ver los días cerrados de Alejandro", zona_titulo)
         self.assertNotIn("Cerrar un día de Alejandro", zona_titulo)
+        self.assertNotIn("Cerrar un día de Alejandro", contenido)
 
     def test_r5_el_titulo_coincide_con_el_enlace_para_uno_mismo(self):
         """R5, mismo criterio que arriba, estado *propio*: el enlace de Progreso y el título
