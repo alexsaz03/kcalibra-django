@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+fi
+
+ruff check --select E9,F63,F7,F82 .
+python manage.py check
