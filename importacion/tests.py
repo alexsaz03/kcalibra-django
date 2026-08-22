@@ -778,6 +778,81 @@ class Bug041_ElComandoEnteroFallaEnCristianoTests(BaseImportacionTests):
         self.assertIn("No se pudo leer", mensaje)
         self.assertIn("No se ha escrito nada", mensaje)
 
+    def test_la_pista_de_la_columna_solo_sale_cuando_el_fallo_es_de_una_columna(self):
+        """H3 de la revisión: el arreglo del mensaje no tenía NI UN test que lo fijara.
+
+        Sin esto, mañana alguien vuelve a poner la pista incondicional y los 87 tests siguen en
+        verde. La medida discriminante ya existía —la hizo la revisión—: con una base bloqueada
+        la pista era falsa, y con la columna que falta es la buena.
+        """
+        _crear_sqlite_de_node(self.ruta_db)
+        conexion = origen.abrir(self.ruta_db)
+        conexion.close()  # cualquier `sqlite3.Error` que NO hable de columnas
+        with self.assertRaises(origen.OrigenNodeInvalido) as cm:
+            origen.entrenos(conexion)
+        self.assertNotIn("versión anterior", str(cm.exception))
+
+        # Otra ruta: la de arriba ya tiene las tablas creadas y `_base_con_el_esquema...`
+        # las volvería a crear.
+        self.ruta_db = os.path.join(self._tmp.name, "node-vieja.db")
+        self._base_con_el_esquema_ANTERIOR_al_bug_033()
+        conexion_vieja = origen.abrir(self.ruta_db)
+        self.addCleanup(conexion_vieja.close)
+        with self.assertRaises(origen.OrigenNodeInvalido) as cm:
+            origen.entrenos(conexion_vieja)
+        self.assertIn("versión anterior", str(cm.exception))
+
+    def test_si_el_fallo_llega_con_la_escritura_empezada_no_queda_nada_escrito(self):
+        """H4 de la revisión: **el camino que más promete es el que no se probaba.**
+
+        Los otros tests usan una base que revienta ANTES de abrir la transacción, así que su
+        "No se ha escrito nada" es trivial. Aquí el fallo llega con la escritura ya empezada
+        —`recetas` sin `tipo_comida`, que se lee después de la despensa—, y entonces esa frase
+        deja de ser una obviedad y pasa a ser una PROMESA. Hoy se cumple; sin este test, nada
+        la sostiene: mover el `except` o anidar una transacción la convertiría en mentira con
+        la suite en verde.
+        """
+        conexion = sqlite3.connect(self.ruta_db)
+        try:
+            conexion.execute(
+                "CREATE TABLE productos_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, cantidad REAL NOT NULL, "
+                "unidad TEXT NOT NULL, categoria TEXT NOT NULL)"
+            )
+            conexion.execute(
+                "INSERT INTO productos_stock (usuario_id, nombre, cantidad, unidad, categoria) "
+                "VALUES (1, 'Arroz', 1, 'kg', 'cereal_pan')"
+            )
+            conexion.execute(
+                "CREATE TABLE entrenos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, tipo TEXT NOT NULL, "
+                "duracion_min INTEGER NOT NULL, intensidad TEXT NOT NULL, "
+                "calorias INTEGER NOT NULL, origen TEXT NOT NULL DEFAULT 'manual', "
+                "strava_id TEXT, miembro_id INTEGER)"
+            )
+            # `recetas` SIN `tipo_comida`: se lee DESPUÉS de la despensa, ya dentro de la
+            # transacción de escritura.
+            conexion.execute(
+                "CREATE TABLE recetas (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, raciones_base INTEGER, "
+                "ingredientes TEXT, preparacion TEXT)"
+            )
+            conexion.execute(
+                "CREATE TABLE pesos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, peso_kg REAL NOT NULL, "
+                "grasa_pct REAL, cintura_cm REAL, miembro_id INTEGER)"
+            )
+            conexion.commit()
+        finally:
+            conexion.close()
+
+        with self.assertRaises(CommandError) as cm:
+            self._importar()
+        self.assertIn("No se ha escrito nada", str(cm.exception))
+        # La promesa, comprobada en la BASE y no en el mensaje.
+        self.assertEqual(ProductoDespensa.objects.count(), 0)
+        self.assertEqual(Entreno.objects.filter(persona=self.usuario).count(), 0)
+
     def test_mover_filas_con_una_base_del_esquema_viejo_tambien_da_un_mensaje(self):
         """El gemelo, en el OTRO comando: la misma red tenía el mismo agujero en los dos."""
         self._base_con_el_esquema_ANTERIOR_al_bug_033()
