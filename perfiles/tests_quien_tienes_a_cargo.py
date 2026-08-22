@@ -134,8 +134,16 @@ class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridi
         # La zona acotada (17ª cara: un mensaje de otra petición cuela el texto que buscabas).
         subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
         self.assertIn("Apunta el peso de Marta", subtitulo)
+        # Ancla POSITIVA de la frase en disputa (H1 de la revisión): sin esto, un "arreglo"
+        # que borrase la segunda frase entera también pasaría el test.
+        self.assertIn("su báscula", subtitulo)
         self.assertNotIn("te las da", subtitulo)
         self.assertNotIn("tu báscula", subtitulo)
+        # H2 de la revisión: el acotado dice QUÉ zona falla, pero da falso VERDE si mañana el
+        # subtítulo se parte en dos <p> y el "te" se queda fuera de la zona recortada. El
+        # negativo sobre la PÁGINA ENTERA es lo que impide que el bug vuelva por otro sitio —
+        # los dos se necesitan, igual que en la unidad 038.
+        self.assertNotIn("báscula te las da", contenido)
 
     def test_la_dueña_sigue_leyendo_su_texto_de_siempre_en_segunda_persona(self):
         """El negativo del negativo: quitar el tuteo de la rama del responsable no puede
@@ -148,6 +156,10 @@ class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridi
         subtitulo = contenido.split("</h1>", 1)[1].split("</p>", 1)[0]
         self.assertIn("Apunta tu peso", subtitulo)
         self.assertIn("tu báscula", subtitulo)
+        # H1 de la revisión: ESTA es la palabra que el gemelo existe para proteger. Sin ella,
+        # el arreglo podía desbordarse y quitarle el "te" también a la dueña —donde SÍ es
+        # correcto— sin que nada se quejara. Medido: la suite se quedaba verde.
+        self.assertIn("te las da", subtitulo)
 
 
 class R4_LaPuertaEsSoloParaElResponsableTests(_ConAlejandroMartaYEuridice):
