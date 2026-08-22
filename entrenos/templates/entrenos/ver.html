@@ -30,9 +30,13 @@
     <p class="mt-1 text-sm text-slate-500">
       {% if es_propio %}
         Apunta lo que has entrenado y cuenta en las calorías que te tocan hoy.
-      {% else %}
+      {% elif puede_editar %}
         Apunta lo que entrenó {{ persona_objetivo.nombre }} y cuenta en las calorías que le
         tocan hoy.
+      {% else %}
+        Solo lectura: el resto del hogar ve los entrenos de {{ persona_objetivo.nombre }}, pero
+        solo {{ persona_objetivo.nombre }} (o su responsable) puede apuntarlos, corregirlos o
+        borrarlos.
       {% endif %}
     </p>
 
@@ -129,6 +133,9 @@
           {% if es_propio %}
             Todavía no has apuntado ningún entreno. En cuanto apuntes el primero, aparecerá aquí
             y sus calorías se sumarán a lo que te toca comer hoy.
+          {% elif puede_editar %}
+            {{ persona_objetivo.nombre }} todavía no tiene ningún entreno apuntado. Apúntale el
+            primero aquí abajo.
           {% else %}
             {{ persona_objetivo.nombre }} todavía no tiene ningún entreno apuntado.
           {% endif %}

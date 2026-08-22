@@ -2,7 +2,7 @@
 {% load partials %}
 
 {% block titulo %}
-  {% if es_propio %}Cerrar un día{% else %}Cerrar un día de {{ persona_objetivo.nombre }}{% endif %}
+  {% if es_propio %}Cerrar un día{% elif puede_editar %}Cerrar un día de {{ persona_objetivo.nombre }}{% else %}Ver los días cerrados de {{ persona_objetivo.nombre }}{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -24,15 +24,18 @@
   {% partialdef historico_de_cierres %}
   <div id="historico-de-cierres">
     <h1 class="text-2xl font-bold text-slate-900">
-      {% if es_propio %}Cerrar un día{% else %}Cerrar un día de {{ persona_objetivo.nombre }}{% endif %}
+      {% if es_propio %}Cerrar un día{% elif puede_editar %}Cerrar un día de {{ persona_objetivo.nombre }}{% else %}Ver los días cerrados de {{ persona_objetivo.nombre }}{% endif %}
     </h1>
     <p class="mt-1 text-sm text-slate-500">
       {% if es_propio %}
         Di si seguiste el plan de un día, también uno pasado. Si ya lo habías cerrado, esto lo
         sustituye.
-      {% else %}
+      {% elif puede_editar %}
         Di si {{ persona_objetivo.nombre }} siguió el plan de un día, también uno pasado. Si
         ya lo habías cerrado, esto lo sustituye.
+      {% else %}
+        Solo lectura: el resto del hogar ve los días cerrados de {{ persona_objetivo.nombre }},
+        pero solo {{ persona_objetivo.nombre }} (o su responsable) puede cerrarlos.
       {% endif %}
     </p>
 

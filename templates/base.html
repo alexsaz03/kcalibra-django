@@ -33,7 +33,7 @@
           <a href="{% url 'entrenos:ver_mios' %}" class="font-medium text-emerald-700 hover:underline">Entrenos</a>
           <a href="{% url 'despensa:ver' %}" class="font-medium text-emerald-700 hover:underline">Despensa</a>
           <a href="{% url 'recetas:lista' %}" class="font-medium text-emerald-700 hover:underline">Recetas</a>
-          <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">Mi hogar</a>
+          <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">El hogar</a>
           <form method="post" action="{% url 'account_logout' %}" class="inline">
             {% csrf_token %}
             <button type="submit" class="font-medium text-slate-600 hover:text-emerald-700 hover:underline">

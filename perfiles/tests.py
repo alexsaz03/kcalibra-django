@@ -1549,3 +1549,51 @@ class R11_EtiquetasDeActividadDelDiaADiaTests(PruebaConRegistroAbierto):
         respuesta = self.client.get("/cuentas/signup/")
         contenido = respuesta.content.decode()
         self.assertNotIn("días/semana", contenido)
+
+
+# ---------------------------------------------------------------------------------------- #
+# Unidad 038, R6 — el label de `no_le_gusta` (`perfiles/forms.py`) ya no tutea a quien rellena
+# la ficha de OTRA persona ("Lo que no TE gusta"), y sigue siendo correcto rellenando la suya.
+# ---------------------------------------------------------------------------------------- #
+
+
+class R6_ElLabelDeNoLeGustaEsNeutroTests(PruebaConRegistroAbierto):
+    DATOS_DE_MARTA_A_CARGO = {
+        "nombre": "Marta", "sexo": "mujer", "fecha_nacimiento": "2015-04-10",
+        "altura_cm": "140", "peso_kg": "35", "actividad": "moderado",
+        "objetivo": "mantener", "ajuste_pct": "", "dieta": "", "alergias": "",
+        "intolerancias": "", "no_le_gusta": "",
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        self.alejandro = Persona.objects.get(usuario__email="alejandro@example.com")
+        self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/", self.DATOS_DE_MARTA_A_CARGO, follow=True
+        )
+        self.marta = Persona.objects.get(nombre="Marta", hogar=self.alejandro.hogar)  # control
+
+    def test_label_neutro_rellenando_la_ficha_de_un_cargo(self):
+        respuesta = self.client.get(f"/perfiles/{self.marta.id}/")
+        self.assertContains(respuesta, "Lo que no le gusta")
+        self.assertNotContains(respuesta, "Lo que no te gusta")
+
+    def test_label_neutro_rellenando_la_ficha_propia(self):
+        respuesta = self.client.get(f"/perfiles/{self.alejandro.id}/")
+        self.assertContains(respuesta, "Lo que no le gusta")
+        self.assertNotContains(respuesta, "Lo que no te gusta")
+
+
+# ---------------------------------------------------------------------------------------- #
+# Unidad 038, R9 — el menú superior (`templates/base.html`) dice "El hogar", no "Mi hogar": es
+# de todos, no de quien mira.
+# ---------------------------------------------------------------------------------------- #
+
+
+class R9_ElMenuDiceElHogarTests(PruebaConRegistroAbierto):
+    def test_el_menu_dice_el_hogar(self):
+        self.registrar_y_verificar("alejandro@example.com", sexo="hombre")
+        respuesta = self.client.get("/perfiles/")
+        self.assertContains(respuesta, ">El hogar<")
+        self.assertNotContains(respuesta, ">Mi hogar<")
