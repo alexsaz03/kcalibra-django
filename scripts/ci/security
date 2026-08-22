@@ -28,7 +28,28 @@ import sys
 ESPERADOS = {"security.W004", "security.W008", "security.W012", "security.W016"}
 texto = os.environ["SALIDA_DEPLOY"]
 codigos = set(re.findall(r"\(([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*\.[EWC]\d+)\)", texto))
-sys.exit(0 if codigos and not (codigos - ESPERADOS) else 1)
+
+# H2 de la 2ª revisión: mirar SOLO los códigos no basta. El `id` es OPCIONAL en Django
+# (`core/checks/messages.py`: `id = "(%s) " % self.id if self.id else ""`), así que un aviso
+# construido sin `id=` se imprime SIN paréntesis y el filtro no ve nada que restar: como los
+# cuatro esperados siempre están, la resta salía vacía y el guion volvía a decir verde con
+# Django diciendo rojo. Era H1 otra vez, por otra puerta.
+#
+# La cura no es un regex más listo: es CUADRAR EL RECUENTO. Django dice cuántos problemas ha
+# encontrado; si ese número no coincide con los esperados que hemos reconocido, hay algo más
+# ahí —lleve código o no— y el guion falla. Y si Django ni siquiera imprime ese recuento
+# (`SystemCheckError` con traza), tampoco se da por bueno.
+recuento = re.search(r"System check identified (\d+) issue", texto)
+esperados_vistos = codigos & ESPERADOS
+inesperados = codigos - ESPERADOS
+
+todo_en_orden = (
+    bool(esperados_vistos)
+    and not inesperados
+    and recuento is not None
+    and int(recuento.group(1)) == len(esperados_vistos)
+)
+sys.exit(0 if todo_en_orden else 1)
 PY
     then
         exit 1
