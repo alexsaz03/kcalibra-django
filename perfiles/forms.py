@@ -45,7 +45,7 @@ class FormularioPerfil(forms.ModelForm):
             "dieta": "Tipo de dieta",
             "alergias": "Alergias",
             "intolerancias": "Intolerancias",
-            "no_le_gusta": "Lo que no te gusta",
+            "no_le_gusta": "Lo que no le gusta",
         }
         help_texts = {
             "ajuste_pct": (

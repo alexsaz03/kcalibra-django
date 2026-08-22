@@ -24,7 +24,7 @@ class FormularioEntreno(forms.ModelForm):
         label="Calorías (si las sabes) — opcional",
         help_text=(
             "Déjalo en blanco y la app las estima con el deporte, la intensidad, los minutos "
-            "y tu peso."
+            "y el peso de esa persona."
         ),
     )
 

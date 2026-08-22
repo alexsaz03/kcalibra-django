@@ -325,3 +325,96 @@ class R4_R6_LoQueLaPantallaOfreceTests(_ConAlejandroMartaEuridiceYCarlos):
     def test_r6_el_responsable_sigue_viendo_el_formulario_de_su_cargo(self):
         respuesta = self.client.get(f"/cierres/{self.marta.id}/")
         self.assertContains(respuesta, "Guardar")
+
+
+# ---------------------------------------------------------------------------------------- #
+# Unidad 038, R4/R5 — título, encabezado y subtítulo de `cierres/cerrar.html` pasan a tres
+# ramas, calcadas del patrón de `perfiles/templates/perfiles/peso.html:30-41`. Para quien solo
+# mira, el título NO promete cerrar nada y desaparece "Si ya lo habías cerrado" (falso para
+# quien no puede cerrar). La rama de solo mirar usa la MISMA redacción que el enlace de
+# `progreso/ver.html` para que R5 se cumpla por construcción.
+# ---------------------------------------------------------------------------------------- #
+
+
+class R4_ElTituloYElSubtituloHablanSegunQuienMiraTests(_ConAlejandroMartaEuridiceYCarlos):
+    """Se compara sobre el HTML con los espacios normalizados: la plantilla parte las frases
+    largas en varias líneas fuente (indentación incluida), y esa indentación sobrevive tal
+    cual al render — comparar contra el texto SIN normalizar rompería por un salto de línea
+    que no tiene nada que ver con lo que el criterio promete."""
+
+    @staticmethod
+    def _normalizado(respuesta):
+        return " ".join(respuesta.content.decode().split())
+
+    def test_quien_solo_mira_ve_un_titulo_que_no_promete_cerrar_nada(self):
+        respuesta = self._como("euridice@example.com").get(f"/cierres/{self.alejandro.id}/")
+        contenido = self._normalizado(respuesta)
+        self.assertIn("Ver los días cerrados de Alejandro", contenido)
+        self.assertNotIn("Cerrar un día de Alejandro", contenido)
+
+    def test_quien_solo_mira_no_ve_la_frase_si_ya_lo_habias_cerrado(self):
+        """R4, la incoherencia concreta del contrato: quien solo mira no cerró nada, así que
+        "si ya lo habías cerrado" es falso para ella."""
+        respuesta = self._como("euridice@example.com").get(f"/cierres/{self.alejandro.id}/")
+        contenido = self._normalizado(respuesta)
+        self.assertNotIn("Si ya lo habías cerrado", contenido)
+        self.assertIn(
+            "Solo lectura: el resto del hogar ve los días cerrados de Alejandro, pero solo "
+            "Alejandro (o su responsable) puede cerrarlos.",
+            contenido,
+        )
+
+    def test_el_responsable_ve_el_titulo_y_subtitulo_de_cambiar_nombrando_a_su_cargo(self):
+        respuesta = self.client.get(f"/cierres/{self.marta.id}/")
+        contenido = self._normalizado(respuesta)
+        self.assertIn("Cerrar un día de Marta", contenido)
+        self.assertIn(
+            "Di si Marta siguió el plan de un día, también uno pasado. Si ya lo habías "
+            "cerrado, esto lo sustituye.",
+            contenido,
+        )
+        self.assertNotIn("Ver los días cerrados de Marta", contenido)
+
+    def test_uno_mismo_sigue_viendo_el_texto_de_siempre(self):
+        respuesta = self.client.get(f"/cierres/{self.alejandro.id}/")
+        contenido = self._normalizado(respuesta)
+        self.assertIn(
+            "Di si seguiste el plan de un día, también uno pasado. Si ya lo habías cerrado, "
+            "esto lo sustituye.",
+            contenido,
+        )
+        self.assertNotIn("Ver los días cerrados de Alejandro", contenido)
+        self.assertNotIn("Solo lectura", contenido)
+
+    def test_r5_el_titulo_coincide_con_el_enlace_que_llevo_hasta_aqui(self):
+        """R5 — quien llega desde Progreso pulsando "Ver los días cerrados de Bruno" aterriza
+        en una pantalla cuyo título dice LO MISMO que el enlace que pulsó."""
+        cliente = self._como("euridice@example.com")
+        respuesta_progreso = cliente.get(f"/progreso/{self.alejandro.id}/")
+        self.assertContains(respuesta_progreso, "Ver los días cerrados de Alejandro →")
+        respuesta_cierres = cliente.get(f"/cierres/{self.alejandro.id}/")
+        contenido = self._normalizado(respuesta_cierres)
+        self.assertIn("Ver los días cerrados de Alejandro", contenido)
+        self.assertNotIn("Cerrar un día de Alejandro", contenido)
+
+
+# ---------------------------------------------------------------------------------------- #
+# Unidad 038, R6 — los labels de `FormularioCierre` (`cierres/forms.py`) ya no tutean a quien
+# rellena lo de otro, y siguen siendo correctos rellenando lo propio.
+# ---------------------------------------------------------------------------------------- #
+
+
+class R6_LosLabelsDelFormularioSonNeutrosTests(_ConAlejandroMartaEuridiceYCarlos):
+    def test_labels_neutros_rellenando_lo_propio(self):
+        respuesta = self.client.get(f"/cierres/{self.alejandro.id}/")
+        self.assertContains(respuesta, "¿Siguió el plan?")
+        self.assertContains(respuesta, "Calorías comidas de verdad")
+        self.assertNotContains(respuesta, "¿Lo seguiste?")
+        self.assertNotContains(respuesta, "Calorías que comiste de verdad")
+
+    def test_labels_neutros_rellenando_lo_de_un_cargo(self):
+        respuesta = self.client.get(f"/cierres/{self.marta.id}/")
+        self.assertContains(respuesta, "¿Siguió el plan?")
+        self.assertContains(respuesta, "Calorías comidas de verdad")
+        self.assertNotContains(respuesta, "¿Lo seguiste?")
+        self.assertNotContains(respuesta, "Calorías que comiste de verdad")

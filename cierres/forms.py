@@ -42,8 +42,8 @@ class FormularioCierre(forms.ModelForm):
         }
         labels = {
             "fecha": "Día",
-            "respuesta": "¿Lo seguiste?",
-            "calorias_comidas": "Calorías que comiste de verdad — opcional",
+            "respuesta": "¿Siguió el plan?",
+            "calorias_comidas": "Calorías comidas de verdad — opcional",
             "nota": "Nota — opcional",
         }
 
