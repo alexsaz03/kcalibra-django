@@ -151,9 +151,19 @@ class Bug042_ElRotuloNoTuteaAQuienRellenaLoDeOtroTests(_ConAlejandroMartaYEuridi
         # persiguen literales: se acota al CUERPO de esta pantalla (el partial que la pinta) y
         # se barre ahí la segunda persona entera. Medido por la revisión: 0 coincidencias
         # legítimas en esta página, y sigue cazando la mutación de la tarjeta.
+        # Se deja de perseguir literales: una lista de frases concretas siempre se queda
+        # corta —la vuelta final midió que la de cuatro dejaba fuera "tus calorías", "tus
+        # últimos 7 días", "Tu histórico" y "tu progreso"—. Se acota al CUERPO de esta
+        # pantalla (fuera queda la barra compartida, donde "Tu peso" es correcto) y se barre
+        # ahí la segunda persona ENTERA. Medido por la revisión: 0 apariciones legítimas.
         cuerpo = contenido.split('id="historico-de-peso"', 1)[1]
-        for tuteo in ("tu báscula", "Tu báscula", " te las da", "Tu peso"):
-            self.assertNotIn(tuteo, cuerpo)
+        texto_visible = re.sub(r"<[^>]+>", " ", cuerpo)
+        segunda_persona = re.findall(r"\b(?:tu|tus|te|ti|tú)\b", texto_visible, re.IGNORECASE)
+        self.assertEqual(
+            segunda_persona,
+            [],
+            f"la pantalla tutea a quien rellena lo de Marta: {segunda_persona}",
+        )
 
     def test_la_dueña_sigue_leyendo_su_texto_de_siempre_en_segunda_persona(self):
         """El negativo del negativo: quitar el tuteo de la rama del responsable no puede
