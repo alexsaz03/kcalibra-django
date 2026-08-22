@@ -108,9 +108,17 @@ def _leer(conexion, sentencia, que):
     try:
         return [dict(fila) for fila in conexion.execute(sentencia).fetchall()]
     except sqlite3.Error as exc:
+        # BUG 041/H2 — la pista sólo se da cuando ENCAJA. Antes se añadía "puede que le
+        # falte alguna columna" a CUALQUIER fallo, y la revisión midió que era falsa para
+        # `database is locked` y `database disk image is malformed`: inventarle una causa al
+        # usuario despista más que no darle ninguna.
+        pista = (
+            " Puede que sea de una versión anterior y le falte alguna columna."
+            if "no such column" in str(exc)
+            else ""
+        )
         raise OrigenNodeInvalido(
-            f"No se pudo leer {que} de la base de datos de Node: {exc}. "
-            "Puede que sea de una versión anterior y le falte alguna columna."
+            f"No se pudo leer {que} de la base de datos de Node: {exc}.{pista}"
         ) from exc
 
 

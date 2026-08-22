@@ -205,6 +205,10 @@ class Command(BaseCommand):
                         raise _CanceladoPorDryRun(resumen)
             except _CanceladoPorDryRun as cancelado:
                 resumen = cancelado.resumen
+        # BUG 041/H1 — igual que en `importar_datos_node`: el `except` de `abrir()` no cubre
+        # el camino de LECTURA, que es donde vive la red de `origen._leer`.
+        except origen.OrigenNodeInvalido as exc:
+            raise CommandError(f"{exc} No se ha movido nada.") from exc
         finally:
             conexion.close()
 

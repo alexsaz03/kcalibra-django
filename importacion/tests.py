@@ -732,6 +732,71 @@ class R7_OrigenInvalidoTests(BaseImportacionTests):
 # ---------------------------------------------------------------------------------------------
 
 
+class Bug041_ElComandoEnteroFallaEnCristianoTests(BaseImportacionTests):
+    """BUG 041/H1 — **el test que faltaba, y por eso el primer arreglo no llegó al usuario.**
+
+    Los tests de `OrigenTests` llaman a `origen.entrenos()` directamente, así que daban verde
+    con la red puesta en `origen.py`… mientras el COMANDO —lo que una persona teclea— seguía
+    escupiendo la traza cruda, porque su `except OrigenNodeInvalido` envolvía solo a `abrir()`.
+    Lo cazó la revisión midiendo de punta a punta. Este test entra por la misma puerta que el
+    usuario: `call_command`.
+    """
+
+    def _base_con_el_esquema_ANTERIOR_al_bug_033(self):
+        conexion = sqlite3.connect(self.ruta_db)
+        try:
+            conexion.execute(
+                "CREATE TABLE productos_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, cantidad REAL NOT NULL, "
+                "unidad TEXT NOT NULL, categoria TEXT NOT NULL)"
+            )
+            conexion.execute(
+                "CREATE TABLE entrenos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, tipo TEXT NOT NULL, "
+                "duracion_min INTEGER NOT NULL, intensidad TEXT NOT NULL, "
+                "calorias INTEGER NOT NULL, origen TEXT NOT NULL DEFAULT 'manual')"
+            )
+            conexion.execute(
+                "CREATE TABLE recetas (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, nombre TEXT NOT NULL, raciones_base INTEGER, "
+                "tipo_comida TEXT, ingredientes TEXT, preparacion TEXT)"
+            )
+            conexion.execute(
+                "CREATE TABLE pesos (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "usuario_id INTEGER NOT NULL, fecha TEXT NOT NULL, peso_kg REAL NOT NULL, "
+                "grasa_pct REAL, cintura_cm REAL)"
+            )
+            conexion.commit()
+        finally:
+            conexion.close()
+
+    def test_importar_una_base_del_esquema_viejo_da_un_mensaje_y_no_una_traza(self):
+        self._base_con_el_esquema_ANTERIOR_al_bug_033()
+        with self.assertRaises(CommandError) as cm:
+            self._importar()
+        mensaje = str(cm.exception)
+        self.assertIn("No se pudo leer", mensaje)
+        self.assertIn("No se ha escrito nada", mensaje)
+
+    def test_mover_filas_con_una_base_del_esquema_viejo_tambien_da_un_mensaje(self):
+        """El gemelo, en el OTRO comando: la misma red tenía el mismo agujero en los dos."""
+        self._base_con_el_esquema_ANTERIOR_al_bug_033()
+        with self.assertRaises(CommandError) as cm:
+            # `--miembro-node` es obligatorio para este comando: sin él ni siquiera llega a
+            # leer la base (valida antes, y hace bien). Con él, el camino de lectura se recorre
+            # entero, que es lo que este test viene a probar.
+            call_command(
+                "mover_filas_de_miembro",
+                self.ruta_db,
+                "--cuenta",
+                self.cuenta.email,
+                "--miembro-node",
+                f"2:{self.cuenta.email}",
+                stdout=io.StringIO(),
+            )
+        self.assertIn("No se pudo leer", str(cm.exception))
+
+
 class R8_NiSecretosNiDatosRealesTests(BaseImportacionTests):
     def test_strava_cuentas_no_se_lee_aunque_este_presente_en_el_origen(self):
         _crear_sqlite_de_node(
