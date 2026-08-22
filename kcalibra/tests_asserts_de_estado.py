@@ -79,7 +79,14 @@ def _ficheros_py(base):
     salida = []
     for carpeta, subcarpetas, nombres in os.walk(base):
         subcarpetas[:] = [
-            s for s in subcarpetas if s not in _CARPETAS_IGNORADAS and not s.startswith(".")
+            s
+            for s in subcarpetas
+            if s not in _CARPETAS_IGNORADAS
+            and not s.startswith(".")
+            # R4: la marca canónica de CUALQUIER entorno virtual, se llame como se llame
+            # (`.venv`, `venv`, `env`...) -- la lista de nombres de arriba se queda como
+            # atajo barato, no como única defensa.
+            and not os.path.isfile(os.path.join(carpeta, s, "pyvenv.cfg"))
         ]
         for nombre in nombres:
             if nombre.endswith(".py"):
@@ -88,20 +95,110 @@ def _ficheros_py(base):
 
 
 def _tiene_follow_true(llamada):
-    return any(
-        kw.arg == "follow" and isinstance(kw.value, ast.Constant) and kw.value.value is True
-        for kw in llamada.keywords
+    """Ante la duda, cuenta como sitio: un falso positivo se resuelve midiéndolo y dándolo de
+    alta en la lista; un falso negativo es justo lo que este fichero existe para impedir. Por
+    eso `follow=<algo que no es una constante>` (variable, atributo, llamada) cuenta igual que
+    `follow=True`, y un `**kwargs` (`keyword(arg=None)` en el AST) también cuenta: no se puede
+    saber sin ejecutar el código si ese diccionario trae `follow=True` dentro."""
+    for kw in llamada.keywords:
+        if kw.arg is None:
+            return True
+        if kw.arg == "follow":
+            if isinstance(kw.value, ast.Constant):
+                if kw.value.value is True:
+                    return True
+            else:
+                return True
+    return False
+
+
+def _nombre_asignable(nodo):
+    """Nombre canónico de un destino de asignación o del "sujeto" de un `<sujeto>.status_code`:
+    `x` para `ast.Name`, `self.x` para `ast.Attribute` cuyo valor es un `ast.Name` (cubre R5:
+    la respuesta guardada en `self.algo`, no solo en una variable local). `None` para cualquier
+    otra forma (subíndice, atributo encadenado, etc.) -- ese resto queda fuera a propósito."""
+    if isinstance(nodo, ast.Name):
+        return nodo.id
+    if isinstance(nodo, ast.Attribute) and isinstance(nodo.value, ast.Name):
+        return f"{nodo.value.id}.{nodo.attr}"
+    return None
+
+
+def _es_llamada_a_helper(nodo, nombres_helper):
+    return isinstance(nodo, ast.Call) and (
+        (isinstance(nodo.func, ast.Attribute) and nodo.func.attr in nombres_helper)
+        or (isinstance(nodo.func, ast.Name) and nodo.func.id in nombres_helper)
     )
+
+
+def _produce_respuesta_de_interes(nodo, variables, nombres_helper):
+    """¿Es `nodo` (una expresión de un `return`) una respuesta que arrastra `follow=True`,
+    directa o indirectamente? Cubre las formas que antes se le escapaban al detector de "¿la
+    devuelve?": variable ya marcada (incluida `self.algo`), llamada directa, llamada a OTRO
+    helper ya descubierto (indirección de varios saltos), y las mismas comprobaciones dentro de
+    un `IfExp` (`return x if c else y`) o de una tupla (`return x, y`), mirando cada rama o
+    elemento por separado."""
+    if nodo is None:
+        return False
+    nombre = _nombre_asignable(nodo)
+    if nombre is not None and nombre in variables:
+        return True
+    if _es_llamada_de_cliente(nodo) and _tiene_follow_true(nodo):
+        return True
+    if _es_llamada_a_helper(nodo, nombres_helper):
+        return True
+    if isinstance(nodo, ast.IfExp):
+        return _produce_respuesta_de_interes(
+            nodo.body, variables, nombres_helper
+        ) or _produce_respuesta_de_interes(nodo.orelse, variables, nombres_helper)
+    if isinstance(nodo, ast.Tuple):
+        return any(_produce_respuesta_de_interes(el, variables, nombres_helper) for el in nodo.elts)
+    return False
+
+
+def _variables_de_interes_en_funcion(func, nombres_helper):
+    """Las variables (o `self.algo`) de `func` que vienen de una llamada directa con
+    `follow=True` o de una llamada a uno de los `nombres_helper` ya descubiertos."""
+    variables = set()
+    for nodo in ast.walk(func):
+        if not (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1):
+            continue
+        nombre = _nombre_asignable(nodo.targets[0])
+        if nombre is None:
+            continue
+        valor = nodo.value
+        if _es_llamada_de_cliente(valor) and _tiene_follow_true(valor):
+            variables.add(nombre)
+        elif _es_llamada_a_helper(valor, nombres_helper):
+            variables.add(nombre)
+    return variables
+
+
+def _es_receptor_de_cliente(receptor):
+    """¿Es `receptor` (lo que hay antes del `.get`/`.post`/...) el cliente de test? `self.client`
+    o `self.<algo>.client` (cualquier cadena de atributos que termine en `.client`), o una
+    variable local llamada `client` a secas. Lo que NO cuenta: `Persona.objects` (termina en
+    `.objects`, no en `.client`) ni ningún otro receptor -- sin esto, `Persona.objects.get(
+    **filtros)` (el idioma más común de la ORM de Django) parecía una llamada de cliente solo
+    porque el método se llama `get` (R2 de la 037: hueco 1)."""
+    if isinstance(receptor, ast.Attribute) and receptor.attr == "client":
+        return True
+    if isinstance(receptor, ast.Name) and receptor.id == "client":
+        return True
+    return False
 
 
 def _es_llamada_de_cliente(nodo):
     """¿Es esto una llamada tipo `self.client.get(...)`/`self.client.post(...)`/
-    `cliente.get(...)`? No exige el nombre exacto `client`: basta con que sea un `Call` cuyo
-    `func` es un `Attribute` con nombre de método HTTP habitual."""
+    `self.<algo>.client.post(...)`/`client.get(...)`? Además del nombre del método
+    (`get`/`post`/`put`/`patch`/`delete`), hace falta que el RECEPTOR sea el cliente de test
+    (`_es_receptor_de_cliente`): mirar solo el nombre del método sin mirar sobre QUÉ se llama
+    convertía cualquier `<modelo>.objects.get(**filtros)` en "llamada de cliente"."""
     return (
         isinstance(nodo, ast.Call)
         and isinstance(nodo.func, ast.Attribute)
         and nodo.func.attr in {"get", "post", "put", "patch", "delete"}
+        and _es_receptor_de_cliente(nodo.func.value)
     )
 
 
@@ -112,14 +209,45 @@ def _arbol_de(rel, raiz):
 
 
 def descubrir_helpers(raiz):
-    """FASE 1 — enumeración EXHAUSTIVA de "helpers": toda función NO-test (su nombre no empieza
-    por `test_`, y no es `setUp`/`setUpClass`/`setUpTestData` — esos no DEVUELVEN nada, no
-    pueden alimentar un assert) que hace una llamada tipo `self.client.<verbo>(..., follow=True)`
-    o `self.<algo>.<verbo>(..., follow=True)` Y la DEVUELVE (`return <esa llamada>` o
-    `return <variable asignada desde ella>`). Por COMPORTAMIENTO, no por el nombre de la
-    función: así un cuarto helper que aparezca mañana no se pierde por no coincidir con un
-    patrón de nombre escrito de memoria (21ª cara)."""
-    helpers = {}
+    """FASE 1 — encuentra "helpers": toda función NO-test (su nombre no empieza por `test_`, y
+    no es `setUp`/`setUpClass`/`setUpTestData` — esos no DEVUELVEN nada, no pueden alimentar un
+    assert) que hace una llamada tipo `self.client.<verbo>(..., follow=True)` -- el receptor
+    tiene que ser `self.client`, cualquier cadena de atributos que termine en `.client`, o una
+    variable local llamada `client` a secas (ver `_es_receptor_de_cliente`); un `self.<algo>`
+    cualquiera YA NO cuenta, aunque llame a `.get`/`.post`/... con `follow=True` (ver
+    `_tiene_follow_true` para las formas de escribir ese `follow=True`) Y la DEVUELVE. Por
+    COMPORTAMIENTO, no por el nombre de la función: así un helper nuevo no se pierde por no
+    coincidir con un patrón de nombre escrito de memoria (21ª cara).
+
+    Lo que reconoce como "la devuelve", nombrado uno a uno (las seis formas de la unidad 037,
+    medidas contra el repo real antes de escribirlas): la llamada directa, una variable
+    asignada desde ella, `self.algo` asignado desde ella, dentro de un `IfExp`
+    (`return x if c else y`, mirando las dos ramas), dentro de una tupla (`return x, y`,
+    mirando cada elemento), y un helper que devuelve la llamada a OTRO helper ya descubierto
+    (indirección de varios saltos: se itera hasta que el conjunto de helpers deja de crecer,
+    con un tope de iteraciones para no colgarse si dos helpers se llaman entre sí sin que
+    ninguno añada nada nuevo).
+
+    Lo que NO reconoce, y queda así a propósito (alternativa descartada en la especificación de
+    la 037: seguir el flujo de datos de verdad es un intérprete de Python a medias): el
+    DESEMPAQUETADO de tupla (`respuesta, extra = self.ayuda_tupla()`) -- que es, de hecho, la
+    ÚNICA forma de escribir la forma 4 (`return x, y`) que puede EJECUTARSE de verdad, porque
+    `respuesta = self.ayuda_tupla()` sin desempaquetar deja `respuesta` como una tupla y
+    `respuesta.status_code` reventaría con `AttributeError` antes de llegar a ningún assert --,
+    un helper guardado en una lista o un diccionario, una indirección a través de una variable
+    que apunta a la función (`x = self.helper; x()`), o un receptor de la llamada de cliente que
+    no sea `self.client`, una cadena de atributos que termine en `.client`, o una variable local
+    `client` a secas -- `self.navegador.post(..., follow=True)` NO se cuenta, aunque haga
+    exactamente la misma llamada que `self.client.post(...)` (ver `_es_receptor_de_cliente`);
+    es la forma ciega que nació con el arreglo del hueco 1 de la unidad 037 (R2: estrechar el
+    receptor para que `Persona.objects.get(**filtros)` dejara de contar se llevó por delante
+    también los alias de cliente que no siguen ese patrón). (Lo que SÍ reconoce, y no es un
+    límite: guardar la respuesta en el atributo de CUALQUIER objeto, no solo `self` --
+    `caja.resp = ...` se cuenta igual, porque `_nombre_asignable` acepta cualquier
+    `ast.Attribute` sobre un `ast.Name`, no solo `self.algo`; y un helper envuelto en un
+    decorador -- `descubrir_helpers` recorre los `FunctionDef` sin mirar el `decorator_list`, así
+    que el decorador no le tapa nada.) Es un límite escrito, no un hueco escondido."""
+    funciones = []
     for rel in _ficheros_py(raiz):
         try:
             arbol = _arbol_de(rel, raiz)
@@ -130,62 +258,40 @@ def descubrir_helpers(raiz):
                 continue
             if func.name.startswith("test_") or func.name in ("setUp", "setUpClass", "setUpTestData"):
                 continue
+            funciones.append((rel, func))
 
-            variables_follow = set()
-            llamadas_directas_follow = []
-            for nodo in ast.walk(func):
-                if (
-                    isinstance(nodo, ast.Assign)
-                    and len(nodo.targets) == 1
-                    and isinstance(nodo.targets[0], ast.Name)
-                ):
-                    if _es_llamada_de_cliente(nodo.value) and _tiene_follow_true(nodo.value):
-                        variables_follow.add(nodo.targets[0].id)
-                if _es_llamada_de_cliente(nodo) and _tiene_follow_true(nodo):
-                    llamadas_directas_follow.append(nodo)
-            if not variables_follow and not llamadas_directas_follow:
+    helpers = {}
+    ya_marcadas = set()
+    crecio = True
+    intentos = 0
+    while crecio and intentos < 10:
+        crecio = False
+        intentos += 1
+        nombres_helper = set(helpers.keys())
+        for rel, func in funciones:
+            clave = (rel, func.name, func.lineno)
+            if clave in ya_marcadas:
                 continue
-
-            devuelve = False
-            for nodo in ast.walk(func):
-                if not isinstance(nodo, ast.Return) or nodo.value is None:
-                    continue
-                if isinstance(nodo.value, ast.Name) and nodo.value.id in variables_follow:
-                    devuelve = True
-                if _es_llamada_de_cliente(nodo.value) and _tiene_follow_true(nodo.value):
-                    devuelve = True
-
+            variables = _variables_de_interes_en_funcion(func, nombres_helper)
+            devuelve = any(
+                isinstance(nodo, ast.Return)
+                and _produce_respuesta_de_interes(nodo.value, variables, nombres_helper)
+                for nodo in ast.walk(func)
+            )
             if devuelve:
                 helpers.setdefault(func.name, []).append(f"{rel}:{func.lineno}")
+                ya_marcadas.add(clave)
+                crecio = True
     return helpers
 
 
 def _variables_con_follow_true(func_node, nombres_helper):
-    """Las variables de `func_node` que vienen de una llamada directa con `follow=True` o de uno
-    de los helpers descubiertos en la FASE 1.
-
-    ARREGLO DE R4: un helper se puede llamar como `self.helper(...)` (`valor.func` es un
-    `ast.Attribute`, la única forma que reconocía la 034) o como `helper(...)` a secas —un
-    helper de nivel de MÓDULO importado (`valor.func` es un `ast.Name`)—. La 034 solo miraba la
-    primera forma y perdía el segundo caso, aunque la FASE 1 ya lo hubiera descubierto: el mismo
-    falso negativo que motivó toda la unidad, un nivel más abajo dentro de la propia
-    herramienta. Aquí se aceptan las dos."""
-    variables = set()
-    for nodo in ast.walk(func_node):
-        if (
-            isinstance(nodo, ast.Assign)
-            and len(nodo.targets) == 1
-            and isinstance(nodo.targets[0], ast.Name)
-        ):
-            valor = nodo.value
-            if _es_llamada_de_cliente(valor) and _tiene_follow_true(valor):
-                variables.add(nodo.targets[0].id)
-            elif isinstance(valor, ast.Call) and (
-                (isinstance(valor.func, ast.Attribute) and valor.func.attr in nombres_helper)
-                or (isinstance(valor.func, ast.Name) and valor.func.id in nombres_helper)
-            ):
-                variables.add(nodo.targets[0].id)
-    return variables
+    """FASE 2 — las variables (o `self.algo`, R5) de `func_node` que vienen de una llamada
+    directa con `follow=True` o de uno de los helpers descubiertos en la FASE 1: por
+    `self.helper(...)` (`ast.Attribute`) o por `helper(...)` a secas, un helper de nivel de
+    MÓDULO importado (`ast.Name`) -- las dos formas, para no perder el mismo falso negativo un
+    nivel más abajo dentro de la propia herramienta."""
+    return _variables_de_interes_en_funcion(func_node, nombres_helper)
 
 
 def _es_status_code_200(nodo_assert):
@@ -211,7 +317,8 @@ def _es_status_code_200(nodo_assert):
         var = b.value
     else:
         return None
-    return var.id if isinstance(var, ast.Name) else "<expresion-no-variable>"
+    nombre = _nombre_asignable(var)
+    return nombre if nombre is not None else "<expresion-no-variable>"
 
 
 def sitios_de_hoy(raiz):
@@ -283,6 +390,13 @@ class NingunAssertQueNoPuedeFallarSeCuelaSinMedirTests(SimpleTestCase):
     `tests_estilos.py` lee las plantillas y `tests_aislamiento.py` lee los modelos."""
 
     databases = set()
+
+    def test_linea_base_sigue_teniendo_exactamente_23_sitios(self):
+        """R3, el criterio que manda de la unidad 037: tras ampliar el escáner a las seis
+        formas ciegas, la lista congelada no puede haberse movido -- si se hubiera ensanchado
+        de más, aparecerían entradas nuevas aquí. El oráculo de que no nos hemos pasado de
+        anchos es este número exacto, no una sensación."""
+        self.assertEqual(len(LINEA_BASE), 23)
 
     def test_no_desaparecen_los_helpers_ni_los_ficheros_conocidos(self):
         """Comprobación de la propia comprobación (R6, patrón de `tests_estilos.py`): si el
