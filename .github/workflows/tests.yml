@@ -42,7 +42,14 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        # requirements-dev.txt tambien: la suite ejecuta scripts/ci/security de verdad (los dos
+        # tests de sistema de la unidad 045), y ese guion empieza por pip-audit, que vive aqui.
+        # Sin esta linea el guion muere con 127 antes de llegar a lo suyo y los dos tests no
+        # pueden pasar NUNCA en el CI -- que es justo donde importan. Tres ejecuciones en rojo
+        # (e2c73f5, 94344dc, 434845c) antes de que nadie lo mirara.
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Correr la suite completa
         run: scripts/ci/full-suite
