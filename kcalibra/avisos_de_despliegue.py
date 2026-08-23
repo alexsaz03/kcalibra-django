@@ -26,12 +26,14 @@ Dos piezas separadas a propósito:
 
 **La diferencia que hay que reproducir a propósito:** el comando `check` filtra por su cuenta
 `SILENCED_SYSTEM_CHECKS` y por `--fail-level`; la API `run_checks()` NO — devuelve TODOS los
-mensajes, silenciados o no, de cualquier nivel. Si `comprobar()` no reprodujera ese filtrado a
-mano, el guion pasaría a ser más estricto que Django sin que nadie lo hubiera pedido (un
+mensajes, silenciados o no, de cualquier nivel. Si nadie reprodujera ese filtrado, el guion
+pasaría a ser más estricto que Django sin que nadie lo hubiera pedido (un
 `SILENCED_SYSTEM_CHECKS` dejaría de servir para nada, y un `DEBUG`/`INFO` informativo tumbaría
-el CI). Por eso `comprobar()` filtra silenciados y corta en `WARNING` ANTES de llamar a
-`evaluar()`; `evaluar()` en sí también corta por nivel (R7), para que siga siendo correcta si
-se le llama directamente con una lista que no ha pasado por ese filtro.
+el CI). El filtrado se reparte entre las dos piezas, cada una responsable de lo suyo:
+`comprobar()` filtra silenciados (`CheckMessage.is_silenced()`) ANTES de llamar a `evaluar()`;
+el corte por nivel (R7) vive por completo dentro de `evaluar()`, no en `comprobar()`, así que
+`evaluar()` sigue siendo correcta si se la llama directamente con una lista que no ha pasado
+por ningún filtro.
 """
 
 import sys
@@ -78,7 +80,12 @@ def evaluar(mensajes, esperados=ESPERADOS):
     for mensaje in mensajes:
         if mensaje.level < WARNING:
             continue
-        if mensaje.level > WARNING or mensaje.id not in esperados:
+        if mensaje.level > WARNING or mensaje.id not in esperados or mensaje.id in vistos:
+            # `mensaje.id in vistos`: el id es una IDENTIDAD, no una etiqueta reutilizable. Sin
+            # esta condición, un segundo mensaje —de otro problema real— que reutilice el id de
+            # un esperado ya visto casaba igual que el primero (H1, segunda vuelta de la 045):
+            # el guion viejo, que cuadraba el RECUENTO total contra los esperados vistos, sí lo
+            # cazaba; comparar solo por conjunto de ids sin marcar "ya consumido" no.
             intrusos.append(mensaje)
         else:
             vistos.add(mensaje.id)
@@ -106,9 +113,10 @@ def _texto_legible(veredicto):
 
 def comprobar():
     """El envoltorio (R8 incluido): llama a la API real de Django, reproduce a mano el
-    filtrado que el comando `check` hace por su cuenta (silenciados y nivel), imprime el
-    veredicto legible y devuelve el código de salida. Un check que revienta al ejecutarse
-    nunca se da por bueno: se imprime la traza completa y se sale en rojo."""
+    filtrado de silenciados que el comando `check` hace por su cuenta
+    (`CheckMessage.is_silenced()`) — el corte por nivel lo aplica `evaluar()`, no esta función
+    — imprime el veredicto legible y devuelve el código de salida. Un check que revienta al
+    ejecutarse nunca se da por bueno: se imprime la traza completa y se sale en rojo."""
     from django.core.checks import run_checks
 
     try:

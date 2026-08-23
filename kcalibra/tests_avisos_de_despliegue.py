@@ -27,6 +27,34 @@ def _msg(id, nivel=WARNING, texto="aviso de prueba"):
     return CheckMessage(nivel, texto, id=id)
 
 
+def _comprobar_con(mensajes):
+    """Llama a `avisos_de_despliegue.comprobar()` DE VERDAD (no a `evaluar()` a solas),
+    parcheando `django.core.checks.run_checks` para que devuelva `mensajes` fabricados en vez
+    de ejecutar los checks reales del proyecto. Devuelve (código de salida, todo lo impreso).
+    Es la única manera de probar el código de retorno y el texto de `comprobar()` -- las
+    mutaciones M6 (`_texto_legible()` siempre "OK: ...") y M8 (`comprobar()` siempre
+    `return 0`) no tumbaban ni un test porque nada llamaba a `comprobar()` con un veredicto en
+    rojo (H3, segunda vuelta de la 045)."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    import django.core.checks as checks_module
+    from kcalibra import avisos_de_despliegue
+
+    def run_checks_falso(*args, **kwargs):
+        return mensajes
+
+    original = checks_module.run_checks
+    checks_module.run_checks = run_checks_falso
+    try:
+        salida = io.StringIO()
+        with redirect_stdout(salida), redirect_stderr(salida):
+            codigo = avisos_de_despliegue.comprobar()
+    finally:
+        checks_module.run_checks = original
+    return codigo, salida.getvalue()
+
+
 class LosCuatroEsperadosYNadaMasTests(SimpleTestCase):
     """R1: el estado de hoy. Si esto falla, el CI se pone rojo permanente y nadie lo mira."""
 
@@ -110,6 +138,33 @@ class EsperadoArregladoConAjenoEnSuHuecoTests(SimpleTestCase):
         self.assertEqual(veredicto.faltantes, [arreglado])
 
 
+class IntrusoQueReutilizaIdEsperadoTests(SimpleTestCase):
+    """H1 (segunda vuelta de la 045, revisión sobre el PR #49): un aviso ajeno que REUTILIZA
+    el id de uno de los cuatro esperados es la quinta puerta de la familia, y una REGRESIÓN
+    contra el guion viejo (68895d2), que sí la cazaba porque cuadraba el RECUENTO total contra
+    los esperados vistos (5 mensajes != 4 esperados). `evaluar()` debe tratar el id como una
+    identidad que se consume la primera vez que casa, no como una etiqueta reutilizable:
+    cualquier mensaje posterior con el mismo id -- por muy distinto que sea su texto o su
+    causa real -- sigue siendo un intruso."""
+
+    databases = set()
+
+    def test_id_esperado_duplicado_por_un_intruso_pone_rojo_y_lo_nombra(self):
+        esperado_reutilizado = sorted(ESPERADOS)[0]
+        intruso = CheckMessage(
+            WARNING,
+            "otro problema real, distinto del que ya justificaba este id",
+            id=esperado_reutilizado,
+        )
+        # El original de este id va PRIMERO en la lista, para que "vistos" ya lo tenga cuando
+        # se llegue al intruso -- así se ejercita justo la rama `mensaje.id in vistos`.
+        mensajes = [_msg(id) for id in sorted(ESPERADOS)] + [intruso]
+        veredicto = evaluar(mensajes)
+        self.assertFalse(veredicto.ok)
+        self.assertIn(intruso, veredicto.intrusos)
+        self.assertEqual(veredicto.faltantes, [])
+
+
 class EsperadoQueDesaparaceSinSustitutoTests(SimpleTestCase):
     """R6 (lista caducada): si uno de los cuatro esperados desaparece y nadie lo sustituye,
     el veredicto es rojo nombrando cuál esperado sobra en la lista -- la misma regla que la
@@ -170,29 +225,33 @@ class CorteExactoPorNivelTests(SimpleTestCase):
 
 
 class SilencedSystemChecksSeRespetaTests(SimpleTestCase):
-    """La diferencia real entre los dos caminos: el comando `check` filtra
-    `SILENCED_SYSTEM_CHECKS` por su cuenta; `run_checks()` no. `comprobar()` reproduce ese
-    filtrado a mano con `CheckMessage.is_silenced()` ANTES de llamar a `evaluar()` -- se
-    prueba aquí llamando a `is_silenced()` directamente (lo que usa `comprobar()`), sin
-    necesidad de montar toda la app."""
+    """H2 (segunda vuelta de la 045): la diferencia real entre los dos caminos es que el
+    comando `check` filtra `SILENCED_SYSTEM_CHECKS` por su cuenta y `run_checks()` no --
+    filtrado que vive en la línea `visibles = [... if not mensaje.is_silenced()]` de
+    `comprobar()`. La primera vuelta probaba esto reimplementando el filtro DENTRO del test y
+    llamando a `evaluar()`: eso prueba el `is_silenced()` de Django, no la línea de
+    `comprobar()` que lo usa (mutación M7 -- borrar ese filtro -- no tumbaba ni un test). Aquí
+    se llama a `comprobar()` de verdad, con `run_checks` parcheado y `override_settings`, y se
+    mira el CÓDIGO DE RETORNO."""
 
     databases = set()
 
     def test_un_id_silenciado_no_cuenta_como_intruso_tras_filtrar(self):
         ajeno_silenciado = _msg("otraapp.W099", texto="silenciado en settings")
+        mensajes = [_msg(id) for id in ESPERADOS] + [ajeno_silenciado]
         with override_settings(SILENCED_SYSTEM_CHECKS=["otraapp.W099"]):
             self.assertTrue(ajeno_silenciado.is_silenced())
-            mensajes = [_msg(id) for id in ESPERADOS] + [ajeno_silenciado]
-            visibles = [m for m in mensajes if not m.is_silenced()]
-            veredicto = evaluar(visibles)
-        self.assertTrue(veredicto.ok)
+            codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 0)
+        self.assertIn("OK", salida)
 
     def test_sin_silenciar_el_mismo_id_si_cuenta_como_intruso(self):
         ajeno = _msg("otraapp.W099", texto="sin silenciar")
         self.assertFalse(ajeno.is_silenced())
         mensajes = [_msg(id) for id in ESPERADOS] + [ajeno]
-        veredicto = evaluar(mensajes)
-        self.assertFalse(veredicto.ok)
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 1)
+        self.assertIn("otraapp.W099", salida)
 
 
 class ChequeQueRevientaTests(SimpleTestCase):
@@ -225,6 +284,79 @@ class ChequeQueRevientaTests(SimpleTestCase):
         traza_completa = salida_out.getvalue() + salida_err.getvalue()
         self.assertIn("RuntimeError", traza_completa)
         self.assertIn("un check roto de mentira, para R8", traza_completa)
+
+
+class ComprobarNombraAlCulpableEnRojoTests(SimpleTestCase):
+    """H3 (segunda vuelta de la 045): ningún assert de la primera vuelta miraba nunca la
+    salida impresa de `comprobar()` ni su código de retorno por el camino normal (el único
+    `assertEqual(codigo, 1)` de toda la red era el de R8, que sale por el `except`). Las
+    mutaciones M6 (`_texto_legible()` siempre "OK: ...") y M8 (`comprobar()` siempre
+    `return 0`) no tumbaban ni un test. Aquí se ejercita `comprobar()` de verdad -- R2 exige
+    que el rojo NOMBRE al intruso, R6 que diga qué esperado sobra -- con `run_checks`
+    parcheado, sin pasar por `scripts/ci/security`."""
+
+    databases = set()
+
+    def test_los_cuatro_esperados_ponen_comprobar_en_verde_de_verdad(self):
+        mensajes = [_msg(id) for id in ESPERADOS]
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 0)
+        self.assertIn("OK: los avisos de despliegue son exactamente los tolerados.", salida)
+
+    def test_intruso_con_id_pone_comprobar_en_rojo_y_lo_nombra_en_la_salida(self):
+        intruso = _msg("otraapp.W099", texto="un aviso ajeno de verdad")
+        mensajes = [_msg(id) for id in ESPERADOS] + [intruso]
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 1)
+        self.assertIn("ROJO", salida)
+        self.assertIn("otraapp.W099", salida)
+
+    def test_intruso_sin_id_pone_comprobar_en_rojo_con_el_marcador_sin_id(self):
+        mensajes = [_msg(id) for id in ESPERADOS] + [
+            CheckMessage(WARNING, "aviso sin identificador")
+        ]
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 1)
+        self.assertIn("<sin id>", salida)
+
+    def test_esperado_que_falta_se_nombra_en_la_salida_de_comprobar(self):
+        esperados_restantes = sorted(ESPERADOS)[:-1]
+        que_sobra = sorted(ESPERADOS)[-1]
+        mensajes = [_msg(id) for id in esperados_restantes]
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 1)
+        self.assertIn("ROJO", salida)
+        self.assertIn(que_sobra, salida)
+
+
+class ElGuionCompletoTerminaEnRojoAnteUnAvisoRealTests(SimpleTestCase):
+    """H3, nivel sistema: la costura completa (`scripts/ci/security`) tampoco tenía ni un
+    test que la ejercitara en rojo -- `ElGuionCompletoTerminaEnVerdeTests` solo prueba el
+    camino verde, y "probar la pieza no prueba la costura" (lección de la 017) es exactamente
+    lo que se dejó fuera. Provoca un aviso REAL de Django (`DEBUG=True` en un despliegue,
+    `security.W018`), sin fabricar ni un `CheckMessage`, y comprueba que el guion de bash
+    completo -- `pip-audit` incluido -- termina en rojo nombrando al intruso."""
+
+    databases = set()
+
+    def test_scripts_ci_security_sale_en_rojo_con_debug_true(self):
+        raiz = str(settings.BASE_DIR)
+        entorno = {**os.environ, "DJANGO_DEBUG": "True"}
+        resultado = subprocess.run(
+            ["scripts/ci/security"],
+            cwd=raiz,
+            env=entorno,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        self.assertEqual(
+            resultado.returncode,
+            1,
+            f"scripts/ci/security terminó con código {resultado.returncode}\n"
+            f"--- stdout ---\n{resultado.stdout}\n--- stderr ---\n{resultado.stderr}",
+        )
+        self.assertIn("security.W018", resultado.stdout)
 
 
 class ElGuionCompletoTerminaEnVerdeTests(SimpleTestCase):
