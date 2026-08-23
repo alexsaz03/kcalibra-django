@@ -5,12 +5,13 @@ if [ -f ".venv/bin/activate" ]; then
     source .venv/bin/activate
 fi
 
-# PYSEC-2026-3717 (CVE-2026-15830): DoS en GeoDjango (GEOSGeometry) al parsear WKT/WKB con
-# recursión profunda. Esta app no usa GeoDjango ni ningún campo espacial (solo un JSONField
-# vainilla), así que no es explotable aquí; el arreglo real es subir Django a 5.2.17/6.0.8 en
-# requirements.txt, fuera de los ficheros de esta unidad. Se nombra y se acota, no se silencia
-# el comando entero: cualquier otra vulnerabilidad sigue haciendo fallar el guion.
-pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-3717
+# Sin excepciones, a propósito. Hubo una —PYSEC-2026-3717, el DoS de GeoDjango que este mismo
+# guion encontró el día que nació (unidad 039)— y duró lo que tardó en llegar su parche: la
+# unidad 043 subió Django a 5.2.17 y la retiró. Un `--ignore-vuln` que ya no protege de nada es
+# peor que no haberlo puesto nunca: se queda ahí, nadie lo relee, y el día de mañana silencia
+# algo de verdad. Si vuelve a hacer falta otra, se nombra, se explica y se quita en cuanto haya
+# arreglo — nunca se silencia el comando entero.
+pip-audit -r requirements.txt
 
 # manage.py check --deploy exige HTTPS de verdad (SECURE_HSTS_SECONDS, SECURE_SSL_REDIRECT,
 # SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE): eso lo aporta el proxy del despliegue, no esta
