@@ -40,6 +40,30 @@ def _genuino(id):
     return _genuinos_de_django()[id]
 
 
+def _mensaje_fallo_guion(resultado, esperado):
+    """Mensaje de fallo para los dos tests de sistema que ejecutan `scripts/ci/security` de
+    verdad. `evaluar()`/`comprobar()` solo devuelven 0 o 1: cualquier OTRO código (127 "comando
+    no encontrado", 126 "sin permiso de ejecución", 2 de un `set -e` que revienta antes de
+    llegar al módulo...) significa que el guion NUNCA LLEGÓ A DICTAMINAR -- no es un veredicto
+    de R1-R9 en desacuerdo con el test, es el guion muriendo por algo ajeno a la lógica que esta
+    unidad prueba (ver hallazgos.md, "Cuarta vuelta": tres ejecuciones de este mismo test en el
+    CI murieron así, por `pip-audit` ausente, sin que la falta de un contrato al que preguntar
+    lo hiciera evidente en la cabecera del fallo)."""
+    if resultado.returncode not in (0, 1):
+        diagnostico = (
+            f"el guion NO llegó a dictaminar (código {resultado.returncode}, fuera de "
+            "{0, 1}): probablemente una herramienta que usa falta o falló antes de invocar a "
+            "avisos_de_despliegue.comprobar(), no un veredicto real"
+        )
+    else:
+        diagnostico = f"el guion SÍ dictaminó, pero en código {resultado.returncode}, no {esperado}"
+    return (
+        f"scripts/ci/security terminó con código {resultado.returncode} (se esperaba "
+        f"{esperado}) -- {diagnostico}\n"
+        f"--- stdout ---\n{resultado.stdout}\n--- stderr ---\n{resultado.stderr}"
+    )
+
+
 def _comprobar_con(mensajes):
     """Llama a `avisos_de_despliegue.comprobar()` DE VERDAD (no a `evaluar()` a solas),
     parcheando `django.core.checks.run_checks` para que devuelva `mensajes` fabricados en vez
@@ -435,8 +459,7 @@ class ElGuionCompletoTerminaEnRojoAnteUnAvisoRealTests(SimpleTestCase):
         self.assertEqual(
             resultado.returncode,
             1,
-            f"scripts/ci/security terminó con código {resultado.returncode}\n"
-            f"--- stdout ---\n{resultado.stdout}\n--- stderr ---\n{resultado.stderr}",
+            _mensaje_fallo_guion(resultado, esperado=1),
         )
         self.assertIn("security.W018", resultado.stdout)
 
@@ -463,6 +486,5 @@ class ElGuionCompletoTerminaEnVerdeTests(SimpleTestCase):
         self.assertEqual(
             resultado.returncode,
             0,
-            f"scripts/ci/security terminó con código {resultado.returncode}\n"
-            f"--- stdout ---\n{resultado.stdout}\n--- stderr ---\n{resultado.stderr}",
+            _mensaje_fallo_guion(resultado, esperado=0),
         )
