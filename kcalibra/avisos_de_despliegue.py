@@ -71,26 +71,70 @@ class Veredicto:
         return not self.intrusos and not self.faltantes
 
 
-def evaluar(mensajes, esperados=ESPERADOS):
-    """Función pura (R1-R7): ni toca Django configurado, ni hace I/O. El número total de
+def evaluar(mensajes, esperados=ESPERADOS, genuinos=None):
+    """Función pura (R1-R7, R9): ni toca Django configurado, ni hace I/O. El número total de
     mensajes NO interviene en la decisión (R4, R5): cada mensaje se juzga por su propio `id` y
-    `level`, nunca por el recuento ni por el contenido de su `msg`."""
+    `level`, nunca por el recuento ni por el contenido de su `msg`.
+
+    `genuinos` (R9, la sexta puerta): mapa OPCIONAL `id -> objeto SINGLETON genuino`, con
+    valor por defecto `None` — exactamente igual que `esperados` es un parámetro con su propio
+    valor por defecto, para que los tests puedan seguir inyectando el suyo sin tocar Django. Sin
+    él (el caso de todos los tests de R1-R8 y H1, que no lo pasan), el comportamiento es
+    idéntico al de antes de esta vuelta: un mensaje se acepta por `id` y `level` solos. Con él
+    (el caso de `comprobar()`, que inyecta los singletons reales de Django), un mensaje cuyo
+    `id` tiene entrada en el mapa además debe SER, por identidad (`is`), ese objeto — si no lo
+    es, es un impostor que reutiliza el id de un tolerado, aunque su `id` y su `level` sean
+    indistinguibles del genuino."""
+    genuinos = genuinos or {}
     intrusos = []
     vistos = set()
     for mensaje in mensajes:
         if mensaje.level < WARNING:
             continue
-        if mensaje.level > WARNING or mensaje.id not in esperados or mensaje.id in vistos:
-            # `mensaje.id in vistos`: el id es una IDENTIDAD, no una etiqueta reutilizable. Sin
-            # esta condición, un segundo mensaje —de otro problema real— que reutilice el id de
-            # un esperado ya visto casaba igual que el primero (H1, segunda vuelta de la 045):
-            # el guion viejo, que cuadraba el RECUENTO total contra los esperados vistos, sí lo
-            # cazaba; comparar solo por conjunto de ids sin marcar "ya consumido" no.
+        # `mensaje.id in vistos`: el id es una IDENTIDAD, no una etiqueta reutilizable. Sin
+        # esta condición, un segundo mensaje —de otro problema real— que reutilice el id de
+        # un esperado ya visto casaba igual que el primero (H1, segunda vuelta de la 045):
+        # el guion viejo, que cuadraba el RECUENTO total contra los esperados vistos, sí lo
+        # cazaba; comparar solo por conjunto de ids sin marcar "ya consumido" no.
+        #
+        # `es_impostor` (R9, tercera vuelta): un id y un nivel iguales no bastan si el hueco de
+        # un tolerado que se arregló de verdad lo ocupa OTRO problema, de otra causa, que
+        # reutiliza justo ese id — el guion viejo (68895d2) y la versión de H1 pasan este caso
+        # en verde por igual (medido por el revisor: 75/33649 divergencias laxas, todas esta
+        # forma). El id y el level de los cuatro tolerados son indistinguibles del impostor por
+        # construcción; solo la identidad del OBJETO los separa, porque Django devuelve siempre
+        # el mismo singleton de módulo para cada uno (`security/base.py`, `csrf.py`,
+        # `sessions.py`) y nunca fabrica una copia.
+        es_impostor = mensaje.id in genuinos and mensaje is not genuinos[mensaje.id]
+        if (
+            mensaje.level > WARNING
+            or mensaje.id not in esperados
+            or mensaje.id in vistos
+            or es_impostor
+        ):
             intrusos.append(mensaje)
         else:
             vistos.add(mensaje.id)
     faltantes = sorted(esperados - vistos)
     return Veredicto(intrusos, faltantes)
+
+
+def _genuinos_de_django():
+    """El mapa `id -> objeto SINGLETON real de Django` para los cuatro esperados (R9): la
+    identidad que separa un aviso genuino de un impostor que reutiliza su id. Comprobado, no
+    supuesto: Django declara cada uno de los cuatro como una única instancia a nivel de MÓDULO
+    (`django/core/checks/security/base.py` para W004 y W008, `.../sessions.py` para W012,
+    `.../csrf.py` para W016) y los checks correspondientes devuelven siempre esa misma
+    instancia, nunca una copia — verificado contra `run_checks()` real (`mensaje is
+    django.core.checks.security.base.W004`, etc., las cuatro `True`)."""
+    from django.core.checks.security import base, csrf, sessions
+
+    return {
+        "security.W004": base.W004,
+        "security.W008": base.W008,
+        "security.W012": sessions.W012,
+        "security.W016": csrf.W016,
+    }
 
 
 def _nombre_intruso(mensaje):
@@ -115,8 +159,10 @@ def comprobar():
     """El envoltorio (R8 incluido): llama a la API real de Django, reproduce a mano el
     filtrado de silenciados que el comando `check` hace por su cuenta
     (`CheckMessage.is_silenced()`) — el corte por nivel lo aplica `evaluar()`, no esta función
-    — imprime el veredicto legible y devuelve el código de salida. Un check que revienta al
-    ejecutarse nunca se da por bueno: se imprime la traza completa y se sale en rojo."""
+    — inyecta los objetos SINGLETON genuinos de Django (R9, `_genuinos_de_django()`) para que
+    un impostor que reutilice el id de un tolerado no pase por identidad, imprime el veredicto
+    legible y devuelve el código de salida. Un check que revienta al ejecutarse nunca se da por
+    bueno: se imprime la traza completa y se sale en rojo."""
     from django.core.checks import run_checks
 
     try:
@@ -127,7 +173,7 @@ def comprobar():
         return 1
 
     visibles = [mensaje for mensaje in mensajes if not mensaje.is_silenced()]
-    veredicto = evaluar(visibles)
+    veredicto = evaluar(visibles, genuinos=_genuinos_de_django())
     print(_texto_legible(veredicto))
     return 0 if veredicto.ok else 1
 

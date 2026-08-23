@@ -27,6 +27,19 @@ def _msg(id, nivel=WARNING, texto="aviso de prueba"):
     return CheckMessage(nivel, texto, id=id)
 
 
+def _genuino(id):
+    """El objeto SINGLETON real de Django para uno de los cuatro esperados -- el mismo que
+    `comprobar()` usa como referencia de identidad (R9, `_genuinos_de_django()`). Necesario en
+    los tests que pasan por `comprobar()` (via `_comprobar_con`): desde que `comprobar()`
+    inyecta el mapa de genuinos, un `_msg(id)` fabricado para uno de los ESPERADOS deja de
+    contar como el aviso real y se vería (incorrectamente) como un impostor. Los tests que
+    llaman a `evaluar()` a solas, sin pasar por `comprobar()`, no necesitan esto: por defecto
+    `evaluar()` no exige identidad (`genuinos=None`)."""
+    from kcalibra.avisos_de_despliegue import _genuinos_de_django
+
+    return _genuinos_de_django()[id]
+
+
 def _comprobar_con(mensajes):
     """Llama a `avisos_de_despliegue.comprobar()` DE VERDAD (no a `evaluar()` a solas),
     parcheando `django.core.checks.run_checks` para que devuelva `mensajes` fabricados en vez
@@ -165,6 +178,49 @@ class IntrusoQueReutilizaIdEsperadoTests(SimpleTestCase):
         self.assertEqual(veredicto.faltantes, [])
 
 
+class ImpostorQueReutilizaElObjetoDeUnGenuinoTests(SimpleTestCase):
+    """R9 (la sexta puerta; tercera vuelta de la 045, sobre `especificacion.md` y el hallazgo
+    [revisor-1] de `hallazgos.md`): a diferencia de H1 (un intruso que DUPLICA un id ya visto
+    EN LA MISMA LISTA, dos mensajes con ese id), aquí el tolerado se ARREGLA DE VERDAD -- su
+    objeto genuino no aparece nunca -- y en su hueco aparece UN SOLO mensaje que reutiliza su
+    id, con su mismo nivel, pero de otra causa. Por `id` y `level` los dos son indistinguibles
+    (medido por el revisor: 75 de 33 649 combinaciones, todas esta misma forma) y ni H1 ni el
+    guion viejo (68895d2) cazan este caso -- ambos dan verde. Solo la identidad del OBJETO
+    (parámetro `genuinos` de `evaluar()`, que `comprobar()` rellena con los singletons reales de
+    Django, R9) distingue al impostor."""
+
+    databases = set()
+
+    def test_impostor_con_mismo_id_y_nivel_que_el_arreglado_pone_rojo(self):
+        arreglado = sorted(ESPERADOS)[-1]
+        otros_tres = sorted(ESPERADOS)[:-1]
+        genuino_real = _genuino(arreglado)
+        impostor = CheckMessage(
+            WARNING,
+            "otro problema real, de otra causa, que reutiliza el id de un tolerado ya arreglado",
+            id=arreglado,
+        )
+        # El genuino real de "arreglado" NUNCA aparece en la lista -- se arregló de verdad --,
+        # solo su id vuelve, en un objeto distinto. `genuinos` solo tiene entrada para ESE id:
+        # los otros tres siguen sin exigir identidad, igual que antes de esta vuelta.
+        mensajes = [_msg(id) for id in otros_tres] + [impostor]
+        veredicto = evaluar(mensajes, genuinos={arreglado: genuino_real})
+        self.assertFalse(veredicto.ok)
+        self.assertIn(impostor, veredicto.intrusos)
+        # El id del impostor nunca llega a "vistos" (fue rechazado, no aceptado), así que
+        # también sale en `faltantes` -- el mismo doble nombrado, ya documentado como ruido
+        # inofensivo y no un hueco, que R7 produce con un esperado subido a ERROR.
+        self.assertEqual(veredicto.faltantes, [arreglado])
+
+    def test_el_genuino_de_verdad_sigue_pasando_con_el_mapa_de_identidad_puesto(self):
+        """Control: el mapa de identidad no debe producir falsos positivos contra el propio
+        genuino -- si esto fallara, R9 pondría en rojo el camino verde real (R1)."""
+        genuinos = {id: _genuino(id) for id in ESPERADOS}
+        mensajes = [_genuino(id) for id in ESPERADOS]
+        veredicto = evaluar(mensajes, genuinos=genuinos)
+        self.assertTrue(veredicto.ok)
+
+
 class EsperadoQueDesaparaceSinSustitutoTests(SimpleTestCase):
     """R6 (lista caducada): si uno de los cuatro esperados desaparece y nadie lo sustituye,
     el veredicto es rojo nombrando cuál esperado sobra en la lista -- la misma regla que la
@@ -238,7 +294,7 @@ class SilencedSystemChecksSeRespetaTests(SimpleTestCase):
 
     def test_un_id_silenciado_no_cuenta_como_intruso_tras_filtrar(self):
         ajeno_silenciado = _msg("otraapp.W099", texto="silenciado en settings")
-        mensajes = [_msg(id) for id in ESPERADOS] + [ajeno_silenciado]
+        mensajes = [_genuino(id) for id in ESPERADOS] + [ajeno_silenciado]
         with override_settings(SILENCED_SYSTEM_CHECKS=["otraapp.W099"]):
             self.assertTrue(ajeno_silenciado.is_silenced())
             codigo, salida = _comprobar_con(mensajes)
@@ -248,7 +304,7 @@ class SilencedSystemChecksSeRespetaTests(SimpleTestCase):
     def test_sin_silenciar_el_mismo_id_si_cuenta_como_intruso(self):
         ajeno = _msg("otraapp.W099", texto="sin silenciar")
         self.assertFalse(ajeno.is_silenced())
-        mensajes = [_msg(id) for id in ESPERADOS] + [ajeno]
+        mensajes = [_genuino(id) for id in ESPERADOS] + [ajeno]
         codigo, salida = _comprobar_con(mensajes)
         self.assertEqual(codigo, 1)
         self.assertIn("otraapp.W099", salida)
@@ -298,21 +354,21 @@ class ComprobarNombraAlCulpableEnRojoTests(SimpleTestCase):
     databases = set()
 
     def test_los_cuatro_esperados_ponen_comprobar_en_verde_de_verdad(self):
-        mensajes = [_msg(id) for id in ESPERADOS]
+        mensajes = [_genuino(id) for id in ESPERADOS]
         codigo, salida = _comprobar_con(mensajes)
         self.assertEqual(codigo, 0)
         self.assertIn("OK: los avisos de despliegue son exactamente los tolerados.", salida)
 
     def test_intruso_con_id_pone_comprobar_en_rojo_y_lo_nombra_en_la_salida(self):
         intruso = _msg("otraapp.W099", texto="un aviso ajeno de verdad")
-        mensajes = [_msg(id) for id in ESPERADOS] + [intruso]
+        mensajes = [_genuino(id) for id in ESPERADOS] + [intruso]
         codigo, salida = _comprobar_con(mensajes)
         self.assertEqual(codigo, 1)
         self.assertIn("ROJO", salida)
         self.assertIn("otraapp.W099", salida)
 
     def test_intruso_sin_id_pone_comprobar_en_rojo_con_el_marcador_sin_id(self):
-        mensajes = [_msg(id) for id in ESPERADOS] + [
+        mensajes = [_genuino(id) for id in ESPERADOS] + [
             CheckMessage(WARNING, "aviso sin identificador")
         ]
         codigo, salida = _comprobar_con(mensajes)
@@ -322,11 +378,37 @@ class ComprobarNombraAlCulpableEnRojoTests(SimpleTestCase):
     def test_esperado_que_falta_se_nombra_en_la_salida_de_comprobar(self):
         esperados_restantes = sorted(ESPERADOS)[:-1]
         que_sobra = sorted(ESPERADOS)[-1]
-        mensajes = [_msg(id) for id in esperados_restantes]
+        mensajes = [_genuino(id) for id in esperados_restantes]
         codigo, salida = _comprobar_con(mensajes)
         self.assertEqual(codigo, 1)
         self.assertIn("ROJO", salida)
         self.assertIn(que_sobra, salida)
+
+
+class ComprobarCazaAlImpostorQueReutilizaUnIdTests(SimpleTestCase):
+    """R9 a través de `comprobar()` DE VERDAD, no solo de `evaluar()` a solas -- el caso medido
+    por el revisor ([revisor-1] de `hallazgos.md`, tercera vuelta): tres tolerados GENUINOS (los
+    singletons reales de Django, via `_genuino()`) más un CUARTO mensaje que reutiliza el id del
+    tolerado que se arregló, con otro texto y otra causa. Antes de esta vuelta, `comprobar()` no
+    inyectaba ningún mapa de identidad a `evaluar()` y este caso pasaba en verde -- la sexta
+    puerta. Ahora inyecta `_genuinos_de_django()` y lo caza."""
+
+    databases = set()
+
+    def test_impostor_que_ocupa_el_hueco_de_un_arreglado_pone_comprobar_en_rojo(self):
+        arreglado = sorted(ESPERADOS)[-1]
+        otros_tres = sorted(ESPERADOS)[:-1]
+        impostor = CheckMessage(
+            WARNING,
+            "OTRO problema real, con otra causa y otro texto, que reutiliza el id de un "
+            "tolerado que ya se arregló",
+            id=arreglado,
+        )
+        mensajes = [_genuino(id) for id in otros_tres] + [impostor]
+        codigo, salida = _comprobar_con(mensajes)
+        self.assertEqual(codigo, 1)
+        self.assertIn("ROJO", salida)
+        self.assertIn(arreglado, salida)
 
 
 class ElGuionCompletoTerminaEnRojoAnteUnAvisoRealTests(SimpleTestCase):
