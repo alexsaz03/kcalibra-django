@@ -85,6 +85,35 @@ def _campos_del_formulario(html, accion_url):
     return set(re.findall(r'\bname="([^"]+)"', bloque)) - {"csrfmiddlewaretoken"}
 
 
+def _etiqueta_de_campo(bloque_campo):
+    """El texto exacto entre `<label>` y `</label>` de un bloque ya recortado por
+    `_bloque_de_campo`, para fijar la etiqueta por IGUALDAD. Vuelta 2 (H1 de la revisión):
+    un `assertIn` de subcadena deja pasar cualquier etiqueta que la CONTENGA, p. ej.
+    "Contraseña de un solo uso" contiene "Contraseña" y "Nueva contraseña (de nuevo)"
+    contiene "Nueva contraseña" — así que un `assertIn` no detecta que la librería cambió
+    la etiqueta, solo que la etiqueta nueva es casualmente un superconjunto de la vieja."""
+    coincidencia = re.search(r"<label[^>]*>(.*?)</label>", bloque_campo, re.DOTALL)
+    assert coincidencia, "no se encontró ninguna etiqueta en el bloque de campo"
+    return coincidencia.group(1).strip()
+
+
+def _ids_con_ayuda_visible(html):
+    """El conjunto de `id`s de campo cuyo bloque pinta de verdad un `<p>` de ayuda (la
+    clase con la que TODAS las plantillas de esta app pintan `field.help_text`). Vuelta 2
+    (H3 de la revisión): las cinco pantallas expuestas iteran `form.visible_fields` con un
+    `{% if field.help_text %}` genérico — vigilar solo los campos que HOY traen ayuda deja
+    sin vigilar cualquier campo nuevo (o ya existente) al que la librería le meta un
+    `help_text`. Recorrer TODOS los `id_for_label` de la página y fijar el conjunto completo
+    por `assertEqual` es lo que hace que un `help_text` nuevo, en cualquier campo, ponga la
+    red en rojo."""
+    ids_con_ayuda = set()
+    for field_id in re.findall(r'<label for="([^"]+)"', html):
+        bloque = _bloque_de_campo(html, field_id)
+        if 'class="mt-1 text-xs text-slate-500"' in bloque:
+            ids_con_ayuda.add(field_id)
+    return ids_con_ayuda
+
+
 def _ids_referenciados_por_aria_describedby(html):
     return set(re.findall(r'aria-describedby="([^"]+)"', html))
 
@@ -125,10 +154,10 @@ class PantallaDeEntrarTests(PruebaConRegistroAbierto):
         self.assertEqual(_campos_del_formulario(html, reverse("account_login")), {"login", "password"})
 
         bloque_login = _bloque_de_campo(html, "id_login")
-        self.assertIn("Correo electrónico", bloque_login)
+        self.assertEqual(_etiqueta_de_campo(bloque_login), "Correo electrónico")
 
         bloque_password = _bloque_de_campo(html, "id_password")
-        self.assertIn("Contraseña", bloque_password)
+        self.assertEqual(_etiqueta_de_campo(bloque_password), "Contraseña")
         # El help_text de `password` (el enlace "¿Ha olvidado tu contraseña?" que allauth
         # construye vía show_reset_help) NUNCA se pinta aquí: login.html no lo renderiza en
         # ningún { % if % } — el enlace bueno vive fuera del formulario, ver más abajo.
@@ -157,29 +186,49 @@ class PantallaDeEntrarTests(PruebaConRegistroAbierto):
 
 
 class PantallaDeCrearCuentaTests(PruebaConRegistroAbierto):
-    """R2 sobre `account_signup`, acotado a los TRES campos que construye la librería antes
-    de mezclarlos con `FormularioAlta` (`ACCOUNT_SIGNUP_FIELDS`): los demás campos son
-    nuestros (cuentas/forms.py) y no los decide ninguna versión de allauth."""
+    """R2 sobre `account_signup`: TRES campos son de la librería (`ACCOUNT_SIGNUP_FIELDS`,
+    antes de mezclarlos con `FormularioAlta`); el resto son nuestros (cuentas/forms.py) y no
+    los decide ninguna versión de allauth — pero un campo NUEVO que la librería añadiera
+    también tiene que ponerse en rojo, así que el conjunto se fija COMPLETO por igualdad
+    (H2 de la revisión, vuelta 2: un `<=` de subconjunto no detecta un campo de más)."""
+
+    # Los tres que decide la librería + los de FormularioAlta (cuentas/forms.py, los
+    # decidimos nosotros): el conjunto completo que hoy pinta la pantalla, medido
+    # renderizando (ver vuelta 2 de esta unidad).
+    CAMPOS_ESPERADOS = {
+        "email", "password1", "password2",  # de la librería, vía ACCOUNT_SIGNUP_FIELDS
+        "codigo_hogar", "nombre", "sexo", "fecha_nacimiento", "altura_cm", "peso_kg",
+        "actividad", "objetivo", "ajuste_pct", "dieta", "alergias", "intolerancias",
+        "no_le_gusta",  # de FormularioAlta
+    }
 
     def test_pinta_email_y_las_dos_contrasenas_de_la_libreria(self):
         respuesta = self.client.get("/cuentas/signup/")
         html = respuesta.content.decode()
-        campos = _campos_del_formulario(html, reverse("account_signup"))
-        self.assertTrue({"email", "password1", "password2"} <= campos)
+        self.assertEqual(_campos_del_formulario(html, reverse("account_signup")), self.CAMPOS_ESPERADOS)
 
         bloque_email = _bloque_de_campo(html, "id_email")
-        self.assertIn("Correo electrónico", bloque_email)
+        self.assertEqual(_etiqueta_de_campo(bloque_email), "Correo electrónico")
 
         bloque_password1 = _bloque_de_campo(html, "id_password1")
-        self.assertIn("Contraseña", bloque_password1)
+        self.assertEqual(_etiqueta_de_campo(bloque_password1), "Contraseña")
         # password1 aquí es un SetPasswordField: su help_text son los validadores de Django,
         # no show_reset_help, y SÍ se quiere pintado (es la explicación de qué contraseñas
         # valen).
         self.assertIn("8 caracteres", bloque_password1)
 
         bloque_password2 = _bloque_de_campo(html, "id_password2")
-        self.assertIn("Contraseña (de nuevo)", bloque_password2)
+        self.assertEqual(_etiqueta_de_campo(bloque_password2), "Contraseña (de nuevo)")
         self.assertNotIn("8 caracteres", bloque_password2)
+
+        # H3 de la revisión (vuelta 2): qué campos traen ayuda visible y cuáles no, fijado
+        # COMPLETO — no solo `password1`, que era el único vigilado antes. `codigo_hogar` y
+        # `ajuste_pct` son nuestros y ya traían ayuda; cualquier ayuda nueva en OTRO campo
+        # (nuestro o de la librería) cae aquí.
+        self.assertEqual(
+            _ids_con_ayuda_visible(html),
+            {"id_codigo_hogar", "id_ajuste_pct", "id_password1"},
+        )
 
 
 class PantallaDeCambiarContrasenaTests(PruebaConRegistroAbierto):
@@ -202,13 +251,19 @@ class PantallaDeCambiarContrasenaTests(PruebaConRegistroAbierto):
         )
 
         bloque_old = _bloque_de_campo(html, "id_oldpassword")
-        self.assertIn("Contraseña actual", bloque_old)
+        self.assertEqual(_etiqueta_de_campo(bloque_old), "Contraseña actual")
 
         bloque_p1 = _bloque_de_campo(html, "id_password1")
-        self.assertIn("Nueva contraseña", bloque_p1)
+        self.assertEqual(_etiqueta_de_campo(bloque_p1), "Nueva contraseña")
 
         bloque_p2 = _bloque_de_campo(html, "id_password2")
-        self.assertIn("Nueva contraseña (de nuevo)", bloque_p2)
+        self.assertEqual(_etiqueta_de_campo(bloque_p2), "Nueva contraseña (de nuevo)")
+
+        # H3 de la revisión (vuelta 2): qué campos traen ayuda visible y cuáles no, fijado
+        # COMPLETO — antes solo se vigilaba que `oldpassword` NO la trajera (ver el test de
+        # abajo) y que `password1` SÍ (ver el otro test de abajo); un `help_text` nuevo en
+        # `password2` no caía en ninguno de los dos. `password1` es el único que hoy la trae.
+        self.assertEqual(_ids_con_ayuda_visible(html), {"id_password1"})
 
     def test_oldpassword_no_pinta_su_texto_de_ayuda(self):
         """La mitad de R2 que R6 vuelve a comprobar por mutación (ver hallazgos.md): si
@@ -255,7 +310,7 @@ class PantallaDeRecuperarContrasenaTests(PruebaConRegistroAbierto):
         html = respuesta.content.decode()
         self.assertEqual(_campos_del_formulario(html, reverse("account_reset_password")), {"email"})
         bloque_email = _bloque_de_campo(html, "id_email")
-        self.assertIn("Correo electrónico", bloque_email)
+        self.assertEqual(_etiqueta_de_campo(bloque_email), "Correo electrónico")
 
 
 class PantallaDePonerContrasenaNuevaTests(PruebaConRegistroAbierto):
@@ -295,10 +350,10 @@ class PantallaDePonerContrasenaNuevaTests(PruebaConRegistroAbierto):
         )
 
         bloque_p1 = _bloque_de_campo(html, "id_password1")
-        self.assertIn("Nueva contraseña", bloque_p1)
+        self.assertEqual(_etiqueta_de_campo(bloque_p1), "Nueva contraseña")
         # Medido: esta plantilla no pinta help_text de ningún campo (ver docstring de la
         # clase) — si algún día empezara a hacerlo, este assert avisa del cambio de contrato.
         self.assertNotIn("8 caracteres", bloque_p1)
 
         bloque_p2 = _bloque_de_campo(html, "id_password2")
-        self.assertIn("Nueva contraseña (de nuevo)", bloque_p2)
+        self.assertEqual(_etiqueta_de_campo(bloque_p2), "Nueva contraseña (de nuevo)")
