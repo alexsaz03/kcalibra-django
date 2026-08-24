@@ -168,6 +168,17 @@ class R4_SinSesionSinMarcoTests(SimpleTestCase):
         self.assertIn("Entrar", contenido)
         self.assertIn("Crear cuenta", contenido)
 
+        # La cabecera "Entrar / Crear cuenta" es lo PRIMERO que se ve, no algo que aparece
+        # al fondo del scroll tras el contenido de la portada (regresión: el `{% if not
+        # user.is_authenticated %}` de la cabecera cayó detrás de `{% block content %}`).
+        indice_crear_cuenta = contenido.index("Crear cuenta")
+        indice_contenido = contenido.index("<h1")
+        self.assertLess(
+            indice_crear_cuenta,
+            indice_contenido,
+            "la cabecera 'Entrar / Crear cuenta' sale DESPUÉS del contenido de la portada",
+        )
+
 
 class R5_TokensYCifraEnCSSTests(SimpleTestCase):
     """R5 — el CSS servido trae los tokens del sistema de diseño con los valores EXACTOS del
@@ -184,17 +195,41 @@ class R5_TokensYCifraEnCSSTests(SimpleTestCase):
             cls.css = f.read()
 
     def test_los_colores_de_base_estan_con_su_valor_exacto(self):
-        for valor in [
-            "#0b0b0c", "#6b7280", "#9ca3af", "#ececef", "#f4f4f5", "#ffffff",
-            "#12b76a", "#e7f8f0", "#eb6834", "#fdeee7",
+        # Atado al NOMBRE del token, no solo al hex suelto: un hex correcto colgado del
+        # token equivocado (p. ej. `acento` y `racha` intercambiados) tiene que dar rojo.
+        css_sin_espacios = re.sub(r"\s+", "", self.css)
+        for nombre, valores in [
+            ("tinta", ["#0b0b0c"]),
+            ("tinta-media", ["#6b7280"]),
+            ("tinta-suave", ["#9ca3af"]),
+            ("linea", ["#ececef"]),
+            ("lienzo", ["#f4f4f5"]),
+            # Tailwind minifica `#ffffff` a la forma corta `#fff` al compilar (no le pasa a
+            # los demás valores de esta lista, ninguno tiene los tres pares repetidos).
+            ("superficie", ["#ffffff", "#fff"]),
+            ("acento", ["#12b76a"]),
+            ("acento-suave", ["#e7f8f0"]),
+            ("racha", ["#eb6834"]),
+            ("racha-suave", ["#fdeee7"]),
         ]:
-            with self.subTest(valor=valor):
-                self.assertIn(valor, self.css)
+            with self.subTest(nombre=nombre, valores=valores):
+                self.assertTrue(
+                    any(f"--color-{nombre}:{valor}" in css_sin_espacios for valor in valores),
+                    f"ninguno de {valores} encontrado como --color-{nombre}:<valor> en el CSS",
+                )
 
     def test_los_colores_de_macros_estan_con_su_valor_exacto(self):
-        for valor in ["#d55181", "#fbeef3", "#c98500", "#fdf4e3", "#2a78d6", "#eaf2fc"]:
-            with self.subTest(valor=valor):
-                self.assertIn(valor, self.css)
+        css_sin_espacios = re.sub(r"\s+", "", self.css)
+        for nombre, valor in [
+            ("proteina", "#d55181"),
+            ("proteina-suave", "#fbeef3"),
+            ("carbos", "#c98500"),
+            ("carbos-suave", "#fdf4e3"),
+            ("grasa", "#2a78d6"),
+            ("grasa-suave", "#eaf2fc"),
+        ]:
+            with self.subTest(nombre=nombre, valor=valor):
+                self.assertIn(f"--color-{nombre}:{valor}", css_sin_espacios)
 
     def test_los_radios_y_el_ancho_de_movil_estan(self):
         # Comprobado atado al NOMBRE del token (tarjeta/control/pastilla/movil, tal cual
@@ -228,12 +263,19 @@ class R6_CasosLimiteDeMovilTests(_ConAlejandroYSuHogar):
     iPhone en la barra inferior."""
 
     def test_la_cura_de_los_campos_de_fecha_esta_en_el_css(self):
+        # Las tres declaraciones tienen que estar en el MISMO bloque de regla, atado a los
+        # tres selectores de fecha/hora — no como tres subcadenas sueltas en cualquier parte
+        # del CSS: `appearance:none`, `min-width:0` y `max-width:100%` los pone Tailwind por
+        # su cuenta en el preflight y en `.min-w-0`, sin la cura, así que buscarlas sueltas no
+        # distingue si la cura existe de si Tailwind ya las traía por otro motivo.
         ruta = finders.find("css/tailwind.css")
         with open(ruta, encoding="utf-8") as f:
             css_sin_espacios = re.sub(r"\s+", "", f.read())
-        self.assertIn("appearance:none", css_sin_espacios)
-        self.assertIn("min-width:0", css_sin_espacios)
-        self.assertIn("max-width:100%", css_sin_espacios)
+        self.assertIn(
+            "input[type=date],input[type=time],input[type=datetime-local]"
+            "{appearance:none;box-sizing:border-box;min-width:0;max-width:100%}",
+            css_sin_espacios,
+        )
 
     def test_la_barra_inferior_reserva_el_hueco_del_iphone(self):
         respuesta = self.client.get("/")

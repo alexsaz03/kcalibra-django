@@ -80,6 +80,39 @@
       {# elemento de la pantalla (R6). #}
       <main class="space-y-4 px-4 pb-32">
       {% endif %}
+{% if not user.is_authenticated %}
+  {# Sin sesión (R4): nada de marco de app — ni barra inferior ni menú de ajustes, lo mismo  #}
+  {# de siempre (unidad 003). Este bloque va ANTES de `{% block content %}` (no después del   #}
+  {# marco con sesión): la cabecera y los mensajes tienen que salir arriba, igual que ya hace #}
+  {# la rama con sesión unos bloques más arriba, no al fondo de la página tras el contenido.  #}
+  <header class="border-b border-linea bg-superficie">
+    <nav class="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
+      <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-acento">KCalibra</a>
+      <div class="flex items-center gap-4 text-sm">
+        <a href="{% url 'account_login' %}" class="font-medium text-tinta-media hover:text-acento hover:underline">
+          Entrar
+        </a>
+        <a href="{% url 'account_signup' %}" class="rounded-control bg-acento px-3 py-1.5 font-medium text-white hover:opacity-90">
+          Crear cuenta
+        </a>
+      </div>
+    </nav>
+  </header>
+
+  {% if messages %}
+    <div class="mx-auto mt-4 max-w-2xl space-y-2 px-6">
+      {% for message in messages %}
+        <p class="rounded-lg border px-4 py-2 text-sm
+          {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
+          {% elif message.tags == 'warning' %}border-amber-300 bg-amber-50 text-amber-800
+          {% elif message.tags == 'success' %}border-acento bg-acento-suave text-tinta
+          {% else %}border-linea bg-lienzo text-tinta{% endif %}">
+          {{ message }}
+        </p>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endif %}
       {# `{% block %}` no puede repetirse en la misma plantilla (a diferencia de `{% if %}`,   #}
       {# que sí puede abrirse más de una vez): el contenido de la pantalla es COMÚN a la rama   #}
       {# con sesión y a la de sin sesión, así que el `{% if %}` de arriba se cierra justo       #}
@@ -139,36 +172,5 @@
     {% block accion_rapida %}{% endblock %}
   </div>
   {% endif %}
-{% if not user.is_authenticated %}
-  {# Sin sesión (R4): nada de marco de app — ni barra inferior ni menú de ajustes, lo mismo  #}
-  {# de siempre (unidad 003). #}
-  <header class="border-b border-linea bg-superficie">
-    <nav class="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
-      <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-acento">KCalibra</a>
-      <div class="flex items-center gap-4 text-sm">
-        <a href="{% url 'account_login' %}" class="font-medium text-tinta-media hover:text-acento hover:underline">
-          Entrar
-        </a>
-        <a href="{% url 'account_signup' %}" class="rounded-control bg-acento px-3 py-1.5 font-medium text-white hover:opacity-90">
-          Crear cuenta
-        </a>
-      </div>
-    </nav>
-  </header>
-
-  {% if messages %}
-    <div class="mx-auto mt-4 max-w-2xl space-y-2 px-6">
-      {% for message in messages %}
-        <p class="rounded-lg border px-4 py-2 text-sm
-          {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
-          {% elif message.tags == 'warning' %}border-amber-300 bg-amber-50 text-amber-800
-          {% elif message.tags == 'success' %}border-acento bg-acento-suave text-tinta
-          {% else %}border-linea bg-lienzo text-tinta{% endif %}">
-          {{ message }}
-        </p>
-      {% endfor %}
-    </div>
-  {% endif %}
-{% endif %}
 </body>
 </html>
