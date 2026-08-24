@@ -355,14 +355,30 @@ class ElVerdeNombraLoQueToleroTests(SimpleTestCase):
 
     def test_nombrar_no_convierte_el_verde_en_rojo_ni_al_reves(self):
         """El gemelo que impide el arreglo perezoso: imprimir los cuatro ids SIEMPRE, también
-        en rojo, haría pasar el test de arriba sin haber entendido nada. Aquí se exige que en
-        ROJO se siga señalando al intruso y que el verde no se cuele en su salida."""
+        en rojo, haría pasar el test de arriba sin haber entendido nada — R1 dice "cuando el
+        veredicto es verde", no "siempre". Aquí se exige que en ROJO se siga señalando al
+        intruso, que el verde no se cuele en su salida, y que la lista de tolerados **no
+        aparezca**.
+
+        El `assertNotIn` de la lista lo añadió la REVISIÓN de la 048, y su historia es la
+        lección: el constructor declaró haber medido este atajo por mutación y haber visto caer
+        este test. Lo que mutó en realidad fue otra cosa (meter `"OK:"` dentro de la línea
+        roja), que sí cae por el `assertNotIn("OK:")` de abajo. El atajo DE VERDAD —mover el
+        bucle de `veredicto.tolerados` fuera del `if veredicto.ok`— pasaba los **30 tests en
+        verde**: ninguno miraba esa lista en el camino rojo. Describir una mutación y medir
+        otra es la tercera forma de "pegado ≠ literal", y aquí la cometió quien construía."""
         ajeno = _msg("otraapp.W099", texto="un intruso cualquiera")
         codigo, salida = _comprobar_con([_genuino(id) for id in ESPERADOS] + [ajeno])
 
         self.assertEqual(codigo, 1, salida)
         self.assertIn("otraapp.W099", salida)
         self.assertNotIn("OK:", salida)
+        self.assertNotIn(
+            "tolerado, y visto",
+            salida,
+            "R1 nombra los tolerados SOLO en verde: en rojo, esa lista entierra el intruso "
+            "entre cuatro líneas de ruido, que es justo lo contrario de hacer accionable el rojo",
+        )
 
 
 class SilenciarUnToleradoLoDiceConSuNombreTests(SimpleTestCase):
