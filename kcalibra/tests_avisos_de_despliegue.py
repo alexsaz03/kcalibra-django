@@ -334,6 +334,95 @@ class SilencedSystemChecksSeRespetaTests(SimpleTestCase):
         self.assertIn("otraapp.W099", salida)
 
 
+class ElVerdeNombraLoQueToleroTests(SimpleTestCase):
+    """R1 (unidad 048): en VERDE, el guion decía UNA línea sin ids —"OK: los avisos de
+    despliegue son exactamente los tolerados"— mientras que el guion viejo, el que leía la
+    prosa de `manage.py check --deploy`, volcaba al log del CI los cuatro avisos con su id y su
+    texto. No incumplía nada (R1 de la 045 solo exige verde), pero el día que la lista de
+    tolerados caduque no habrá en el log ni una pista que lo delate: se verá el rojo de golpe.
+
+    Nombrar en verde no cambia el veredicto: el código de salida sigue siendo 0. Eso es la
+    mitad del criterio y por eso se afirma aquí, no solo el texto."""
+
+    databases = set()
+
+    def test_el_verde_nombra_los_cuatro_tolerados_y_sigue_siendo_verde(self):
+        codigo, salida = _comprobar_con([_genuino(id) for id in ESPERADOS])
+
+        self.assertEqual(codigo, 0, salida)
+        for id_esperado in sorted(ESPERADOS):
+            self.assertIn(id_esperado, salida)
+
+    def test_nombrar_no_convierte_el_verde_en_rojo_ni_al_reves(self):
+        """El gemelo que impide el arreglo perezoso: imprimir los cuatro ids SIEMPRE, también
+        en rojo, haría pasar el test de arriba sin haber entendido nada — R1 dice "cuando el
+        veredicto es verde", no "siempre". Aquí se exige que en ROJO se siga señalando al
+        intruso, que el verde no se cuele en su salida, y que la lista de tolerados **no
+        aparezca**.
+
+        El `assertNotIn` de la lista lo añadió la REVISIÓN de la 048, y su historia es la
+        lección: el constructor declaró haber medido este atajo por mutación y haber visto caer
+        este test. Lo que mutó en realidad fue otra cosa (meter `"OK:"` dentro de la línea
+        roja), que sí cae por el `assertNotIn("OK:")` de abajo. El atajo DE VERDAD —mover el
+        bucle de `veredicto.tolerados` fuera del `if veredicto.ok`— pasaba los **30 tests en
+        verde**: ninguno miraba esa lista en el camino rojo. Describir una mutación y medir
+        otra es la tercera forma de "pegado ≠ literal", y aquí la cometió quien construía."""
+        ajeno = _msg("otraapp.W099", texto="un intruso cualquiera")
+        codigo, salida = _comprobar_con([_genuino(id) for id in ESPERADOS] + [ajeno])
+
+        self.assertEqual(codigo, 1, salida)
+        self.assertIn("otraapp.W099", salida)
+        self.assertNotIn("OK:", salida)
+        self.assertNotIn(
+            "tolerado, y visto",
+            salida,
+            "R1 nombra los tolerados SOLO en verde: en rojo, esa lista entierra el intruso "
+            "entre cuatro líneas de ruido, que es justo lo contrario de hacer accionable el rojo",
+        )
+
+
+class SilenciarUnToleradoLoDiceConSuNombreTests(SimpleTestCase):
+    """R2 (unidad 048): silenciar uno de los cuatro tolerados con `SILENCED_SYSTEM_CHECKS` ya
+    ponía el guion en ROJO antes de esta unidad, y así se queda **por decisión del usuario del
+    2026-08-24**: es MÁS estricto que Django, y es lo correcto — silenciar a escondidas un aviso
+    que el guardián vigila es justo lo que el guardián existe para impedir. Lo que estaba mal
+    era lo que DECÍA: el tolerado silenciado desaparecía de `visibles`, caía en `faltantes` y se
+    imprimía con el consejo de R6 —"¿se arregló? quítalo de ESPERADOS"— que es **el consejo
+    contrario** al que necesita quien acaba de silenciarlo. Seguirlo empeora las cosas: quitas
+    de la lista un aviso que sigue vivo y solo estaba tapado.
+
+    Aquí se exige que el rojo diga la verdad: que está **silenciado**."""
+
+    databases = set()
+
+    def test_un_tolerado_silenciado_pone_rojo_diciendo_que_esta_silenciado(self):
+        with override_settings(SILENCED_SYSTEM_CHECKS=["security.W004"]):
+            codigo, salida = _comprobar_con([_genuino(id) for id in ESPERADOS])
+
+        self.assertEqual(codigo, 1, salida)
+        self.assertIn("security.W004", salida)
+        self.assertIn("silenciado", salida.lower())
+        self.assertNotIn(
+            "¿se arregló?",
+            salida,
+            "un tolerado SILENCIADO no es un tolerado arreglado: aconsejar quitarlo de "
+            "ESPERADOS es el consejo contrario, y seguirlo deja el aviso vivo y sin vigilar",
+        )
+
+    def test_un_tolerado_que_de_verdad_desaparece_sigue_dando_el_consejo_de_R6(self):
+        """El gemelo, y es el que impide curar R2 rompiendo R6: cuando un tolerado desaparece
+        porque se ARREGLÓ de verdad (nadie lo silenció), el consejo bueno sigue siendo el de
+        siempre — quítalo de ESPERADOS. Sin este test, cambiar el mensaje de faltantes a
+        "silenciado" para todos pasaría el test de arriba y mentiría en el caso normal."""
+        tres = [_genuino(id) for id in sorted(ESPERADOS) if id != "security.W004"]
+        codigo, salida = _comprobar_con(tres)
+
+        self.assertEqual(codigo, 1, salida)
+        self.assertIn("security.W004", salida)
+        self.assertIn("¿se arregló?", salida)
+        self.assertNotIn("silenciado", salida.lower())
+
+
 class ChequeQueRevientaTests(SimpleTestCase):
     """R8 (caso límite): un check que revienta al ejecutarse nunca se da por bueno. Se
     comprueba en `comprobar()` (el envoltorio), no en `evaluar()`: `run_checks()` es quien
