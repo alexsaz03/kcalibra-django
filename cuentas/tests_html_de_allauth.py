@@ -230,6 +230,24 @@ class PantallaDeCrearCuentaTests(PruebaConRegistroAbierto):
             {"id_codigo_hogar", "id_ajuste_pct", "id_password1"},
         )
 
+    def test_ningun_aria_describedby_apunta_a_un_id_que_no_existe(self):
+        """R2 (unidad 052): el mismo markup muerto que la 049 arregló en *Cambiar tu
+        contraseña*, aquí por tres puertas a la vez. Django le pone al `<input>` un
+        `aria-describedby="{auto_id}_helptext"` a todo campo con `help_text` (nota 7 de
+        `conocimiento/django-notas-del-esqueleto.md`), pero el `<p>` que esta plantilla pinta
+        no llevaba ese `id`, así que los tres apuntaban a la nada. Medido antes de arreglarlo:
+        `id_codigo_hogar_helptext`, `id_ajuste_pct_helptext` e `id_password1_helptext`, los
+        tres huérfanos. Comprobación genérica sobre TODA la página: cualquier huérfano futuro
+        cae aquí igual."""
+        html = self.client.get("/cuentas/signup/").content.decode()
+        ids_presentes = _ids_presentes(html)
+        for id_referenciado in _ids_referenciados_por_aria_describedby(html):
+            self.assertIn(
+                id_referenciado,
+                ids_presentes,
+                f"aria-describedby apunta a {id_referenciado!r}, que no existe en la página",
+            )
+
 
 class PantallaDeCambiarContrasenaTests(PruebaConRegistroAbierto):
     """R2 y R4 sobre `account_change_password`: la pantalla exacta donde mordió la 046.
@@ -315,12 +333,17 @@ class PantallaDeRecuperarContrasenaTests(PruebaConRegistroAbierto):
 
 class PantallaDePonerContrasenaNuevaTests(PruebaConRegistroAbierto):
     """R2 sobre `account_reset_password_from_key`: ResetPasswordKeyForm decide
-    password1/password2. Medido (no supuesto): a diferencia de `signup.html` y
-    `password_change.html`, `password_reset_from_key.html` NO pinta `field.help_text` para
-    NINGÚN campo de su `{% for %}` — ni siquiera lo pregunta con un `{% if %}` — así que los
-    validadores de `password1` no salen aquí. Es un comportamiento previo a esta unidad, fuera
-    de los criterios de aceptación (R4 solo habla de *Entrar* y *Cambiar tu contraseña*): se
-    deja constancia en hallazgos.md como hallazgo, no se arregla en esta unidad."""
+    password1/password2.
+
+    **Cambio de contrato, decidido por el usuario el 2026-08-24 (unidad 052).** Hasta la 049
+    esta plantilla NO pintaba `field.help_text` para ningún campo, así que los validadores de
+    `password1` no salían: quien recuperaba su contraseña desde el enlace del correo era el
+    único que NO veía qué contraseñas valen — a diferencia de quien se da de alta y de quien
+    la cambia estando dentro. La 049 lo midió y lo dejó escrito como hallazgo, fuera de su
+    alcance; la 052 lo arregla. Por eso el assert de `password1` está INVERTIDO respecto a la
+    049: donde decía `assertNotIn("8 caracteres", ...)` ahora dice `assertIn`. No es un test
+    debilitado — es el mismo test vigilando la promesa nueva, y sigue cayendo si la ayuda
+    desaparece."""
 
     _RE_ENLACE_RECUPERAR = re.compile(r"(http\S+/cuentas/password/reset/key/\S+/)")
 
@@ -336,7 +359,7 @@ class PantallaDePonerContrasenaNuevaTests(PruebaConRegistroAbierto):
         self.assertIsNotNone(coincidencia, "el correo no trae un enlace de recuperación")
         return coincidencia.group(1)
 
-    def test_pinta_las_dos_contrasenas_con_sus_etiquetas_y_sin_ayuda(self):
+    def test_pinta_las_dos_contrasenas_con_sus_etiquetas_y_CON_la_ayuda(self):
         enlace = self._enlace_de_recuperacion_valido("alejandro@example.com")
         # La primera visita REDIRIGE (allauth mueve el token de la URL a la sesión): hay que
         # seguirla para llegar al formulario de verdad, con token_fail=False.
@@ -351,9 +374,31 @@ class PantallaDePonerContrasenaNuevaTests(PruebaConRegistroAbierto):
 
         bloque_p1 = _bloque_de_campo(html, "id_password1")
         self.assertEqual(_etiqueta_de_campo(bloque_p1), "Nueva contraseña")
-        # Medido: esta plantilla no pinta help_text de ningún campo (ver docstring de la
-        # clase) — si algún día empezara a hacerlo, este assert avisa del cambio de contrato.
-        self.assertNotIn("8 caracteres", bloque_p1)
+        # R1 (unidad 052): las reglas de contraseña SÍ se ven aquí, como en las otras dos
+        # pantallas. Se comprueban las cuatro, no solo una: si un día se pierde el bucle de
+        # validadores y solo sale la primera, esto cae.
+        for regla in ("información personal", "8 caracteres", "utilizada comúnmente",
+                      "completamente numérica"):
+            self.assertIn(regla, bloque_p1, f"falta la regla {regla!r} en la ayuda de password1")
 
         bloque_p2 = _bloque_de_campo(html, "id_password2")
         self.assertEqual(_etiqueta_de_campo(bloque_p2), "Nueva contraseña (de nuevo)")
+        # password2 no tiene help_text propio: la ayuda va SOLO bajo password1, no repetida.
+        self.assertNotIn("8 caracteres", bloque_p2)
+
+    def test_ningun_aria_describedby_apunta_a_un_id_que_no_existe(self):
+        """R2 (unidad 052): aquí el huérfano existía SIEMPRE, no solo tras una subida de
+        allauth — `password1` traía `help_text` (los validadores) desde que la plantilla
+        existe, Django le ponía su `aria-describedby`, y la plantilla no pintaba el `<p>` al
+        que apuntar. Medido antes de arreglarlo: `id_password1_helptext`, huérfano."""
+        enlace = self._enlace_de_recuperacion_valido("aria@example.com")
+        respuesta = self.client.get(enlace, follow=True)
+        html = respuesta.content.decode()
+        self.assertNotContains(respuesta, "ya no vale")
+        ids_presentes = _ids_presentes(html)
+        for id_referenciado in _ids_referenciados_por_aria_describedby(html):
+            self.assertIn(
+                id_referenciado,
+                ids_presentes,
+                f"aria-describedby apunta a {id_referenciado!r}, que no existe en la página",
+            )
