@@ -35,6 +35,106 @@ clases que usan las plantillas), venga la detección de donde venga.
 */
 @source "../../**/templates";
 
+/* ==========================================================================
+   Sistema de diseño de KCalibra — unidad 050 (el-marco-de-app-de-movil).
+
+   Tokens copiados con sus VALORES EXACTOS de
+   ~/Desktop/proyectos/kcalibra/frontend/src/index.css (la versión vieja de Node, que tiene
+   el aspecto de la app ya decidido y justificado desde el 2026-07-27 — ver "Diseño
+   conversado" de la especificación de esta unidad). No se copia el fichero, solo los
+   valores: aquí viven como tokens de Tailwind 4, no como CSS suelto.
+   ========================================================================== */
+/* `static` (no la palabra por defecto): sin esto, Tailwind 4 SOLO deja en el CSS compilado
+   los tokens que una utilidad generada usa de verdad (tree-shaking) — así que un token que
+   ninguna plantilla usa TODAVÍA (las píldoras de macro, la racha: nacen con la primera
+   pantalla que las use, "Fuera de alcance" de esta unidad) desaparecía del CSS servido, y R5
+   exige que los 18 tokens estén con su valor exacto DESDE esta unidad, los use ya alguien o
+   no. Comprobado (2026-08-24): sin `static`, faltaban del CSS compilado exactamente los seis
+   de macros, `tinta-suave` y los dos de `racha` — ninguno usado todavía por ninguna plantilla. */
+@theme static {
+  /* --- Tipografía ---------------------------------------------------------
+     Fuente del sistema: en iPhone sale SF Pro, que es lo que hace que la web se sienta
+     nativa sin descargar ninguna fuente. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    system-ui, "Segoe UI", Roboto, sans-serif;
+
+  /* --- Color --------------------------------------------------------------
+     Base en escala de grises para que los datos manden visualmente. Un único acento fuerte
+     (verde) para progreso. */
+  --color-tinta: #0b0b0c;          /* texto principal y botones sólidos */
+  --color-tinta-media: #6b7280;    /* texto secundario */
+  --color-tinta-suave: #9ca3af;    /* texto terciario / iconos apagados */
+  --color-linea: #ececef;          /* bordes y separadores */
+  --color-lienzo: #f4f4f5;         /* fondo de la app */
+  --color-superficie: #ffffff;     /* tarjetas */
+
+  --color-acento: #12b76a;         /* progreso, objetivo cumplido */
+  --color-acento-suave: #e7f8f0;   /* fondo de estados positivos */
+  --color-racha: #eb6834;          /* rachas y avisos motivacionales */
+  --color-racha-suave: #fdeee7;
+
+  /* Macros: paleta CATEGÓRICA validada (separación CVD 13.2 deutan / 19.3 normal). Nunca se
+     usan como único identificador: las píldoras llevan siempre etiqueta de texto, que es el
+     alivio que exige el bajo contraste del amarillo sobre blanco. */
+  --color-proteina: #d55181;
+  --color-proteina-suave: #fbeef3;
+  --color-carbos: #c98500;
+  --color-carbos-suave: #fdf4e3;
+  --color-grasa: #2a78d6;
+  --color-grasa-suave: #eaf2fc;
+
+  /* --- Forma --------------------------------------------------------------
+     Radios generosos, al gusto de iOS. */
+  --radius-tarjeta: 1.5rem;   /* 24px */
+  --radius-control: 1rem;     /* 16px */
+  --radius-pastilla: 999px;
+
+  /* Ancho de "teléfono": la app se ve igual en el móvil y en el escritorio. */
+  --spacing-movil: 27rem;     /* 432px */
+}
+
+/* Los números de datos (kcal, peso) llevan cifras de ancho fijo: sin esto "bailan" al
+   actualizarse, que es lo que delata a una web frente a una app nativa. */
+.cifra {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+/* Evita que iOS agrande el texto al girar el móvil. */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Quita el resaltado azul de iOS al tocar, que rompe la ilusión de app. */
+@media (hover: none) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Campos de fecha y hora (R6, caso límite que solo se ve en el móvil de verdad).
+   En Safari de iOS el control nativo tiene un ancho intrínseco propio y NO respeta el
+   width:100% del contenedor: se desborda por la derecha y se sale de la tarjeta. Quitarle la
+   apariencia nativa y permitirle encoger lo deja dentro. En Chrome de escritorio no se nota. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Sin apariencia nativa, iOS alinea el texto arriba; esto lo centra otra vez y deja el icono
+   del calendario pegado a la derecha del campo. */
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  margin-left: auto;
+}
+
 /*
 Estilo base de los formularios (unidad 003, ampliado en la 004): allauth genera sus widgets
 sin clases propias, así que en vez de tocar cada campo uno a uno se les da un aspecto
@@ -42,6 +142,8 @@ consistente aquí, por tipo de elemento. Así cualquier formulario nuevo (de est
 las que vengan) sale con el mismo estilo sin tener que acordarse de nada en la plantilla.
 Unidad 004: el formulario de "tus datos" añade `<select>`, `<textarea>` y campos numéricos y
 de fecha, que la unidad 003 no necesitaba — se cubren aquí, no plantilla a plantilla.
+Unidad 050: los colores literales pasan a los tokens nuevos (`slate` -> `linea`/`tinta`,
+`emerald` -> `acento`); el resto del bloque se conserva tal cual.
 */
 @layer base {
   input[type="email"],
@@ -51,7 +153,7 @@ de fecha, que la unidad 003 no necesitaba — se cubren aquí, no plantilla a pl
   input[type="date"],
   select,
   textarea {
-    @apply mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900
-      shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500;
+    @apply mt-1 block w-full rounded-lg border border-linea px-3 py-2 text-tinta
+      shadow-sm focus:border-acento focus:outline-none focus:ring-1 focus:ring-acento;
   }
 }

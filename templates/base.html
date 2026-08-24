@@ -14,40 +14,87 @@
   <script src="{% static 'js/htmx.min.js' %}" defer></script>
   <script src="{% static 'js/alpine.min.js' %}" defer></script>
 </head>
-<body class="h-full bg-slate-50 text-slate-900">
-  {# Barra de arriba: distingue si hay alguien dentro o no (parte del contrato de la unidad #}
-  {# 003 — "la portada... pasa a distinguir si hay alguien dentro o no" se aplica igual a     #}
-  {# toda la app, no solo a la portada). #}
-  <header class="border-b border-slate-200 bg-white">
+<body class="h-full bg-lienzo font-sans text-tinta antialiased">
+{% if user.is_authenticated %}
+  {# ------------------------------------------------------------------------------------ #}
+  {# Marco de app de móvil (unidad 050): columna única de ancho de teléfono (`max-w-movil`)  #}
+  {# centrada también en escritorio. `min-h-dvh` y NO `min-h-screen`: en iOS, `100vh` mide    #}
+  {# la pantalla CON las barras de Safari plegadas, así que el viewport de maquetación sale   #}
+  {# más alto que lo que de verdad se ve — la barra inferior, anclada a él con `fixed`,       #}
+  {# acababa por debajo del borde visible al desplegarse la barra del navegador. `dvh` sigue  #}
+  {# la altura real en cada momento (mismo porqué que AppShell.jsx del proyecto viejo).       #}
+  {# ------------------------------------------------------------------------------------ #}
+  <div class="min-h-dvh bg-lienzo" x-data="{ ajustesAbierto: false }">
+    <div class="mx-auto w-full max-w-movil min-h-dvh bg-lienzo">
+      <header class="relative flex items-start justify-between gap-3 px-5 pt-3 pb-4">
+        <div class="min-w-0">
+          {# El nombre de quien mira, SIEMPRE en la barra de arriba (unidad 024, R1/G-196):  #}
+          {# por su nombre, nunca por su correo. `{{ }}` falla en silencio si no hay          #}
+          {# `Persona` (R7) — no hace falta guardarla con `{% if %}` como a un `{% url %}`.   #}
+          <p class="text-[13px] text-tinta-media">{{ user.persona.nombre }}</p>
+          {% block titulo_grande %}{% endblock %}
+        </div>
+        <div class="shrink-0 pt-1">
+          {# Botón de ajustes: los cuatro destinos de siempre que no son pestaña, más Salir   #}
+          {# (R2, "no romper nada" — ver "Cómo lo pruebas tú", fila 5 de la especificación).  #}
+          <button
+            type="button"
+            @click="ajustesAbierto = !ajustesAbierto"
+            @click.outside="ajustesAbierto = false"
+            aria-label="Ajustes"
+            aria-haspopup="true"
+            class="flex h-10 w-10 items-center justify-center rounded-pastilla bg-superficie text-tinta-media shadow-sm"
+          >{% include "_iconos.html#ajustes" %}</button>
+          <div
+            x-show="ajustesAbierto"
+            x-transition
+            class="absolute right-5 z-50 mt-2 w-48 rounded-control bg-superficie py-1 shadow-lg ring-1 ring-linea"
+          >
+            <a href="{% url 'perfiles:ver_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tus datos</a>
+            <a href="{% url 'perfiles:peso_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tu peso</a>
+            <a href="{% url 'recetas:lista' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Recetas</a>
+            <a href="{% url 'hogares:mi_hogar' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">El hogar</a>
+            <form method="post" action="{% url 'account_logout' %}">
+              {% csrf_token %}
+              <button type="submit" class="block w-full px-4 py-2 text-left text-[15px] text-tinta hover:bg-lienzo">Salir</button>
+            </form>
+          </div>
+        </div>
+      </header>
+
+      {% if messages %}
+        <div class="space-y-2 px-5">
+          {% for message in messages %}
+            <p class="rounded-control border px-4 py-2 text-sm
+              {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
+              {% elif message.tags == 'warning' %}border-amber-300 bg-amber-50 text-amber-800
+              {% elif message.tags == 'success' %}border-acento bg-acento-suave text-tinta
+              {% else %}border-linea bg-lienzo text-tinta{% endif %}">
+              {{ message }}
+            </p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {# El relleno inferior deja sitio a la barra flotante para que no tape el último        #}
+      {# elemento de la pantalla (R6). #}
+      <main class="space-y-4 px-4 pb-32">
+      {% endif %}
+{% if not user.is_authenticated %}
+  {# Sin sesión (R4): nada de marco de app — ni barra inferior ni menú de ajustes, lo mismo  #}
+  {# de siempre (unidad 003). Este bloque va ANTES de `{% block content %}` (no después del   #}
+  {# marco con sesión): la cabecera y los mensajes tienen que salir arriba, igual que ya hace #}
+  {# la rama con sesión unos bloques más arriba, no al fondo de la página tras el contenido.  #}
+  <header class="border-b border-linea bg-superficie">
     <nav class="mx-auto flex max-w-2xl items-center justify-between px-6 py-4">
-      <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-emerald-700">KCalibra</a>
+      <a href="{% url 'paginas:inicio' %}" class="text-lg font-bold text-acento">KCalibra</a>
       <div class="flex items-center gap-4 text-sm">
-        {% if user.is_authenticated %}
-          {# Unidad 024, R1/G-196: en toda la app se llama por el nombre, nunca por el correo #}
-          {# con el que se entra — el correo es solo la llave, no identifica a nadie delante  #}
-          {# de los demás. #}
-          <span class="text-slate-600">{{ user.persona.nombre }}</span>
-          <a href="{% url 'perfiles:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tus datos</a>
-          <a href="{% url 'perfiles:peso_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu peso</a>
-          <a href="{% url 'progreso:ver_mio' %}" class="font-medium text-emerald-700 hover:underline">Tu progreso</a>
-          <a href="{% url 'entrenos:ver_mios' %}" class="font-medium text-emerald-700 hover:underline">Entrenos</a>
-          <a href="{% url 'despensa:ver' %}" class="font-medium text-emerald-700 hover:underline">Despensa</a>
-          <a href="{% url 'recetas:lista' %}" class="font-medium text-emerald-700 hover:underline">Recetas</a>
-          <a href="{% url 'hogares:mi_hogar' %}" class="font-medium text-emerald-700 hover:underline">El hogar</a>
-          <form method="post" action="{% url 'account_logout' %}" class="inline">
-            {% csrf_token %}
-            <button type="submit" class="font-medium text-slate-600 hover:text-emerald-700 hover:underline">
-              Salir
-            </button>
-          </form>
-        {% else %}
-          <a href="{% url 'account_login' %}" class="font-medium text-slate-600 hover:text-emerald-700 hover:underline">
-            Entrar
-          </a>
-          <a href="{% url 'account_signup' %}" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700">
-            Crear cuenta
-          </a>
-        {% endif %}
+        <a href="{% url 'account_login' %}" class="font-medium text-tinta-media hover:text-acento hover:underline">
+          Entrar
+        </a>
+        <a href="{% url 'account_signup' %}" class="rounded-control bg-acento px-3 py-1.5 font-medium text-white hover:opacity-90">
+          Crear cuenta
+        </a>
       </div>
     </nav>
   </header>
@@ -58,14 +105,72 @@
         <p class="rounded-lg border px-4 py-2 text-sm
           {% if message.tags == 'error' %}border-red-300 bg-red-50 text-red-800
           {% elif message.tags == 'warning' %}border-amber-300 bg-amber-50 text-amber-800
-          {% elif message.tags == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-800
-          {% else %}border-slate-300 bg-slate-50 text-slate-800{% endif %}">
+          {% elif message.tags == 'success' %}border-acento bg-acento-suave text-tinta
+          {% else %}border-linea bg-lienzo text-tinta{% endif %}">
           {{ message }}
         </p>
       {% endfor %}
     </div>
   {% endif %}
+{% endif %}
+      {# `{% block %}` no puede repetirse en la misma plantilla (a diferencia de `{% if %}`,   #}
+      {# que sí puede abrirse más de una vez): el contenido de la pantalla es COMÚN a la rama   #}
+      {# con sesión y a la de sin sesión, así que el `{% if %}` de arriba se cierra justo       #}
+      {# antes de pintarlo y se vuelve a abrir justo después, solo para cerrar el marco.        #}
+      {% block content %}{% endblock %}
+      {% if user.is_authenticated %}
+      </main>
+    </div>
 
-  {% block content %}{% endblock %}
+    {# ---------------------------------------------------------------------------------- #}
+    {# Barra inferior flotante oscura (R1): cinco pestañas, las que el mapa aprobado ya     #}
+    {# nombra. La pestaña activa se decide con el NAMESPACE de la app que resolvió la URL   #}
+    {# (`request.resolver_match.namespace`), NUNCA comparando la URL a mano (R3): así una   #}
+    {# subpantalla (p. ej. `/entrenos/3/corregir/`, namespace "entrenos") enciende igual su  #}
+    {# pestaña. El hueco del indicador del iPhone se reserva con                            #}
+    {# `env(safe-area-inset-bottom)` (R6) — sin esto, la barra queda por debajo del borde    #}
+    {# visible en iOS (mismo porqué que `AppShell.jsx`).                                    #}
+    {# ---------------------------------------------------------------------------------- #}
+    <nav
+      class="fixed inset-x-0 bottom-0 z-40"
+      style="padding-bottom: max(1rem, env(safe-area-inset-bottom))"
+      aria-label="Navegación principal"
+    >
+      <div class="mx-auto w-full max-w-movil px-4">
+        <div class="flex items-center justify-around rounded-pastilla bg-tinta px-2 py-2.5 shadow-lg">
+          <a href="{% url 'paginas:inicio' %}" aria-label="Inicio" {% if request.resolver_match.namespace == 'paginas' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'paginas' %}text-white{% else %}text-white/45{% endif %}">
+            {% include "_iconos.html#inicio" %}
+            <span class="text-[10px] font-medium leading-none">Inicio</span>
+          </a>
+          {% if user.persona and user.persona.hogar %}
+          {# Sin hogar (R7, "o con Persona sin hogar" — p. ej. esperando que le acepten en    #}
+          {# uno, unidad 003) no hay `PlanDeDia` del que colgar nada: `planes/tests.py`       #}
+          {# (H2) ya prueba que ese destino no se ofrece, porque sería un enlace muerto.      #}
+          <a href="{% url 'planes:apuntar' user.persona.id %}" aria-label="Plan" {% if request.resolver_match.namespace == 'planes' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'planes' %}text-white{% else %}text-white/45{% endif %}">
+            {% include "_iconos.html#plan" %}
+            <span class="text-[10px] font-medium leading-none">Plan</span>
+          </a>
+          {% endif %}
+          <a href="{% url 'despensa:ver' %}" aria-label="Stock" {% if request.resolver_match.namespace == 'despensa' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'despensa' %}text-white{% else %}text-white/45{% endif %}">
+            {% include "_iconos.html#stock" %}
+            <span class="text-[10px] font-medium leading-none">Stock</span>
+          </a>
+          <a href="{% url 'entrenos:ver_mios' %}" aria-label="Entrenos" {% if request.resolver_match.namespace == 'entrenos' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'entrenos' %}text-white{% else %}text-white/45{% endif %}">
+            {% include "_iconos.html#entrenos" %}
+            <span class="text-[10px] font-medium leading-none">Entrenos</span>
+          </a>
+          <a href="{% url 'progreso:ver_mio' %}" aria-label="Progreso" {% if request.resolver_match.namespace == 'progreso' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'progreso' %}text-white{% else %}text-white/45{% endif %}">
+            {% include "_iconos.html#progreso" %}
+            <span class="text-[10px] font-medium leading-none">Progreso</span>
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    {# El botón redondo de acción rápida: el hueco queda definido y vacío en esta unidad     #}
+    {# (fuera de alcance, ver especificación) — lo llena cada pantalla en las siguientes.     #}
+    {% block accion_rapida %}{% endblock %}
+  </div>
+  {% endif %}
 </body>
 </html>
