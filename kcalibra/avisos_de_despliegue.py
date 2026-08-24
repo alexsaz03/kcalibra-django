@@ -161,14 +161,26 @@ def comprobar():
     (`CheckMessage.is_silenced()`) — el corte por nivel lo aplica `evaluar()`, no esta función
     — inyecta los objetos SINGLETON genuinos de Django (R9, `_genuinos_de_django()`) para que
     un impostor que reutilice el id de un tolerado no pase por identidad, imprime el veredicto
-    legible y devuelve el código de salida. Un check que revienta al ejecutarse nunca se da por
-    bueno: se imprime la traza completa y se sale en rojo."""
+    legible y devuelve el código de salida. Un check que revienta al ejecutarse **o que se mata
+    con `sys.exit()`** nunca se da por bueno: se imprime la traza completa y se sale en rojo
+    (bug 047 — `except Exception` no atrapaba la `SystemExit`, y el guion salía en verde)."""
     from django.core.checks import run_checks
 
     try:
         mensajes = run_checks(include_deployment_checks=True)
-    except Exception:
-        print("ROJO: al menos un check reventó al ejecutarse:")
+    except BaseException:
+        # `BaseException` y no `Exception`, a propósito (bug 047, la SÉPTIMA puerta). Un check
+        # no solo puede REVENTAR: puede MATARSE. `sys.exit()` levanta `SystemExit`, que cuelga
+        # directamente de `BaseException` y NO de `Exception` -- es el mecanismo con el que
+        # Python deja que una salida deliberada atraviese los `except` genéricos de en medio.
+        # Aquí ese mecanismo jugaba en contra: la `SystemExit` se escapaba de esta función,
+        # `sys.exit(comprobar())` no llegaba a ejecutarse jamás y el proceso moría con el
+        # código que traía puesto -- 0 ante un `sys.exit(0)`, o sea VERDE, con la configuración
+        # de despliegue SIN comprobar y sin imprimir una sola línea. Medido antes del arreglo:
+        # el guion completo con un check que hace `sys.exit(0)` salía en código 0 y mudo.
+        # `KeyboardInterrupt` entra por la misma puerta y con la misma razón: un Ctrl-C a mitad
+        # tampoco es un veredicto. El proceso termina igual, pero termina diciendo la verdad.
+        print("ROJO: al menos un check reventó o se mató al ejecutarse:")
         traceback.print_exc()
         return 1
 

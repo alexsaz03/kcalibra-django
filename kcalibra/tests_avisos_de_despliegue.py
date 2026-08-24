@@ -366,6 +366,124 @@ class ChequeQueRevientaTests(SimpleTestCase):
         self.assertIn("un check roto de mentira, para R8", traza_completa)
 
 
+class ChequeQueSeMataConSysExitTests(SimpleTestCase):
+    """Bug 047 (séptima puerta): R8 promete que un check que revienta al ejecutarse termina en
+    ROJO — «nunca se da por bueno lo que no se pudo comprobar». Pero un check no solo puede
+    reventar: puede MATARSE. `sys.exit()` levanta `SystemExit`, que NO hereda de `Exception`
+    sino directamente de `BaseException`, así que el `except Exception` de `comprobar()` la
+    dejaba pasar de largo: `sys.exit(comprobar())` no llegaba a ejecutarse nunca y el proceso
+    moría con el código que traía la `SystemExit` — **0**, o sea VERDE, con la configuración de
+    despliegue sin comprobar y `scripts/ci/security` (que corre bajo `set -e`) tan contento.
+
+    Lo encontró el revisor de la 045 en la vuelta de confirmación; el usuario lo dejó fuera de
+    aquella unidad a propósito y pidió cerrarlo el 2026-08-24. No era regresión —el guion viejo,
+    `manage.py check --deploy`, también salía 0 ante un check que hacía `sys.exit(0)`— pero sí
+    incumplía R8 tal como está escrito.
+
+    Los tres tests de aquí cubren las tres formas de `BaseException` que pueden llegar a este
+    `try`, y por eso el arreglo es `except BaseException` y no `except (Exception, SystemExit)`:
+    lo que se está tapando no es «`SystemExit` en concreto», es **cualquier cosa que atraviese
+    el try sin que nadie dictamine**."""
+
+    databases = set()
+
+    def _comprobar_con_un_run_checks_que(self, funcion):
+        """Igual que `_comprobar_con()`, pero parchea `run_checks` con una función que hace
+        algo (matarse, reventar) en vez de devolver mensajes. Devuelve (código, todo lo
+        impreso).
+
+        **La fuga se ATRAPA aquí a propósito.** Si `comprobar()` deja escapar lo que levante
+        `funcion`, este helper lo recoge y devuelve `codigo=None`, para que el test falle por
+        su `assertEqual` con un mensaje que se entiende. Sin esto, el test del Ctrl-C **abortaba
+        la ejecución entera** en vez de fallar: `unittest` re-lanza `KeyboardInterrupt` a
+        propósito (es como se interrumpe una suite a mano), así que una fuga se llevaba por
+        delante los otros 25 tests y no dejaba ni el resumen. Medido: con el arreglo deshecho,
+        la orden de test no imprimía NI UNA línea de veredicto. Un rojo que no dice qué
+        comprobación falló no es un rojo útil (regla 16), y además hacía imposible medir esta
+        red por mutación."""
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        import django.core.checks as checks_module
+        from kcalibra import avisos_de_despliegue
+
+        original = checks_module.run_checks
+        checks_module.run_checks = funcion
+        fuga = None
+        codigo = None
+        try:
+            salida_out, salida_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(salida_out), redirect_stderr(salida_err):
+                try:
+                    codigo = avisos_de_despliegue.comprobar()
+                except BaseException as escapada:  # noqa: BLE001 -- ver docstring
+                    fuga = escapada
+        finally:
+            checks_module.run_checks = original
+
+        impreso = salida_out.getvalue() + salida_err.getvalue()
+        if fuga is not None:
+            impreso += (
+                f"\n[el test atrapó una fuga: comprobar() dejó escapar "
+                f"{type(fuga).__name__}({fuga!r}) en vez de dictaminar]"
+            )
+        return codigo, impreso
+
+    def test_un_check_que_se_mata_con_sys_exit_0_pone_el_guion_en_rojo(self):
+        """EL test del bug 047. Antes del arreglo no falla por el assert: falla porque la
+        `SystemExit` **atraviesa** `comprobar()` y llega hasta aquí — que es justo lo que en el
+        guion de verdad se traducía en un proceso muerto en 0 y un CI en verde."""
+
+        def run_checks_que_se_mata(*args, **kwargs):
+            import sys as _sys
+
+            _sys.exit(0)
+
+        codigo, impreso = self._comprobar_con_un_run_checks_que(run_checks_que_se_mata)
+
+        self.assertEqual(
+            codigo,
+            1,
+            "un check que se mata con sys.exit(0) tiene que dejar el guion en ROJO: la "
+            "configuración de despliegue NO se comprobó, y R8 dice que lo que no se pudo "
+            "comprobar nunca se da por bueno",
+        )
+        self.assertIn("SystemExit", impreso)
+
+    def test_un_check_que_se_mata_con_sys_exit_1_tambien_pone_el_guion_en_rojo(self):
+        """El hermano peligroso del anterior: con `sys.exit(1)` el proceso ya moría en 1, así
+        que el guion salía ROJO **por accidente** — no porque hubiera dictaminado, sino porque
+        el código de la `SystemExit` coincidía con el del rojo. Un rojo así no se distingue de
+        uno bueno, y el día que el check se matara con 0 volvía el verde mentiroso. Aquí se
+        exige que el 1 venga de `comprobar()` DEVOLVIÉNDOLO, con su traza impresa."""
+
+        def run_checks_que_se_mata_en_1(*args, **kwargs):
+            import sys as _sys
+
+            _sys.exit(1)
+
+        codigo, impreso = self._comprobar_con_un_run_checks_que(run_checks_que_se_mata_en_1)
+
+        self.assertEqual(codigo, 1, impreso)
+        self.assertIn("SystemExit", impreso)
+
+    def test_un_ctrl_c_durante_los_checks_pone_el_guion_en_rojo(self):
+        """`KeyboardInterrupt` es la otra `BaseException` que puede llegar a este `try`. Se
+        decide capturarla y salir en ROJO, no dejarla pasar: el proceso termina igual (el
+        guion devuelve 1 y `sys.exit(1)` lo remata), pero termina **diciendo la verdad** — los
+        checks no se llegaron a ejecutar. Un Ctrl-C que dejara el guion en verde sería el mismo
+        agujero con otro nombre. Es más estricto que la costumbre de Python (donde un Ctrl-C se
+        deja subir) y falla del lado seguro, que es lo que se le pide a un guardián."""
+
+        def run_checks_interrumpido(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        codigo, impreso = self._comprobar_con_un_run_checks_que(run_checks_interrumpido)
+
+        self.assertEqual(codigo, 1, impreso)
+        self.assertIn("KeyboardInterrupt", impreso)
+
+
 class ComprobarNombraAlCulpableEnRojoTests(SimpleTestCase):
     """H3 (segunda vuelta de la 045): ningún assert de la primera vuelta miraba nunca la
     salida impresa de `comprobar()` ni su código de retorno por el camino normal (el único
