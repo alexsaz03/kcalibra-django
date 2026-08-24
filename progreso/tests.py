@@ -47,6 +47,16 @@ def _fijar_mediciones(usuario, mediciones):
         )
 
 
+def _svgs_de_las_graficas(contenido):
+    """
+    Unidad 050 (R8) — el marco compartido trae iconos con sus propios `<circle>` (carrito,
+    cronómetro, ajustes) en CUALQUIER página, incluida `/progreso/`. Acota los tests que
+    cuentan puntos del gráfico a lo que hay DENTRO de los `<svg data-grafica-svg>` de
+    `_grafica.html`, para que un `<circle>` ajeno al gráfico no altere la cuenta.
+    """
+    return "".join(re.findall(r"<svg[^>]*\bdata-grafica-svg\b[^>]*>.*?</svg>", contenido, re.DOTALL))
+
+
 def _fijar_entrenos(usuario, entrenos):
     """
     Unidad 013 — sustituye TODOS los entrenos de `usuario` por `entrenos`: lista de dicts con
@@ -235,7 +245,7 @@ class RecomposicionCorporalTests(BaseProgresoTests):
         self.assertContains(respuesta, "Peso")
         self.assertContains(respuesta, "Grasa corporal")
         # 3 puntos de peso + 3 de grasa: las DOS series completas, no una a medias.
-        self.assertEqual(respuesta.content.decode().count("<circle"), 6)
+        self.assertEqual(_svgs_de_las_graficas(respuesta.content.decode()).count("<circle"), 6)
 
 
 class GrasaConDiasSueltosTests(BaseProgresoTests):
@@ -253,7 +263,7 @@ class GrasaConDiasSueltosTests(BaseProgresoTests):
         respuesta = self.client.get("/progreso/")
         # Peso: 3 puntos (todos los días la tienen). Grasa: 2 (el día suelto sin grasa no
         # se inventa ni se interpola) → 5 en total.
-        self.assertEqual(respuesta.content.decode().count("<circle"), 5)
+        self.assertEqual(_svgs_de_las_graficas(respuesta.content.decode()).count("<circle"), 5)
 
 
 class SemanasTests(BaseProgresoTests):
@@ -269,10 +279,10 @@ class SemanasTests(BaseProgresoTests):
             ],
         )
         respuesta_4_semanas = self.client.get("/progreso/?semanas=4")
-        self.assertEqual(respuesta_4_semanas.content.decode().count("<circle"), 1)
+        self.assertEqual(_svgs_de_las_graficas(respuesta_4_semanas.content.decode()).count("<circle"), 1)
 
         respuesta_12_semanas = self.client.get("/progreso/?semanas=12")
-        self.assertEqual(respuesta_12_semanas.content.decode().count("<circle"), 2)
+        self.assertEqual(_svgs_de_las_graficas(respuesta_12_semanas.content.decode()).count("<circle"), 2)
 
     def test_r5_el_rango_por_defecto_es_12_y_se_ve_en_el_campo(self):
         respuesta = self.client.get("/progreso/")
@@ -594,7 +604,7 @@ class CoordenadasDelSvgTests(BaseProgresoTests):
             [{"dias_atras": 20, "peso_kg": 95}, {"dias_atras": 0, "peso_kg": 93}],
         )
         respuesta = self.client.get("/progreso/")
-        contenido = respuesta.content.decode()
+        contenido = _svgs_de_las_graficas(respuesta.content.decode())
         circulos = re.findall(r'<circle cx="([^"]+)" cy="([^"]+)"', contenido)
         self.assertEqual(len(circulos), 2)
         for cx, cy in circulos:
