@@ -62,9 +62,16 @@ class Veredicto:
     son ids de `ESPERADOS` que ya no aparece ningún mensaje suyo (R6): una tolerancia caducada
     que nadie relee acaba tapando algo real."""
 
-    def __init__(self, intrusos, faltantes):
+    def __init__(self, intrusos, faltantes, tolerados=()):
         self.intrusos = intrusos
         self.faltantes = faltantes
+        # `tolerados` (R1 de la 048): los ids de ESPERADOS que SÍ se vieron. Antes se
+        # calculaban dentro de `evaluar()` (la variable `vistos`) y se tiraban, así que el
+        # verde no podía nombrarlos: decía una línea sin ids, mientras el guion viejo volcaba
+        # los cuatro al log del CI. Conservarlos no cambia el veredicto —`ok` no los mira—,
+        # solo lo que se IMPRIME. Por defecto `()` para que un `Veredicto` construido a mano
+        # en un test siga siendo válido sin pasarlos.
+        self.tolerados = tuple(tolerados)
 
     @property
     def ok(self):
@@ -116,7 +123,7 @@ def evaluar(mensajes, esperados=ESPERADOS, genuinos=None):
         else:
             vistos.add(mensaje.id)
     faltantes = sorted(esperados - vistos)
-    return Veredicto(intrusos, faltantes)
+    return Veredicto(intrusos, faltantes, tolerados=sorted(vistos))
 
 
 def _genuinos_de_django():
@@ -141,17 +148,37 @@ def _nombre_intruso(mensaje):
     return mensaje.id if mensaje.id else "<sin id>"
 
 
-def _texto_legible(veredicto):
+def _texto_legible(veredicto, silenciados=frozenset()):
+    """`silenciados` (R2 de la 048): los ids de ESPERADOS que `comprobar()` descartó por estar
+    en `SILENCED_SYSTEM_CHECKS`. Solo lo sabe `comprobar()`, que es quien filtra; por eso entra
+    por parámetro y no por el `Veredicto` — `evaluar()` sigue siendo pura y sin saber nada de
+    `settings`. Un tolerado silenciado cae en `faltantes` igual que uno arreglado, pero **no es
+    lo mismo y no se le puede dar el mismo consejo**: al arreglado se le dice "quítalo de
+    ESPERADOS", y al silenciado eso sería el consejo CONTRARIO — quitarías de la lista un aviso
+    que sigue vivo y solo estaba tapado."""
     if veredicto.ok:
-        return "OK: los avisos de despliegue son exactamente los tolerados."
+        # R1 (048): nombrar en VERDE lo que se toleró. El guion viejo volcaba los cuatro avisos
+        # al log del CI y el nuevo decía una línea muda: el día que la lista caduque, en el log
+        # no habría ni una pista y el rojo llegaría de golpe. Nombrar no cambia el veredicto.
+        lineas = ["OK: los avisos de despliegue son exactamente los tolerados."]
+        for id_tolerado in veredicto.tolerados:
+            lineas.append(f"  - tolerado, y visto: {id_tolerado}")
+        return "\n".join(lineas)
     lineas = ["ROJO: la configuración de despliegue no coincide con lo tolerado."]
     for mensaje in veredicto.intrusos:
         lineas.append(f"  - intruso: {_nombre_intruso(mensaje)} (nivel {mensaje.level}): {mensaje.msg}")
     for id_esperado in veredicto.faltantes:
-        lineas.append(
-            f"  - esperado que ya no aparece: {id_esperado} (¿se arregló? quítalo de ESPERADOS "
-            "en kcalibra/avisos_de_despliegue.py)"
-        )
+        if id_esperado in silenciados:
+            lineas.append(
+                f"  - tolerado SILENCIADO: {id_esperado} está en SILENCED_SYSTEM_CHECKS, así que "
+                "Django no lo emite y este guion no puede comprobarlo. Sigue vivo: quítalo de "
+                "SILENCED_SYSTEM_CHECKS (no de ESPERADOS) o arréglalo de verdad."
+            )
+        else:
+            lineas.append(
+                f"  - esperado que ya no aparece: {id_esperado} (¿se arregló? quítalo de ESPERADOS "
+                "en kcalibra/avisos_de_despliegue.py)"
+            )
     return "\n".join(lineas)
 
 
@@ -185,8 +212,14 @@ def comprobar():
         return 1
 
     visibles = [mensaje for mensaje in mensajes if not mensaje.is_silenced()]
+    # R2 (048): de los que se filtran por silenciados, cuáles eran TOLERADOS nuestros. Es lo
+    # único que separa "este esperado se arregló" de "alguien lo tapó", y solo se sabe aquí:
+    # después del filtro el mensaje ya no existe, y `evaluar()` no puede distinguirlos.
+    silenciados_tolerados = frozenset(
+        mensaje.id for mensaje in mensajes if mensaje.is_silenced() and mensaje.id in ESPERADOS
+    )
     veredicto = evaluar(visibles, genuinos=_genuinos_de_django())
-    print(_texto_legible(veredicto))
+    print(_texto_legible(veredicto, silenciados=silenciados_tolerados))
     return 0 if veredicto.ok else 1
 
 
