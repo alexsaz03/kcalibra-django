@@ -20,8 +20,13 @@
           {{ field.label }}
         </label>
         {{ field }}
+        {# El `id` NO es decorativo: Django le pone al <input> un                          #}
+        {# aria-describedby="{{ field.auto_id }}_helptext" en cuanto el campo tiene           #}
+        {# help_text, MIRE O NO la plantilla ese texto (BoundField.aria_describedby). Sin     #}
+        {# este id, el atributo apunta a un elemento que no existe. Unidad 052; el porqué,    #}
+        {# en conocimiento/django-notas-del-esqueleto.md, nota 7.                             #}
         {% if field.help_text %}
-          <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
+          <p id="{{ field.auto_id }}_helptext" class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
         {% endif %}
         {% if field.errors %}
           <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
