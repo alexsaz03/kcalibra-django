@@ -24,6 +24,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.db import connection
 from django.test import TestCase, override_settings
+from django.urls import reverse
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, DATOS_FISICOS_POR_DEFECTO, PruebaConRegistroAbierto
 from hogares.models import Persona, SolicitudEntrada
@@ -1282,6 +1283,29 @@ class RutasFueraDeAlcanceTests(PruebaConRegistroAbierto):
         respuesta_reset = self.client.get("/cuentas/password/reset/")
         self.assertEqual(respuesta_reset.status_code, 200)
         self.assertContains(respuesta_reset, "¿Has olvidado tu contraseña?")
+
+
+class CambiarContrasenaSinEnlaceDeRecuperacionTests(PruebaConRegistroAbierto):
+    """
+    R5 (unidad 046, revisión 2): `django-allauth` 65.19.0 le añadió `show_reset_help=True` al
+    campo `oldpassword` de `ChangePasswordForm`, que hace que `PasswordField._get_help_text()`
+    (allauth/account/fields.py) construya un enlace a `account_reset_password` en su
+    `help_text`. `templates/account/password_change.html` pinta `field.help_text` en bucle
+    sobre `form.visible_fields`, así que ese enlace reaparecería en la pantalla de "Cambiar tu
+    contraseña" — la que un comentario del propio fichero dice, a propósito, que no debe
+    tenerlo: es la pantalla de quien YA está dentro y YA sabe su contraseña actual.
+
+    Ningún test anterior lo detecta: `test_las_siete_rutas_explicitas_renderizan_de_verdad`
+    (arriba) comprueba que NO aparece "Forgot Password" (el texto roto de la plantilla de
+    FÁBRICA de allauth), no la URL de `account_reset_password` que trae el `help_text` nuevo.
+    """
+
+    def test_pantalla_de_cambiar_contrasena_no_ofrece_recuperarla(self):
+        self.registrar_y_verificar("alejandro@example.com")
+        respuesta = self.client.get("/cuentas/password/change/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Cambiar tu contraseña")
+        self.assertNotContains(respuesta, reverse("account_reset_password"))
 
 
 class YaPuedesBorrarTuCuentaTests(PruebaConRegistroAbierto):
