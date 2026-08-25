@@ -361,12 +361,14 @@ class _CadenaDeAncestros(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.buscado = (atributo, valor)
         self.pila = []
-        self.cadena = None
+        self.cadenas = []
 
     def handle_starttag(self, etiqueta, atributos):
         attrs = dict(atributos)
-        if self.cadena is None and attrs.get(self.buscado[0]) == self.buscado[1]:
-            self.cadena = list(self.pila) + [(etiqueta, attrs)]
+        if attrs.get(self.buscado[0]) == self.buscado[1]:
+            # TODAS, no la primera: quedarse con la primera deja que un señuelo sin tapar
+            # conteste por el menú de verdad, que sí está tapado. Lo firmó la 4ª revisión.
+            self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
         if etiqueta not in _SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
@@ -381,9 +383,14 @@ def _nada_lo_tapa(caso, contenido, atributo, valor):
     """Falla si el elemento buscado, o CUALQUIERA de sus ancestros, está escondido."""
     lector = _CadenaDeAncestros(atributo, valor)
     lector.feed(contenido)
-    if lector.cadena is None:
+    if not lector.cadenas:
         raise AssertionError(f"no hay ningún elemento con {atributo}={valor!r}: el test no prueba nada")
-    for etiqueta, attrs in lector.cadena:
+    caso.assertEqual(
+        len(lector.cadenas), 1,
+        f"hay {len(lector.cadenas)} elementos con {atributo}={valor!r}: uno puede ser un señuelo "
+        f"sin tapar que conteste por el de verdad. La rueda ya se guarda así; el menú también.",
+    )
+    for etiqueta, attrs in lector.cadenas[0]:
         clases = (attrs.get("class") or "").split()
         estilo = (attrs.get("style") or "").replace(" ", "")
         for tapadera in _TAPADERAS_DE_CLASE:
@@ -406,6 +413,13 @@ def _zona_de_ajustes(contenido):
     el cuerpo de una pantalla cualquiera dejaría verde un test que dice "está en la rueda":
     la misma cara del bug 027 que ya nos costó una unidad.
     """
+    cuantos = contenido.count('x-show="ajustesAbierto"')
+    if cuantos != 1:
+        # Con dos, `index` coge el primero y la zona se estira hasta `</header>` abarcando también
+        # el otro: los destinos se encuentran por texto y el test miente sin mentir. 4ª revisión.
+        raise AssertionError(
+            f"hay {cuantos} elementos con x-show=\"ajustesAbierto\": no se sabe cuál es el menú"
+        )
     inicio = contenido.index('x-show="ajustesAbierto"')
     fin = contenido.index("</header>", inicio)
     zona = contenido[inicio:fin]
