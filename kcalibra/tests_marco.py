@@ -20,6 +20,8 @@ from django.utils import timezone
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
 from kcalibra.ayuda_de_alcanzabilidad import (
     el_estado_es_compartido,
+    atributos,
+    elementos_con_texto,
     nada_lo_tapa,
     re_de_atributo,
 )
@@ -92,27 +94,32 @@ class R2_NueveDestinosTests(_ConAlejandroYSuHogar):
         self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
 
-        # Inicio, Tu progreso, Entrenos, Despensa: cubiertos por las pestañas (R1).
-        self.assertIn('href="/"', contenido)
-        self.assertIn('href="/progreso/"', contenido)
-        self.assertIn('href="/entrenos/"', contenido)
-        self.assertIn('href="/despensa/"', contenido)
-
-        # Tus datos, Tu peso, Recetas, El hogar: en el menú de ajustes.
-        self.assertIn('href="/perfiles/"', contenido)
-        self.assertIn('href="/perfiles/peso/"', contenido)
-        self.assertIn('href="/recetas/"', contenido)
-        self.assertIn('href="/hogares/mi-hogar/"', contenido)
+        # Leído del HTML PARSEADO y no del texto: `href='/x'` con comillas simples es HTML igual
+        # de válido y ningún navegador lo distingue, pero un `assertIn` con comillas dobles fijas
+        # lo dejaba en ROJO con el enlace funcionando. Falso rojo, cazado en la 14ª revisión de la
+        # 056 en otras dos piezas; estas nueve tenían el mismo defecto.
+        rutas = {
+            attrs.get("href")
+            for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "a" and "href" in a)
+        }
+        for ruta in ("/", "/progreso/", "/entrenos/", "/despensa/",       # las pestañas (R1)
+                     "/perfiles/", "/perfiles/peso/", "/recetas/", "/hogares/mi-hogar/"):
+            with self.subTest(destino=ruta):
+                self.assertIn(ruta, rutas)
 
         # Salir: un formulario que postea al logout de allauth (como hoy).
-        self.assertIn('action="/cuentas/logout/"', contenido)
+        acciones = {
+            attrs.get("action")
+            for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "form")
+        }
+        self.assertIn("/cuentas/logout/", acciones)
 
     def test_el_enlace_a_recetas_dice_recetas_a_secas(self):
         """`recetas/tests.py:501` ya exige `>Recetas<` literal — la red del padre."""
-        respuesta = self.client.get("/recetas/")
-        contenido = respuesta.content.decode()
-        self.assertIn('href="/recetas/"', contenido)
-        self.assertIn(">Recetas<", contenido)
+        contenido = self.client.get("/recetas/").content.decode()
+        enlaces = elementos_con_texto(contenido, lambda e, a: e == "a" and a.get("href") == "/recetas/")
+        self.assertTrue(enlaces, "no hay ningún enlace a /recetas/")
+        self.assertIn("Recetas", [texto for _, texto in enlaces])
 
     def test_el_enlace_a_el_hogar_dice_el_hogar_a_secas(self):
         """`perfiles/tests.py:1598` ya exige `>El hogar<` literal — la red del padre."""
@@ -406,15 +413,18 @@ def _zona_de_ajustes(contenido):
 
 
 def _destinos_de_ajustes(contenido):
-    """[(texto, ruta), ...] del menú de la rueda, en orden de aparición.
+    """[(texto, ruta), ...] de los destinos de la rueda, leyendo HTML PARSEADO.
 
-    Devuelve el par JUNTO, nunca las dos listas por separado: comprobar el texto por un lado
-    y la ruta por otro deja verde un enlace que dice lo que toca y lleva a otro sitio.
+    Devuelve el par JUNTO, nunca las dos listas por separado: comprobarlo por un lado el texto y
+    por otro la ruta deja verde un enlace que dice lo que toca y lleva a otro sitio (1ª vuelta).
+
+    Y se lee con un parser, no con una expresión regular: `href='...'` con comillas simples es HTML
+    igual de válido, y el regex de comillas dobles lo dejaba en ROJO con el enlace funcionando
+    (14ª revisión). Ese falso rojo se curó primero solo en el botón de la rueda; aquí estaba el
+    mismo defecto, sosteniendo la aserción central de esta unidad.
     """
-    return [
-        (texto.strip(), href)
-        for href, texto in _ENLACE_RE.findall(_zona_de_ajustes(contenido))
-    ]
+    en_la_rueda = lambda etiqueta, attrs: etiqueta == "a" and "data-ajuste" in attrs
+    return [(texto, attrs.get("href")) for attrs, texto in elementos_con_texto(contenido, en_la_rueda)]
 
 
 class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
@@ -523,12 +533,16 @@ class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
 
     def test_salir_sigue_siendo_un_formulario_que_postea(self):
         """Salir no es un enlace: cerrar sesión con un GET lo dispararía cualquier precarga."""
-        zona = _zona_de_ajustes(self.client.get("/").content.decode())
+        contenido = self.client.get("/").content.decode()
         # Anclado al MISMO <form> que el action: el nombre de este test prometía que Salir postea,
         # pero la primera versión solo miraba el `action=` y dejaba VERDE cambiar el método a GET
         # (agujero 3 de la 2ª revisión). Un logout por GET lo dispara cualquier precarga del
         # navegador, así que la promesa importa.
-        formulario = re.search(r"<form\b[^>]*action=\"/cuentas/logout/\"[^>]*>", zona)
-        self.assertIsNotNone(formulario, "Salir ya no es un formulario que apunte al logout")
-        self.assertIn('method="post"', formulario.group(0))
-        self.assertIn("Salir", zona)
+        es_el_form = lambda etiqueta, attrs: etiqueta == "form" and attrs.get("action") == "/cuentas/logout/"
+        formularios = elementos_con_texto(contenido, es_el_form)
+        self.assertEqual(len(formularios), 1, "Salir ya no es un formulario que apunte al logout")
+        self.assertEqual(
+            (formularios[0][0].get("method") or "").lower(), "post",
+            "Salir no postea: un logout por GET lo dispara cualquier precarga del navegador",
+        )
+        self.assertIn("Salir", formularios[0][1])

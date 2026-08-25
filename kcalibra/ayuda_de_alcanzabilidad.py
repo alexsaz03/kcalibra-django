@@ -51,6 +51,21 @@ TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0",
                         "pointer-events:none")  # heredable: deja el menú visible e inclicable (6ª rev.)
 SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
 
+
+def atributos(pares):
+    """Los atributos como los lee un NAVEGADOR: si uno viene repetido, gana el PRIMERO.
+
+    `dict(pares)` se queda con el último, y ahí hay una divergencia real: con
+    `<a class="hidden" class="...">`, el navegador esconde el elemento y `dict` veía la segunda
+    clase, tan contento. Un HTML con atributos repetidos es inválido, sí — y aparece igual cuando
+    alguien añade uno sin mirar que ya estaba.
+    """
+    leidos = {}
+    for nombre, valor in pares:
+        if nombre not in leidos:
+            leidos[nombre] = valor
+    return leidos
+
 # El menú se identifica por su `x-show`, y se identifica FALLANDO EN ROJO ante cualquier forma que
 # no sea la canónica. La 5ª revisión enseñó por qué: `x-show=" ajustesAbierto "` (un espacio dentro
 # de las comillas) es para Alpine EXACTAMENTE la misma expresión —la evalúa como JavaScript, y el
@@ -88,8 +103,8 @@ class CadenaDeAncestros(HTMLParser):
         self.pila = []
         self.cadenas = []
 
-    def handle_starttag(self, etiqueta, atributos):
-        attrs = dict(atributos)
+    def handle_starttag(self, etiqueta, atributos_crudos):
+        attrs = atributos(atributos_crudos)
         if self.coincide(etiqueta, attrs):
             self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
         if etiqueta not in SIN_CIERRE:
@@ -232,6 +247,49 @@ def claves_de_primer_nivel(x_data):
         if bruto:
             claves.append(bruto)
     return claves
+
+
+class _ElementosConTexto(HTMLParser):
+    """Los elementos que cumplen `coincide`, con sus atributos y su texto visible."""
+
+    def __init__(self, coincide):
+        super().__init__(convert_charrefs=True)   # `&ntilde;` llega ya como "ñ"
+        self.coincide = coincide
+        self.encontrados = []
+        self.abiertos = []
+
+    def handle_starttag(self, etiqueta, atributos_crudos):
+        attrs = atributos(atributos_crudos)
+        if etiqueta not in SIN_CIERRE:
+            self.abiertos.append([etiqueta, attrs, [], self.coincide(etiqueta, attrs)])
+
+    def handle_data(self, datos):
+        for capa in self.abiertos:
+            capa[2].append(datos)
+
+    def handle_endtag(self, etiqueta):
+        for k in range(len(self.abiertos) - 1, -1, -1):
+            if self.abiertos[k][0] == etiqueta:
+                for capa in self.abiertos[k:]:
+                    if capa[3]:
+                        self.encontrados.append((capa[1], " ".join("".join(capa[2]).split())))
+                del self.abiertos[k:]
+                return
+
+
+def elementos_con_texto(contenido, coincide):
+    """[(atributos, texto), ...] de cada elemento que cumple `coincide`, leyendo HTML DE VERDAD.
+
+    Existe porque las expresiones regulares sobre HTML fallan por los dos lados, y en esta unidad
+    lo hicieron dieciocho veces. En concreto (13ª y 14ª revisión): un `href='...'` con comillas
+    simples es HTML perfectamente válido y ningún navegador lo distingue de `href="..."`, pero un
+    regex con comillas dobles fijas no lo encuentra y pone el test en **rojo con el enlace
+    funcionando**. Aquí las comillas, el orden de los atributos, los saltos de línea dentro de la
+    etiqueta y las entidades (`&ntilde;`) dejan de existir como problema.
+    """
+    lector = _ElementosConTexto(coincide)
+    lector.feed(contenido)
+    return lector.encontrados
 
 
 def nada_lo_tapa(caso, contenido, coincide, nombre):
