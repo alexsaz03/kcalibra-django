@@ -221,27 +221,59 @@ class R2_BotonRedondoTests(_ConAlejandroYSusDatos):
     existe no da error, no hace nada — el hallazgo que ya advierte la tabla de verificación
     de la especificación)."""
 
-    def _ancla_lleva_a_un_elemento_que_existe(self, ruta, id_destino):
+    def _ancla_lleva_a_un_elemento_que_existe(self, ruta, etiqueta_boton, id_destino):
+        """Hueco 5 + Hueco 7 (revisión, 4ª vuelta): la versión anterior comprobaba dos
+        cadenas sueltas (`href="#id"`, `id="id"`) con comillas dobles FIJAS — `id='…'` (HTML
+        idéntico para cualquier navegador) ponía esto en ROJO con la pantalla funcionando
+        (medido: reescribiendo `boton_redondo` entero con comillas simples, `Ran 44 — FAILED
+        (failures=4)`, hallazgos.md), Y las dos cadenas no se ataban entre sí: un `href` de
+        SEÑUELO apuntando al mismo id que otro enlace cualquiera de la pantalla colaba en
+        verde (medido con un segundo `<a href="#formulario-plan">` de adorno). Se lee el HTML
+        de verdad con `elementos_con_texto` (ya importado): el `href` sale del PROPIO botón
+        redondo (identificado por su `aria-label`, igual que
+        `test_el_boton_redondo_se_puede_usar_de_verdad`), y sólo entonces se busca un
+        elemento con ese id."""
         respuesta = self.client.get(ruta)
         self.assertEqual(respuesta.status_code, 200, ruta)
         contenido = respuesta.content.decode()
-        self.assertIn(f'href="#{id_destino}"', contenido, ruta)
-        self.assertIn(f'id="{id_destino}"', contenido, ruta)
+
+        coincide_boton = lambda e, a, etiqueta_boton=etiqueta_boton: (
+            e == "a" and a.get("aria-label") == etiqueta_boton
+        )
+        botones = elementos_con_texto(contenido, coincide_boton)
+        self.assertEqual(
+            len(botones), 1, f"no hay un único botón redondo «{etiqueta_boton}» en {ruta}"
+        )
+        self.assertEqual(
+            botones[0][0].get("href"), f"#{id_destino}",
+            f"el botón redondo «{etiqueta_boton}» de {ruta} no apunta a #{id_destino}",
+        )
+
+        coincide_destino = lambda e, a, id_destino=id_destino: a.get("id") == id_destino
+        self.assertTrue(
+            elementos_con_texto(contenido, coincide_destino),
+            f"el botón redondo «{etiqueta_boton}» de {ruta} apunta a #{id_destino}, pero no "
+            "hay ningún elemento con ese id",
+        )
 
     def test_apuntar_el_plan_lleva_al_formulario_de_apuntar_comida(self):
         self._ancla_lleva_a_un_elemento_que_existe(
-            f"/planes/{self.alejandro.id}/apuntar/", "formulario-plan"
+            f"/planes/{self.alejandro.id}/apuntar/", "Apuntar comida", "formulario-plan"
         )
 
     def test_entrenos_lleva_al_formulario_de_apuntar_entreno(self):
-        self._ancla_lleva_a_un_elemento_que_existe("/entrenos/", "formulario-entreno")
+        self._ancla_lleva_a_un_elemento_que_existe(
+            "/entrenos/", "Apuntar un entreno", "formulario-entreno"
+        )
 
     def test_tu_peso_lleva_al_formulario_de_apuntar_peso(self):
-        self._ancla_lleva_a_un_elemento_que_existe("/perfiles/peso/", "formulario-peso")
+        self._ancla_lleva_a_un_elemento_que_existe(
+            "/perfiles/peso/", "Apuntar una pesada", "formulario-peso"
+        )
 
     def test_cerrar_un_dia_lleva_a_su_formulario(self):
         self._ancla_lleva_a_un_elemento_que_existe(
-            f"/cierres/{self.alejandro.id}/", "formulario-cierre"
+            f"/cierres/{self.alejandro.id}/", "Cerrar un día", "formulario-cierre"
         )
 
     def test_quien_solo_mira_no_ve_un_boton_que_el_servidor_le_rechazaria(self):
@@ -382,19 +414,33 @@ class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
 # R6 — todo número de dato lleva la clase `.cifra`.
 # ------------------------------------------------------------------------------------------ #
 
+# Para leer `class="…"` en el FICHERO fuente de una pieza (con `{{ }}`/`{% %}` de Django
+# dentro, no HTML ya renderizado): sólo cierra en la comilla del MISMO tipo que abrió el
+# atributo (`\1`), nunca en la primera comilla de cualquier tipo — a diferencia de `_CLASE_RE`
+# (más abajo, pensada para HTML renderizado sin Django dentro), aguanta un argumento de filtro
+# con la comilla contraria, como `{{ tam|default:'text-[44px]' }}` dentro de un `class="…"`.
+_CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
+
 
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
     def _elemento_lleva_cifra(self, ruta, id_elemento):
+        """Hueco 6 (revisión, 4ª vuelta): la versión anterior exigía, con comillas dobles
+        FIJAS, que `class` fuera pegado JUSTO DETRÁS de `id` (`id="…"\\s+class="cifra\\b`) —
+        cualquier atributo entre medias, o `class` con comillas simples, o `class` ANTES de
+        `id`, ponía esto en ROJO con `.cifra` en su sitio (medido, tres formas, hallazgos.md:
+        `class` antes de `id`, comillas simples, y un `hx-swap-oob="true"` entre medias — el
+        caso realista, porque `peso.html`/`entrenos/ver.html` ya son pantallas HTMX). Se busca
+        el elemento por su `id` con `elementos_con_texto` (ya importado) y se mira `cifra` en
+        los TOKENS de su `class`, sin depender del orden de los atributos."""
         respuesta = self.client.get(ruta)
         contenido = respuesta.content.decode()
-        # El id y la clase `cifra` tienen que estar en el MISMO atributo `class`, pegados al
-        # id del elemento — no en cualquier parte de la respuesta (una `.cifra` suelta en
-        # otro número de la misma pantalla no demuestra nada de ESTE número).
-        self.assertRegex(
-            contenido,
-            rf'id="{id_elemento}"\s+class="cifra\b',
-            f"{id_elemento} no lleva `.cifra` en {ruta}",
+        coincide = lambda e, a, id_elemento=id_elemento: a.get("id") == id_elemento
+        elementos = elementos_con_texto(contenido, coincide)
+        self.assertEqual(
+            len(elementos), 1, f"no hay un único elemento con id={id_elemento!r} en {ruta}"
         )
+        clases = (elementos[0][0].get("class") or "").split()
+        self.assertIn("cifra", clases, f"{id_elemento} no lleva `.cifra` en {ruta}")
 
     def test_kcal_quemadas_hoy_lleva_cifra(self):
         self._elemento_lleva_cifra("/entrenos/", "calorias-quemadas-hoy")
@@ -414,7 +460,24 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
         seis píldoras de macro de Inicio y de Apuntar el plan, que se refrescan por HTMX —
         justo donde "bailar" se ve), la suite completa seguía en verde (hallazgos.md). Mismo
         patrón que `test_la_pieza_pildora_macro_no_tiene_un_camino_sin_nombre` (R5): se
-        comprueba la PIEZA en sí, no solo una pantalla que la usa."""
+        comprueba la PIEZA en sí, no solo una pantalla que la usa.
+
+        Quinta ocurrencia de la misma familia (vuelta 6, sweep del constructor — no la nombró
+        ninguna revisión): `assertRegex(interna, r'class="cifra\\b', …)` exigía comillas dobles
+        Y `cifra` como PRIMER token del atributo `class` — reordenar las clases dentro de la
+        propia pieza (`class="… font-bold leading-none cifra"`, con `.cifra` intacto) ponía
+        esto en ROJO (medido: `vuelta6-hueco6b-mutacion-orden-en-la-pieza-ROJO.log`). Este
+        assert lee el FICHERO fuente de la pieza (con sintaxis de Django dentro), no HTML
+        renderizado, así que `elementos_con_texto` no aplica aquí.
+
+        Reutilizar tal cual `_CLASE_RE` (la de `_sin_pointer_events_none_del_envoltorio_fijo`,
+        pensada para HTML ya renderizado) rompía EN FALSO sobre el propio `numero_grande` sin
+        mutar nada: su `class="cifra {{ tam|default:'text-[44px]' }} font-bold leading-none"`
+        lleva una comilla simple DENTRO del valor (el argumento del filtro de Django), y
+        `[^"']*` —que excluye las dos comillas, no solo la de apertura— se para ahí y nunca
+        llega a `cifra`. `_CLASE_DE_LA_PIEZA_RE`, abajo, sólo para en la comilla de la MISMA
+        clase que abrió el atributo (`\\1`, no `[^"']`), que es la regla real de HTML: una
+        comilla del otro tipo dentro del valor no cierra nada."""
         contenido = _texto(RUTA_UI)
         for pieza in ("numero_grande", "_pildora_macro_interna", "_barra_macro_interna"):
             with self.subTest(pieza=pieza):
@@ -423,7 +486,10 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
                     contenido,
                     re.S,
                 ).group(1)
-                self.assertRegex(interna, r'class="cifra\b', f"{pieza} perdió `.cifra`")
+                tokens = set()
+                for coincidencia in _CLASE_DE_LA_PIEZA_RE.finditer(interna):
+                    tokens.update(coincidencia.group("clases").split())
+                self.assertIn("cifra", tokens, f"{pieza} perdió `.cifra`")
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -457,16 +523,28 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
     def test_ninguna_pantalla_copia_el_marcado_de_la_tarjeta_en_vez_de_incluirlo(self):
         """El "hueco" que nombra R7 en persona: una pieza copiada y pegada en vez de incluida.
         Se comprueba con la más repetida de las nueve (`tarjeta`, en las nueve plantillas):
-        ninguna puede tener el marcado (`rounded-tarjeta bg-superficie`) escrito a mano, solo
-        el `{% include %}`."""
+        ninguna puede tener el marcado (las clases de `tarjeta_abre`) escrito a mano, solo el
+        `{% include %}`.
+
+        Hueco 8 (revisión, 4ª vuelta): un `assertNotIn` de la cadena fija
+        "rounded-tarjeta bg-superficie" FALLA ABIERTO — en un atributo `class` las clases no
+        tienen orden, así que una copia a mano con las clases al revés
+        (`class="bg-superficie rounded-tarjeta …"`) pasaba en verde (medido: `Ran 44 — OK` con
+        esa copia añadida a `entrenos/corregir.html`, hallazgos.md). Se compara por TOKENS,
+        como ya hace `_sin_pointer_events_none_del_envoltorio_fijo` más abajo en este mismo
+        fichero (`_CLASE_RE`, definido ahí): tolera comillas simples o dobles, cualquier orden
+        de clases y clases de más — sólo exige que las DOS de `tarjeta_abre` estén juntas en el
+        mismo atributo `class`."""
+        clases_de_la_tarjeta = {"rounded-tarjeta", "bg-superficie"}
         for ruta in PLANTILLAS:
             contenido = _texto(ruta)
-            self.assertNotIn(
-                "rounded-tarjeta bg-superficie",
-                contenido,
-                f"{ruta.relative_to(BASE_DIR)} copia el marcado de `tarjeta` en vez de "
-                "incluirla con `{% include \"_ui.html#tarjeta_abre\" %}`",
-            )
+            for coincidencia in _CLASE_RE.finditer(contenido):
+                clases = set(coincidencia.group("clases").split())
+                self.assertFalse(
+                    clases_de_la_tarjeta <= clases,
+                    f"{ruta.relative_to(BASE_DIR)} copia el marcado de `tarjeta` en vez de "
+                    "incluirla con `{% include \"_ui.html#tarjeta_abre\" %}`",
+                )
 
 
 # ------------------------------------------------------------------------------------------ #
