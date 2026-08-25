@@ -180,6 +180,14 @@ def claves_de_primer_nivel(x_data):
                 if dentro[i] == cierre:
                     cerrada = True
                     break
+                if dentro[i] in "\n\r\u2028\u2029" and cierre != "`":
+                    # Un salto de línea DE VERDAD dentro de unas comillas simples o dobles es un
+                    # `SyntaxError` en JavaScript: los literales de cadena no admiten saltos sin
+                    # escapar (los de plantilla, con `, sí — por eso la excepción). Para Python el
+                    # salto es un carácter más y la comilla de cierre aparecía luego, así que la
+                    # cadena "cerraba" bien y el test daba VERDE mientras Alpine reventaba entero.
+                    # Lo firmó la 11ª revisión, comprobado contra un motor de JavaScript real.
+                    return None
                 i += 1
             if not cerrada:
                 return None                              # cadena sin cerrar: el `}` final es suyo
