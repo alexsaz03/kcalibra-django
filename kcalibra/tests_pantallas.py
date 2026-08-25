@@ -22,6 +22,7 @@ cae — la mutación y su salida en rojo están pegadas en hallazgos.md, no desc
 """
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from django.conf import settings
@@ -397,6 +398,107 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
 
 
 # ------------------------------------------------------------------------------------------ #
+# Ayudas de R8 (hueco 1 de la revisión 2) — que el botón del menú de Progreso se pueda abrir
+# DE VERDAD, no solo que ciertas cadenas estén en el HTML. Mismo patrón (y los mismos agujeros,
+# ya cazados uno detrás de otro en cinco rondas de revisión) que
+# `kcalibra/tests_marco.py::test_la_rueda_se_puede_abrir_de_verdad` en la 056
+# (`origin/056-el-camino-que-faltaba-a-tu-contrasena`, posterior a `ee93822`). Se copia aquí,
+# adaptado al menú de Progreso, en vez de importarse: `tests_marco.py` no vive en `ficheros:`
+# de esta unidad.
+# ------------------------------------------------------------------------------------------ #
+
+_TAPADERAS_DE_CLASE = (
+    "hidden", "invisible", "opacity-0", "sr-only", "w-0", "h-0", "scale-0",
+)
+_TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0")
+_SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
+
+
+class _CadenaDeAncestros(HTMLParser):
+    """El primer elemento que lleva `atributo=valor`, MÁS toda su cadena de ancestros.
+
+    Hace falta un parser de verdad y no un `rindex("<div", ...)`: ese truco encuentra la
+    etiqueta más cercana hacia atrás —el propio elemento— y nunca sube a quien lo envuelve. Fue
+    justo el agujero que firmó la 3ª revisión de la 056: un `<div class="hidden">` alrededor del
+    menú lo escondía en cualquier navegador con el test tan verde como antes.
+    """
+
+    def __init__(self, atributo, valor):
+        super().__init__(convert_charrefs=True)
+        self.buscado = (atributo, valor)
+        self.pila = []
+        self.cadenas = []
+
+    def handle_starttag(self, etiqueta, atributos):
+        attrs = dict(atributos)
+        if attrs.get(self.buscado[0]) == self.buscado[1]:
+            # TODAS, no la primera: quedarse con la primera deja que un señuelo sin tapar
+            # conteste por el menú de verdad, que sí está tapado (4ª revisión de la 056).
+            self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
+        if etiqueta not in _SIN_CIERRE:
+            self.pila.append((etiqueta, attrs))
+
+    def handle_endtag(self, etiqueta):
+        for k in range(len(self.pila) - 1, -1, -1):
+            if self.pila[k][0] == etiqueta:
+                del self.pila[k:]
+                return
+
+
+def _nada_lo_tapa(caso, contenido, atributo, valor):
+    """Falla si el elemento buscado, o CUALQUIERA de sus ancestros, está escondido — y si el
+    atributo no identifica un único elemento (un señuelo sin tapar podría contestar por el de
+    verdad, que sí está tapado)."""
+    lector = _CadenaDeAncestros(atributo, valor)
+    lector.feed(contenido)
+    if not lector.cadenas:
+        raise AssertionError(f"no hay ningún elemento con {atributo}={valor!r}: el test no prueba nada")
+    caso.assertEqual(
+        len(lector.cadenas), 1,
+        f"hay {len(lector.cadenas)} elementos con {atributo}={valor!r}: uno puede ser un "
+        "señuelo sin tapar que conteste por el de verdad.",
+    )
+    cadena = lector.cadenas[0]  # [ancestro_raíz, ..., el propio elemento buscado]
+
+    for etiqueta, attrs in cadena:
+        clases = (attrs.get("class") or "").split()
+        estilo = (attrs.get("style") or "").replace(" ", "")
+        for tapadera in _TAPADERAS_DE_CLASE:
+            caso.assertNotIn(
+                tapadera, clases,
+                f"<{etiqueta}> esconde el menú con la clase '{tapadera}'",
+            )
+        for tapadera in _TAPADERAS_DE_ESTILO:
+            caso.assertNotIn(
+                tapadera, estilo,
+                f"<{etiqueta}> esconde el menú con el estilo '{tapadera}'",
+            )
+
+    # `pointer-events-none` es distinto de las tapaderas de arriba: a diferencia de `hidden` o
+    # `display:none` (que ningún descendiente puede revertir), un descendiente con
+    # `pointer-events-auto` SÍ reactiva el clic para sí mismo y los suyos — es justo el patrón
+    # que usa el propio botón redondo (el envoltorio `fixed` lleva `pointer-events-none` para
+    # dejar pasar el toque en el resto de la pantalla, y el botón/el menú lo reactivan con
+    # `pointer-events-auto`). Se resuelve de DENTRO hacia FUERA, parando en el primer elemento
+    # de la cadena que declara `pointer-events` explícitamente.
+    for etiqueta, attrs in reversed(cadena):
+        clases = (attrs.get("class") or "").split()
+        estilo = (attrs.get("style") or "").replace(" ", "")
+        if "pointer-events-auto" in clases or "pointer-events:auto" in estilo:
+            break
+        if "pointer-events-none" in clases:
+            caso.fail(
+                f"<{etiqueta}> esconde el menú con la clase 'pointer-events-none' "
+                "(nada más cerca del elemento la reactiva con 'pointer-events-auto')"
+            )
+        if "pointer-events:none" in estilo:
+            caso.fail(
+                f"<{etiqueta}> esconde el menú con el estilo 'pointer-events:none' "
+                "(nada más cerca del elemento la reactiva con 'pointer-events-auto')"
+            )
+
+
+# ------------------------------------------------------------------------------------------ #
 # R8 — Progreso deja de ser la única pestaña sin botón redondo: su botón ofrece las DOS
 # cosas que nombra el mapa aprobado (apuntar-el-peso.md §8, ver-tu-progreso.md §8) — apuntar
 # una pesada y cerrar un día, las dos de la persona que se está mirando (`persona_objetivo`,
@@ -457,3 +559,85 @@ class R8_BotonRedondoDeProgresoTests(_ConAlejandroYSusDatos):
         self.assertNotIn("Apuntar una pesada", html)
         self.assertNotIn("Cerrar un día", html)
         self.assertNotIn('aria-label="Apuntar peso o cerrar un día"', html)
+
+    def test_el_boton_del_menu_se_puede_abrir_de_verdad(self):
+        """Hueco 1 de la revisión 2: `test_el_menu_ofrece_...` de arriba solo mira que ciertas
+        cadenas estén en el HTML (`aria-haspopup`, `role="menu"`, los `href`, los textos) — no
+        ancla el botón AL menú. Medido: con `@click="abierto = !abierto"` borrado y solo el
+        `@click.outside` intacto, o con el botón `disabled` + tapado con `invisible opacity-0
+        pointer-events-none`, ese test seguía verde. Mismo patrón que
+        `kcalibra/tests_marco.py::test_la_rueda_se_puede_abrir_de_verdad` (056)."""
+        contenido = self.client.get(f"/progreso/{self.alejandro.id}/").content.decode()
+
+        boton = [
+            b for b in re.findall(r"<button\b[^>]*>", contenido)
+            if 'aria-label="Apuntar peso o cerrar un día"' in b
+        ]
+        self.assertEqual(len(boton), 1, "el botón del menú no está, o hay más de uno")
+        # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
+        # `@click.outside="abierto = false"` (cerrar al tocar fuera), así que buscar solo
+        # "abierto" dejaría verde quitarle el `@click` que ABRE.
+        self.assertRegex(
+            boton[0],
+            r'@click="[^"]*abierto',
+            "el botón no ABRE el menú: los destinos estarían en el HTML y serían inalcanzables",
+        )
+        # Y el botón no puede estar apagado: `disabled` no dispara click en ningún navegador.
+        self.assertNotIn(" disabled", boton[0])
+        self.assertNotIn('aria-disabled="true"', boton[0])
+
+        # Y el menú no puede nacer tapado — ni él, NI NINGUNO DE SUS ANCESTROS —, y el atributo
+        # que lo identifica (`x-show="abierto"`) tiene que señalar a un único elemento: un
+        # señuelo sin tapar podría contestar por el menú de verdad, que sí está tapado.
+        _nada_lo_tapa(self, contenido, "x-show", "abierto")
+
+
+class R8_ElMenuApuntaSiempreAQuienSeMiraTests(_ConAlejandroYSusDatos):
+    """Hueco 2 de la revisión 2 (la trampa del bug 028): el único test de R8 que pide una URL
+    (arriba) abre el progreso PROPIO de Alejandro, donde `persona_objetivo` y
+    `request.user.persona` son la MISMA persona — indistinguibles ahí. Este test abre el
+    progreso de alguien A CARGO (montaje igual que
+    `hogares.tests_personas_de_la_casa._ConAlejandroYEuridiceACargo`) y exige que las dos rutas
+    del menú sean las SUYAS, nunca las de quien mira: mutar los dos `{% url %}` de
+    `progreso/ver.html` a `request.user.persona.id` (el bug 028 exacto) colaba en verde sin el
+    `assertNotIn` de más abajo (medido, hallazgos.md). El código ya es correcto — esto es la
+    red que le faltaba."""
+
+    def setUp(self):
+        super().setUp()
+        respuesta = self.client.post(
+            "/hogares/mi-hogar/dar-de-alta/",
+            {
+                "nombre": "Euridice",
+                "sexo": "mujer",
+                "fecha_nacimiento": "1997-06-29",
+                "altura_cm": "167",
+                "peso_kg": "62",
+                "actividad": "moderado",
+                "objetivo": "perder_grasa",
+                "ajuste_pct": "",
+                "dieta": "",
+                "alergias": "",
+                "intolerancias": "",
+                "no_le_gusta": "",
+            },
+            follow=True,
+        )
+        # `follow=True` hace que este 200 sea el mismo tanto si el alta acierta como si el
+        # formulario es inválido — lo que prueba que el alta no falló es que la Persona exista.
+        self.assertTrue(
+            Persona.objects.filter(nombre="Euridice", hogar=self.alejandro.hogar).exists()
+        )  # control: el alta no falló
+        self.euridice = Persona.objects.get(nombre="Euridice", hogar=self.alejandro.hogar)
+
+    def test_el_menu_de_progreso_apunta_a_la_persona_a_cargo_no_a_quien_mira(self):
+        respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+        self.assertIn(f'href="/perfiles/{self.euridice.id}/peso/"', contenido)
+        self.assertIn(f'href="/cierres/{self.euridice.id}/"', contenido)
+        # El hueco exacto que cazó el bug 028: sin estos dos `assertNotIn`, un menú que
+        # SIEMPRE llevara a Alejandro (quien mira) en vez de a Euridice (a quien se mira)
+        # seguía pasando por los dos `assertIn` de arriba.
+        self.assertNotIn(f'href="/perfiles/{self.alejandro.id}/peso/"', contenido)
+        self.assertNotIn(f'href="/cierres/{self.alejandro.id}/"', contenido)

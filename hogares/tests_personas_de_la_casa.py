@@ -160,17 +160,23 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
         # sección 2). El arreglo NO afloja el criterio ("sin correo, se sabe de quién es"):
         # en vez de un literal que solo la barra garantiza, comprueba en el CUERPO (fuera de
         # la barra) la frase que CADA pantalla usa de verdad para decirlo — la misma que ya
-        # usan sus propias plantillas. En Inicio, el ancla sigue siendo el nombre (SÍ se
-        # lista a cada persona por la suya, "Tú (Alejandro)"). En la pantalla de la casa el
-        # ancla también es el nombre, pero OJO: este assert solo comprueba que "Alejandro"
-        # aparece en algún sitio del cuerpo — puede colar por "A cargo de Alejandro" en la
-        # ficha de Euridice, no necesariamente por la suya propia (medido). La comprobación
-        # precisa de que CADA ficha dice su propio nombre, una a una, es la que hace
+        # usan sus propias plantillas. En Inicio, el ancla es "Tú (Alejandro)", la frase EXACTA
+        # que solo produce su propia tarjeta de la casa — no "Alejandro" a secas: desde la 053,
+        # el `<h1>` de `{% block titulo_grande %}` ("Hola, Alejandro") también vive en la zona
+        # de cuerpo, y un `assertIn("Alejandro", cuerpo)` colaría por ese saludo sin decir nada
+        # del listado de la casa que este caso quiere probar (medido: quitándole el nombre a la
+        # tarjeta de la casa, "Tú ({{ tarjeta.persona.nombre }})" → "Tú", este subtest seguía
+        # verde hasta que se ató a la frase completa — hallazgos.md, Vuelta 2). En la pantalla
+        # de la casa el ancla también es el nombre, pero OJO: este assert solo comprueba que
+        # "Alejandro" aparece en algún sitio del cuerpo — puede colar por "A cargo de
+        # Alejandro" en la ficha de Euridice, no necesariamente por la suya propia (medido). La
+        # comprobación precisa de que CADA ficha dice su propio nombre, una a una, es la que
+        # hace
         # `R3_LaPantallaDeLasPersonasDeLaCasaTests.test_ve_las_dos_fichas_marcadas_correctamente`
         # más abajo — este subtest solo cierra el hueco de R1 (correo vs. cuerpo), no
         # duplica esa precisión.
         rutas_y_fragmento_de_identidad = [
-            ("/", "Alejandro"),  # Inicio: "Tú (Alejandro)" en su propia tarjeta
+            ("/", "Tú (Alejandro)"),  # Inicio: solo la produce la tarjeta de la casa
             (f"/progreso/{self.alejandro.id}/", "Tu progreso"),
             (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso"),
             (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan"),
