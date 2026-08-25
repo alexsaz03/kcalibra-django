@@ -116,6 +116,9 @@ def cadena_unica(caso, contenido, coincide, nombre):
     return lector.cadenas[0]
 
 
+_ENTERO_WHATWG = re.compile(r"[ \t\n\f\r]*([+-]?)([0-9]+)")
+
+
 def _como_entero(valor):
     """El entero que vería el navegador, o `None` si ahí no hay un entero.
 
@@ -124,12 +127,18 @@ def _como_entero(valor):
     un atributo raro NO se da por bueno como "está fuera del teclado": se ignora, que es lo mismo
     que hace el navegador con un `tabindex` que no sabe leer.
     """
-    if valor is None:
+    if not isinstance(valor, str):
         return None
-    try:
-        return int(valor.strip())
-    except (ValueError, AttributeError):
+    # Las reglas de WHATWG, tal cual: se salta el espacio en blanco inicial, admite un signo, y
+    # recoge los dígitos ASCII hasta el primer carácter que no lo sea — LO QUE SOBRA SE IGNORA.
+    # `int(valor.strip())` era más estricto que el navegador y por eso fallaba ABIERTO: con
+    # `tabindex="-1abc"` reventaba, devolvía None, y el test daba verde mientras Chromium leía -1
+    # y sacaba el enlace del teclado. Lo midió la 8ª revisión con el Chromium real (`.tabIndex`
+    # daba -1) antes de reportarlo.
+    encaje = _ENTERO_WHATWG.match(valor)
+    if encaje is None:
         return None
+    return int(encaje.group(1) + encaje.group(2))
 
 
 def nada_lo_tapa(caso, contenido, coincide, nombre):
@@ -196,8 +205,14 @@ def el_estado_es_compartido(caso, contenido, es_el_control, es_lo_que_abre, vari
         f"{nombre_control} y {nombre_abierto} no cuelgan del mismo x-data: cada uno alternaría "
         f"su propia variable y no se abriría nunca",
     )
-    caso.assertIn(
-        variable, dueno_rueda[-1][1].get("x-data", ""),
+    # Identificador COMPLETO, no subcadena: `"ajustesAbierto" in "{ ajustesAbiertoV2: false }"` es
+    # `True`, y con ese renombrado el `@click` y el `x-show` leen una variable que ya no existe —
+    # Chromium tira `ajustesAbierto is not defined` y el menú no abre jamás. La 8ª revisión lo
+    # comprobó en un navegador de verdad; E3 (`ajustesAbierta`) no lo cazaba porque cambia el final,
+    # pero un sufijo (`...V2`, `...Nuevo`) deja la subcadena intacta y colaba.
+    caso.assertRegex(
+        dueno_rueda[-1][1].get("x-data", ""),
+        r"(?<![\w$])" + re.escape(variable) + r"(?![\w$])",
         f"el x-data del que cuelgan no declara `{variable}`: la variable no existe y `x-show` "
         f"no se enciende jamás",
     )
