@@ -38,9 +38,15 @@ from kcalibra.ayuda_de_alcanzabilidad import (
     elementos_con_texto,
     nada_lo_tapa,
 )
+from cierres.models import CierreDeDia
 from hogares.models import Persona
 
 BASE_DIR = Path(settings.BASE_DIR)
+
+
+def _texto(ruta):
+    return ruta.read_text(encoding="utf-8")
+
 
 # Las nueve plantillas de pantalla de esta unidad (todo `ficheros:` salvo `_ui.html`, el CSS
 # compilado y este mismo fichero de tests) — se usan tanto para el barrido de R4 (ninguna
@@ -58,33 +64,53 @@ PLANTILLAS = [
 ]
 RUTA_UI = BASE_DIR / "templates" / "_ui.html"
 
-# Las nueve piezas que nombra la especificación (R7) más `boton_redondo`, el hueco de
-# `{% block accion_rapida %}` — ver la nota de `_ui.html` sobre por qué esta última también
-# vive ahí. `barra_macro` se porta (lo pide el paso 1 del "Cómo") pero NINGUNA de las diez
-# pantallas de esta unidad tiene un dato de "gramos + porcentaje" que mostrar con ella —
-# mismo caso que los tokens de macro/racha en la 050 ("nace con la primera pantalla que la
-# use"): existe, una sola vez, lista para cuando haga falta, pero no está en el barrido de
-# "piezas usadas" de abajo.
-PIEZAS_PORTADAS = [
-    "tarjeta_abre",
-    "tarjeta_cierra",
-    "titulo_seccion",
-    "numero_grande",
-    "pildora_macro",
-    "barra_macro",
-    "anillo_abre",
-    "anillo_cierra",
-    "boton",
-    "aviso",
-    "distintivo",
-    "boton_redondo",
-    "boton_redondo_menu",
-]
+# Las piezas que `_ui.html` porta de verdad (R7), derivadas de sus propios
+# `{% partialdef %}` — no de una lista escrita a mano (E, revisión 8ª vuelta: "si la 054 añade
+# una pieza nueva a `_ui.html`, esa pieza no está en `PIEZAS_PORTADAS` ni tiene fila en
+# `_FIRMAS_DE_CLASE_POR_PIEZA`, así que ni se cuenta que viva una sola vez, ni se detecta si
+# alguien la copia"). Se excluyen los partials `_privados` (`_pildora_macro_interna`,
+# `_barra_macro_interna`): son implementación interna de `pildora_macro`/`barra_macro`, ninguna
+# pantalla los incluye directamente, y ya tienen su propia red en R5/R6
+# (`test_las_piezas_de_macro_no_tienen_un_camino_sin_nombre`,
+# `test_las_piezas_compartidas_no_tienen_un_camino_sin_cifra`).
+_NOMBRE_DE_PARTIALDEF_RE = re.compile(r"\{%\s*partialdef\s+([\w-]+)\b(?:\s+inline)?\s*%\}")
+
+
+def _piezas_portadas_de_ui_html():
+    vistas = []
+    for nombre in _NOMBRE_DE_PARTIALDEF_RE.findall(_texto(RUTA_UI)):
+        if not nombre.startswith("_") and nombre not in vistas:
+            vistas.append(nombre)
+    return vistas
+
+
+PIEZAS_PORTADAS = _piezas_portadas_de_ui_html()
+# `barra_macro` se porta (lo pide el paso 1 del "Cómo") pero NINGUNA de las diez pantallas de
+# esta unidad tiene un dato de "gramos + porcentaje" que mostrar con ella — mismo caso que los
+# tokens de macro/racha en la 050 ("nace con la primera pantalla que la use"): existe, una sola
+# vez, lista para cuando haga falta, pero no está en el barrido de "piezas usadas" de abajo.
+#
+# `PLANTILLAS` (arriba) y `_rutas_de_las_siete_pantallas` (abajo) SIGUEN a mano, y es a
+# propósito, no deuda (E, revisión 8ª vuelta lo preguntaba): `PLANTILLAS` es la lista blanca
+# del ALCANCE de esta unidad — coincide byte a byte con `ficheros:` de la especificación, y
+# derivarla de un glob del árbol tragaría cualquier plantilla nueva de la 054/055 sin que esta
+# unidad lo decidiera (la propia especificación, "Fuera de alcance", prohíbe tocar nada que no
+# sea esto). `_rutas_de_las_siete_pantallas` mapea cada plantilla a su URL real, información de
+# enrutado que no vive en el árbol de ficheros (Django no ofrece "plantilla → ruta" a la
+# inversa sin resolver vistas una a una) — es exactamente el tipo de dato que una fixture de
+# integración tiene que nombrar, como ya hace cualquier `self.client.get(...)` de esta suite.
 PIEZAS_USADAS_EN_LAS_PANTALLAS = [p for p in PIEZAS_PORTADAS if p != "barra_macro"]
 
 
-def _texto(ruta):
-    return ruta.read_text(encoding="utf-8")
+# Borra `{{ … }}`, `{% … %}` Y `{# … #}` de Django del texto fuente de una plantilla: lo que
+# el navegador ve ahí es texto plano (una vez Django resuelve la etiqueta o descarta el
+# comentario) — compartida por R6 (la exención de "prosa fija", más abajo) y R7 (la detección
+# de copia, más abajo). FR-C (revisión, 8ª vuelta): antes sólo borraba `{{ … }}`/`{% … %}`; un
+# `class="…"` escrito DENTRO de un comentario (`{# usa el include #}`) sobrevivía y disparaba
+# el detector de copia de R7 sobre texto que el navegador nunca pinta — y esos mismos
+# comentarios son, además, donde otras vueltas dejaron escritos a mano los literales exactos
+# que rompían la exención de R6 (ver `_es_prosa_fija_de_la_plantilla`).
+_ETIQUETAS_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.S)
 
 
 def _rutas_de_las_siete_pantallas(persona, entreno):
@@ -511,32 +537,56 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # también para `%`, que no es un carácter de palabra).
 _NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)")
 
+# Elementos de bloque estándar de HTML (no específicos de esta app, no una lista de literales
+# de KCalibra): entre el cierre de uno de éstos y la apertura del siguiente no hay flujo de
+# texto continuo para quien lee la página — dos `<p>` vecinos son dos frases distintas, aunque
+# el espacio en blanco DEL MARCADO entre ellos parezca unir sus textos. FR-D (revisión, 8ª
+# vuelta): sin esto, un `<p>` que acaba en dígito y el `<p>` siguiente que empieza por una
+# unidad se fundían en un número fantasma («7\nmin») que no existe en la página.
+_ETIQUETAS_DE_BLOQUE = frozenset({
+    "p", "div", "li", "ul", "ol", "dl", "dt", "dd", "section", "article", "header", "footer",
+    "main", "nav", "aside", "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody",
+    "tfoot", "tr", "td", "th", "form", "fieldset", "blockquote", "pre",
+})
+
 
 class _NumerosDeDatoEnElTexto(HTMLParser):
     """Acumula TODO el texto de la página en el orden del documento (sin cortar en cada
     etiqueta) para que un número y su unidad se encuentren aunque vivan en elementos
     hermanos distintos, pero recordando, para cada trozo, la cadena de ancestros que lo
-    envolvía en ese punto. Cada coincidencia de `_NUMERO_CON_UNIDAD_RE` sobre el texto
-    completo se asocia a la UNIÓN de las cadenas de ancestros de todos los trozos que la
-    componen — así `_algun_elemento_de_la_cadena_lleva_cifra` (sin cambios, ya la usa el
-    resto de R6) acepta la coincidencia si CUALQUIERA de esos trozos cuelga de un `.cifra`,
-    esté el número o la unidad en el elemento que sea."""
+    envolvía en ese punto Y en qué "bloque" cae (FR-D: dos trozos separados por el cierre y
+    la apertura de un elemento de `_ETIQUETAS_DE_BLOQUE` no pueden fundirse en un número
+    fantasma).
+
+    FALSO VERDE 2 (revisión, 8ª vuelta): la versión anterior anclaba cada coincidencia a la
+    UNIÓN de las cadenas de ancestros de todos los trozos que la componían — bastaba que UN
+    trozo cualquiera (aunque no llevara los DÍGITOS) colgara de un `.cifra` para dar la
+    coincidencia entera por buena (`<span>{{ peso }}</span><span class="cifra"> kg</span>`
+    colaba, y también con el `.cifra` en un hermano separado sólo por espacios). Ahora cada
+    coincidencia se ancla a la cadena de ancestros del trozo que trae el PRIMER DÍGITO —
+    resuelve igual el caso que motivó la unión (`<span class="cifra">80,0</span> kg`, número
+    dentro del `.cifra`, unidad fuera) y no regala el inverso (unidad dentro, número fuera)."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.pila = []
-        self._trozos = []  # (texto, cadena_de_ancestros_en_ese_punto), en orden del documento
+        self._bloque_actual = 0
+        self._trozos = []  # (texto, cadena_de_ancestros, id_de_bloque), en orden del documento
 
     def handle_starttag(self, etiqueta, atributos_crudos):
+        if etiqueta in _ETIQUETAS_DE_BLOQUE:
+            self._bloque_actual += 1
         attrs = atributos(atributos_crudos)
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
         if datos:
-            self._trozos.append((datos, list(self.pila)))
+            self._trozos.append((datos, list(self.pila), self._bloque_actual))
 
     def handle_endtag(self, etiqueta):
+        if etiqueta in _ETIQUETAS_DE_BLOQUE:
+            self._bloque_actual += 1
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:
                 del self.pila[k:]
@@ -544,22 +594,29 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
 
     @property
     def hallazgos(self):
-        limites = []
+        limites = []  # (inicio, fin, cadena_de_ancestros) de cada trozo en texto_completo
+        piezas = []
         cursor = 0
-        for texto, cadena in self._trozos:
+        bloque_anterior = None
+        for texto, cadena, bloque in self._trozos:
+            if bloque_anterior is not None and bloque != bloque_anterior:
+                # Sentinela que nunca es `\s`: rompe cualquier `\s*` del regex que intente
+                # cruzar el salto de bloque. No pertenece a ningún trozo, así que nunca cae
+                # dentro de los límites de una coincidencia (que siempre empieza en un `\d`).
+                piezas.append("\x00")
+                cursor += 1
+            piezas.append(texto)
             limites.append((cursor, cursor + len(texto), cadena))
             cursor += len(texto)
-        texto_completo = "".join(texto for texto, _ in self._trozos)
+            bloque_anterior = bloque
+        texto_completo = "".join(piezas)
         resultado = []
         for coincidencia in _NUMERO_CON_UNIDAD_RE.finditer(texto_completo):
-            inicio, fin = coincidencia.span()
-            cadena_combinada = [
-                ancestro
-                for (s, e, cadena) in limites
-                if s < fin and e > inicio
-                for ancestro in cadena
-            ]
-            resultado.append((coincidencia.group(), cadena_combinada))
+            inicio = coincidencia.start()
+            cadena_del_primer_digito = next(
+                cadena for (s, e, cadena) in limites if s <= inicio < e
+            )
+            resultado.append((coincidencia.group(), cadena_del_primer_digito))
         return resultado
 
 
@@ -575,18 +632,33 @@ def _normaliza_espacios(cadena):
 # de prosa ("Consejo: apunta al menos 30 min de entreno.") que no salen de ningún `{{ … }}` y
 # por tanto no pueden "bailar" al repintar — que es la razón literal por la que R6 existe. Un
 # valor SÍ puede bailar cuando lo pinta una variable de Django; uno que no pueda, por
-# definición, tiene que estar escrito BYTE A BYTE en el fichero fuente de la plantilla. Se
-# comprueba justo eso: si el número+unidad renderizado aparece LITERAL (espacios
-# normalizados) en el texto fuente de las nueve plantillas + `_ui.html`, es prosa fija, no un
-# dato — un valor que sale de `{{ … }}` no puede coincidir por accidente con el texto fuente
-# (la plantilla no tiene sus dígitos escritos, tiene el nombre de la variable).
-_FUENTE_DE_TODAS_LAS_PLANTILLAS = _normaliza_espacios(
-    "\n".join(_texto(p) for p in PLANTILLAS + [RUTA_UI])
+# definición, tiene que estar escrito BYTE A BYTE en el fichero fuente de la plantilla.
+#
+# FALSO VERDE 1 (revisión, 8ª vuelta): la primera versión de esta exención comparaba contra el
+# texto CRUDO de las plantillas — comentarios `{# … #}` incluidos, que no llegan nunca al
+# navegador. Y estas plantillas llevan escritos, en comentarios, los literales exactos que
+# exigen otras suites ("62,0 kg", "70%", "0 kcal", "120%": ver `perfiles/peso.html:58`,
+# `progreso/ver.html:176`, `entrenos/ver.html:55`, `paginas/inicio.html:90`) — con esos
+# valores en los datos de la fixture (Alejandro a 62 kg, un cumplimiento al 0%…), la exención
+# disparaba por COINCIDENCIA DE VALOR, no porque el número fuera prosa fija de verdad: R6
+# vigilaba o no según cuánto pesara el usuario. La exención tiene que salir de la
+# PROCEDENCIA, no del valor — ¿el trozo de plantilla que lo escribe lleva algún
+# `{{ … }}`/`{% … %}`? Se borran las etiquetas de Django del texto fuente
+# (`_ETIQUETAS_DE_DJANGO_RE`, junto a `_texto`, arriba) ANTES de buscar, y sólo se recogen los
+# número+unidad que sobreviven a ese borrado: un valor que sale de una variable no tiene sus
+# dígitos escritos en el fichero, tiene el nombre de la variable, así que no puede sobrevivir
+# por coincidencia — y un comentario borrado tampoco puede colar su literal de documentación.
+_FUENTE_LITERAL_DE_TODAS_LAS_PLANTILLAS = _normaliza_espacios(
+    _ETIQUETAS_DE_DJANGO_RE.sub("", "\n".join(_texto(p) for p in PLANTILLAS + [RUTA_UI]))
 )
+_NUMEROS_LITERALES_DE_PROSA = {
+    _normaliza_espacios(coincidencia.group())
+    for coincidencia in _NUMERO_CON_UNIDAD_RE.finditer(_FUENTE_LITERAL_DE_TODAS_LAS_PLANTILLAS)
+}
 
 
 def _es_prosa_fija_de_la_plantilla(numero_con_unidad):
-    return _normaliza_espacios(numero_con_unidad) in _FUENTE_DE_TODAS_LAS_PLANTILLAS
+    return _normaliza_espacios(numero_con_unidad) in _NUMEROS_LITERALES_DE_PROSA
 
 
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
@@ -596,15 +668,32 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
         # `cumplimiento.cerrados` es 0 y `progreso/ver.html` nunca llega a renderizar la `<p
         # class="cifra …">{{ cumplimiento.porcentaje }}%</p>` (l.178) — el barrido de abajo no
         # puede vigilar un elemento que nunca aparece. Mismo POST que ya usa `cierres/tests.py`.
+        #
+        # D (revisión, 8ª vuelta) — rojo mudo: sin comprobar que el POST funcionó, si algo lo
+        # rompe (p.ej. otra unidad renombra `lo_segui`) el día no se cierra, esa `<p>` deja de
+        # renderizarse, y la medición de arriba pasaría a VERDE sin que nada lo dijera — la
+        # misma familia de "guarda de rojo mudo" que ya exige R10 para las dos zonas del bug
+        # 027.
+        #
+        # `status_code` NO sirve de control aquí (a diferencia del entreno, más abajo):
+        # `cierres/views.py:cerrar` nunca redirige — con el formulario inválido vuelve a
+        # renderizar la MISMA plantilla con los errores, así que un `respuesta` roto sigue
+        # devolviendo 200 (medido: `assertEqual(status_code, 200)` no habría cazado nada, la
+        # mutación "romper `lo_segui`" pasa con 200 y CERO `CierreDeDia` creados). El control
+        # real de que el cierre pasó de verdad es que la fila exista.
+        fecha_de_hoy = timezone.localdate()
         self.client.post(
             f"/cierres/{self.alejandro.id}/",
             {
-                "fecha": timezone.localdate().isoformat(),
+                "fecha": fecha_de_hoy.isoformat(),
                 "respuesta": "lo_segui",
                 "calorias_comidas": "",
                 "nota": "",
             },
         )
+        assert CierreDeDia.objects.filter(
+            persona=self.alejandro, fecha=fecha_de_hoy
+        ).exists()  # control: el día se cerró de verdad
 
     def _elemento_lleva_cifra(self, ruta, id_elemento):
         """Hueco 6 (revisión, 4ª vuelta): la versión anterior exigía, con comillas dobles
@@ -722,11 +811,17 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
 # R7 — las piezas compartidas viven UNA SOLA VEZ, en `_ui.html`, y las pantallas las usan.
 # ------------------------------------------------------------------------------------------ #
 
-# Borra `{{ … }}` y `{% … %}` del texto fuente antes de tokenizar un `class="…"`: lo que el
-# navegador ve ahí es texto plano (una vez Django resuelve la etiqueta), y una comilla de
-# Django dentro del atributo (`{% if tono == 'racha' %}`) ya no rompe el cierre de `_CLASE_RE`
+# `_ETIQUETAS_DE_DJANGO_RE` (arriba, junto a `_texto`) borra `{{ … }}`/`{% … %}`/`{# … #}` del
+# texto fuente antes de tokenizar un `class="…"`: lo que el navegador ve ahí es texto plano
+# (una vez Django resuelve la etiqueta o descarta el comentario), y una comilla de Django
+# dentro del atributo (`{% if tono == 'racha' %}`) ya no rompe el cierre de `_CLASE_RE`
 # (revisión, 7ª vuelta — ver el docstring de `test_ninguna_pantalla_copia_…` más abajo).
-_ETIQUETAS_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+#
+# Captura TAMBIÉN la etiqueta que abre el `class="…"` (FALSO VERDE 3, revisión 8ª vuelta): la
+# firma de `aviso` necesita saber si es un `<div>` o un `<button>`, no sólo qué clases lleva.
+_CLASE_CON_ETIQUETA_RE = re.compile(
+    r'''<(?P<etiqueta>[a-zA-Z][\w-]*)[^<>]*?\sclass=(["'])(?P<clases>.*?)\2''', re.S
+)
 
 
 class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
@@ -780,61 +875,77 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         ]
         self.assertEqual(sin_uso, [], f"piezas portadas que ninguna pantalla incluye: {sin_uso}")
 
-    # Firma de clases por pieza: (tokens fijos, alternativas). `firma_fija` son los tokens
-    # LITERALES (sin `{{ }}`/`{% %}` de Django dentro) que tienen que estar TODOS; `alternativas`
-    # (lista de conjuntos, puede ir vacía) exige que ALGUNA de ellas esté completa además —
-    # para las piezas cuyo color sale de una rama `{% if %}` (`aviso`), de forma que la firma
-    # no dispare sólo por compartir la utilidad de espaciado con cualquier botón corriente
-    # (FR-A, revisión 7ª vuelta: ver el porqué en `test_ninguna_pantalla_copia_…` más abajo).
-    # Verificado (script aparte, no un test — no hay nada que mutar en un negativo) que
-    # NINGUNA de las nueve plantillas tiene hoy estos tokens juntos en un mismo `class`, ni
-    # por separado ni en combinación con otra firma. `anillo_cierra` no tiene firma posible
-    # (su marcado son sólo `</div></div>`, sin ninguna clase): un cierre sin clase no se
-    # puede distinguir de cualquier otro `</div>`, así que copiarlo no es "el hueco que
-    # nombra R7" en el mismo sentido — no hay clase que decir que se copió.
+    # Firma de clases por pieza: lista de candidatas independientes (basta con que UNA case,
+    # OR entre ellas), cada una `{"fija": tokens que tienen que estar TODOS}` con, opcional,
+    # `"etiquetas"` (el nombre de etiqueta HTML tiene que ser uno de éstos). Verificado
+    # (script aparte, no un test — no hay nada que mutar en un negativo) que NINGUNA de las
+    # nueve plantillas tiene hoy estos tokens juntos en un mismo `class` con la etiqueta que
+    # exige cada firma. `anillo_cierra` no tiene firma posible (su marcado son sólo
+    # `</div></div>`, sin ninguna clase): un cierre sin clase no se puede distinguir de
+    # cualquier otro `</div>`, así que copiarlo no es "el hueco que nombra R7" en el mismo
+    # sentido — no hay clase que decir que se copió.
+    #
+    # FALSO VERDE 3 (revisión, 8ª vuelta): las vueltas anteriores habían cerrado FR-A
+    # estrechando la firma con un token discriminante (`cifra` en `numero_grande`, un trío de
+    # pares de color en `aviso`) — pero R7 prohíbe "una pieza copiada y pegada", no "una pieza
+    # copiada con todos sus tokens": una copia que omite justo el token discriminante volvía a
+    # colar. El token discriminante no puede ser el que un copiador omite: tiene que ser algo
+    # de la FORMA de la pieza que un copiador no reproduce por accidente.
     _FIRMAS_DE_CLASE_POR_PIEZA = {
-        "tarjeta_abre": ({"rounded-tarjeta", "bg-superficie"}, []),
-        "titulo_seccion": ({"mb-3", "items-end", "justify-between"}, []),
-        # `cifra` (revisión 7ª vuelta, FR-A): sin este token, `{font-bold, leading-none}` son
-        # dos utilidades tan comunes que un `<h2 class="text-[18px] font-bold leading-none
-        # tracking-tight">` de diseño legítimo (nada que ver con `numero_grande`) se declaraba
-        # copia. `numero_grande` SIEMPRE lleva `.cifra` (es su razón de ser, R6) y ningún
-        # encabezado normal la lleva sin ser, de hecho, un número de dato.
-        "numero_grande": ({"cifra", "font-bold", "leading-none"}, []),
-        "pildora_macro": ({"rounded-pastilla", "px-3", "py-1.5"}, []),
-        "barra_macro": ({"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}, []),
-        "anillo_abre": ({"shrink-0", "rounded-full", "relative"}, []),
-        "boton": ({"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}, []),
-        # (revisión 7ª vuelta, FR-A): el botón de "Comprobar hora del servidor"
-        # (`paginas/inicio.html:50`) ya lleva `rounded-control px-4 … font-medium` — a un
-        # token (`py-2` en vez de `py-3`) de la firma fija. Exigir ADEMÁS uno de los tres
-        # pares de color de la pieza (que salen de la rama `{% if tipo == … %}` de `aviso` y
-        # no aparecen juntos en ningún botón de acción — ese botón usa `bg-acento`/
-        # `text-white`, no `bg-acento-suave`/`text-acento`) hace que ni siquiera un cambio de
-        # padding coincidente dispare sobre ese botón, porque no es la pieza `aviso`.
-        "aviso": (
-            {"rounded-control", "px-4", "py-3", "font-medium"},
-            [
-                {"bg-racha-suave", "text-racha"},
-                {"bg-carbos-suave", "text-carbos"},
-                {"bg-acento-suave", "text-acento"},
-            ],
-        ),
+        "tarjeta_abre": [{"fija": {"rounded-tarjeta", "bg-superficie"}}],
+        "titulo_seccion": [{"fija": {"mb-3", "items-end", "justify-between"}}],
+        # Dos candidatas independientes, por la FORMA de la pieza, no por un token que un
+        # copiador pueda omitir sin querer: (a) el `<p>` exterior CON `.cifra` — sigue
+        # cazando la copia completa de siempre; (b) el `<span>` INTERIOR del `{% if unidad %}`
+        # con sus cinco clases fijas, que existe con o sin que el `<p>` lleve `cifra` — cierra
+        # el hueco de un `numero_grande` de RECUENTO (entrenos, comidas, días, racha: la mitad
+        # de sus usos, por eso `unidad` es opcional en `_ui.html:62`) pegado a mano SIN
+        # `cifra`, que ni esta firma ni R6 veían (R6 sólo mira números CON unidad física:
+        # kcal|kg|g|min|%, y un recuento no lleva ninguna). Ningún encabezado normal
+        # (`<h2 class="text-[18px] font-bold leading-none tracking-tight">`, FR-A) lleva
+        # ninguna de las dos.
+        "numero_grande": [
+            {"fija": {"cifra", "font-bold", "leading-none"}},
+            {
+                "fija": {
+                    "ml-1.5", "text-base", "font-semibold", "tracking-normal",
+                    "text-tinta-media",
+                }
+            },
+        ],
+        "pildora_macro": [{"fija": {"rounded-pastilla", "px-3", "py-1.5"}}],
+        "barra_macro": [{"fija": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}}],
+        "anillo_abre": [{"fija": {"shrink-0", "rounded-full", "relative"}}],
+        "boton": [{"fija": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}}],
+        # (revisión, 8ª vuelta): las tres vueltas anteriores enumeraban los tres pares de
+        # color de la pieza para no disparar sobre el botón de "Comprobar hora del servidor"
+        # (`paginas/inicio.html:50`, que comparte los tokens de espaciado) — pero un CUARTO
+        # tono (`bg-lienzo text-tinta-media`, el neutro que la propia `distintivo` usa) no
+        # está en la lista y colaba. Lo que de verdad distingue a `aviso` de ese botón no es
+        # su color, es su FORMA: `aviso` es un `<div>` de puro texto; el botón es un
+        # `<button>`. Exigir la etiqueta cierra el hueco sin enumerar ni un color y sin
+        # reabrir FR-A (ese botón nunca deja de ser un `<button>`).
+        "aviso": [
+            {"fija": {"rounded-control", "px-4", "py-3", "font-medium"}, "etiquetas": {"div"}}
+        ],
         # `gap-1` fuera de la firma (revisión 7ª vuelta): un `gap-*` es el token MÁS fácil de
         # tocar sin querer al copiar (reordenar/ajustar espaciado) y no aporta nada que
         # `rounded-pastilla`+`px-2.5`+`py-1` ya no digan sobre la forma de la pieza —
         # verificado que este trío tampoco colisiona con nada de las nueve plantillas.
-        "distintivo": ({"rounded-pastilla", "px-2.5", "py-1"}, []),
-        "boton_redondo": ({"pointer-events-none", "fixed", "inset-x-0", "z-40"}, []),
-        "boton_redondo_menu": ({"bottom-16", "right-0", "w-56"}, []),
+        "distintivo": [{"fija": {"rounded-pastilla", "px-2.5", "py-1"}}],
+        "boton_redondo": [{"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}}],
+        "boton_redondo_menu": [{"fija": {"bottom-16", "right-0", "w-56"}}],
     }
 
     @staticmethod
-    def _copia_el_marcado_de_la_pieza(clases, firma):
-        fija, alternativas = firma
-        if not (fija <= clases):
-            return False
-        return not alternativas or any(alt <= clases for alt in alternativas)
+    def _copia_el_marcado_de_la_pieza(etiqueta, clases, candidatas):
+        for candidata in candidatas:
+            if not (candidata["fija"] <= clases):
+                continue
+            etiquetas_permitidas = candidata.get("etiquetas")
+            if etiquetas_permitidas is None or etiqueta in etiquetas_permitidas:
+                return True
+        return False
 
     def test_ninguna_pantalla_copia_el_marcado_de_ninguna_pieza_en_vez_de_incluirla(self):
         """El "hueco" que nombra R7 en persona: una pieza copiada y pegada en vez de incluida.
@@ -868,14 +979,20 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         NORMALIZAN los `{{ … }}` y `{% … %}` de Django (se borran del texto) ANTES de buscar
         `class="…"` — lo que renderiza el navegador para un `{% if True %}` es texto plano, y
         eso es lo que se compara; `_CLASE_RE` ya no tropieza con una comilla de Django
-        camuflada dentro del atributo tampoco."""
+        camuflada dentro del atributo tampoco.
+
+        FALSO VERDE 3 (revisión, 8ª vuelta): además de las clases, ahora se captura la
+        ETIQUETA que las lleva (`_CLASE_CON_ETIQUETA_RE`, abajo) — necesaria para que la
+        firma de `aviso` pueda exigir "es un `<div>`, no un `<button>`" en vez de enumerar
+        colores (ver la nota de `_FIRMAS_DE_CLASE_POR_PIEZA`)."""
         for ruta in PLANTILLAS:
             contenido = _ETIQUETAS_DE_DJANGO_RE.sub("", _texto(ruta))
-            for coincidencia in _CLASE_RE.finditer(contenido):
+            for coincidencia in _CLASE_CON_ETIQUETA_RE.finditer(contenido):
+                etiqueta = coincidencia.group("etiqueta").lower()
                 clases = set(coincidencia.group("clases").split())
-                for pieza, firma in self._FIRMAS_DE_CLASE_POR_PIEZA.items():
+                for pieza, candidatas in self._FIRMAS_DE_CLASE_POR_PIEZA.items():
                     self.assertFalse(
-                        self._copia_el_marcado_de_la_pieza(clases, firma),
+                        self._copia_el_marcado_de_la_pieza(etiqueta, clases, candidatas),
                         f"{ruta.relative_to(BASE_DIR)} copia el marcado de `{pieza}` en vez de "
                         f'incluirla con `{{% include "_ui.html#{pieza}" %}}`',
                     )
