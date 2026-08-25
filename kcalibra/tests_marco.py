@@ -12,6 +12,7 @@ la suite) — hoy fallan contra el marco de la barra de arriba plana.
 """
 
 import re
+from html.parser import HTMLParser
 
 from django.contrib.staticfiles import finders
 from django.test import SimpleTestCase
@@ -336,6 +337,68 @@ class R7_SinPersonaNoRompeLaPaginaTests(PruebaConRegistroAbierto):
 _ENLACE_RE = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>\s*(.*?)\s*</a>', re.S)
 
 
+# Tapaderas: formas de esconder algo que sobreviven a que Alpine "abra" el menú (`x-show` solo
+# alterna `display`). La lista es NEGRA y por tanto nunca completa — pero la grieta que la hacía
+# inútil no era la lista, era DÓNDE se miraba: hasta la 3ª revisión solo se miraba la etiqueta del
+# propio menú, así que envolverlo en un `<div class="hidden">` lo escondía con el test en verde.
+# Ahora se recorre la cadena de ANCESTROS de verdad, parseando el HTML.
+_TAPADERAS_DE_CLASE = ("hidden", "invisible", "opacity-0", "pointer-events-none", "sr-only",
+                       "w-0", "h-0", "scale-0")
+_TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0")
+_SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
+
+
+class _CadenaDeAncestros(HTMLParser):
+    """El primer elemento que lleva `atributo=valor`, MÁS toda su cadena de ancestros.
+
+    Hace falta un parser de verdad y no un `rindex("<div")`: ese truco encuentra la etiqueta más
+    cercana hacia atrás, que es el propio elemento, y jamás sube a quien lo envuelve. Fue justo
+    el agujero que firmó la 3ª revisión: un `<div class="hidden">` alrededor del menú lo escondía
+    en cualquier navegador con el test tan verde como antes.
+    """
+
+    def __init__(self, atributo, valor):
+        super().__init__(convert_charrefs=True)
+        self.buscado = (atributo, valor)
+        self.pila = []
+        self.cadena = None
+
+    def handle_starttag(self, etiqueta, atributos):
+        attrs = dict(atributos)
+        if self.cadena is None and attrs.get(self.buscado[0]) == self.buscado[1]:
+            self.cadena = list(self.pila) + [(etiqueta, attrs)]
+        if etiqueta not in _SIN_CIERRE:
+            self.pila.append((etiqueta, attrs))
+
+    def handle_endtag(self, etiqueta):
+        for k in range(len(self.pila) - 1, -1, -1):
+            if self.pila[k][0] == etiqueta:
+                del self.pila[k:]
+                return
+
+
+def _nada_lo_tapa(caso, contenido, atributo, valor):
+    """Falla si el elemento buscado, o CUALQUIERA de sus ancestros, está escondido."""
+    lector = _CadenaDeAncestros(atributo, valor)
+    lector.feed(contenido)
+    if lector.cadena is None:
+        raise AssertionError(f"no hay ningún elemento con {atributo}={valor!r}: el test no prueba nada")
+    for etiqueta, attrs in lector.cadena:
+        clases = (attrs.get("class") or "").split()
+        estilo = (attrs.get("style") or "").replace(" ", "")
+        for tapadera in _TAPADERAS_DE_CLASE:
+            caso.assertNotIn(
+                tapadera, clases,
+                f"<{etiqueta}> esconde el menú con la clase '{tapadera}' "
+                f"({'el propio menú' if attrs.get(atributo) == valor else 'un ancestro'})",
+            )
+        for tapadera in _TAPADERAS_DE_ESTILO:
+            caso.assertNotIn(
+                tapadera, estilo,
+                f"<{etiqueta}> esconde el menú con el estilo '{tapadera}'",
+            )
+
+
 def _zona_de_ajustes(contenido):
     """El menú que despliega la rueda: desde su `x-show` hasta el final de la cabecera.
 
@@ -411,25 +474,17 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
         self.assertNotIn(" disabled", rueda[0])
         self.assertNotIn('aria-disabled="true"', rueda[0])
 
-        # Y el menú no puede nacer tapado. Alpine, con `x-show`, solo alterna `display`: cualquier
-        # otra forma de esconder sobrevive a que el menú "se abra". La 2ª revisión lo demostró con
-        # `invisible` y con `opacity-0 pointer-events-none`, que dejaban el test VERDE y el menú
-        # invisible en un navegador de verdad (agujero 1).
+        # Y el menú no puede nacer tapado — ni él, NI NADIE QUE LO ENVUELVA. Alpine, con
+        # `x-show`, solo alterna `display` en el propio elemento: si un padre está escondido, el
+        # menú "abre" y sigue sin verse. Mirar solo la etiqueta del menú dejaba pasar eso, y es
+        # el agujero que firmó la 3ª revisión (`<div class="hidden">` alrededor, test verde).
         #
-        # Esto es una LISTA NEGRA, y una lista negra nunca está completa: cubre las formas que
-        # Tailwind ofrece para esconder algo, no todas las imaginables. El límite de verdad está
-        # más abajo, y es del nivel de test que eligió el contrato (ADR-015): sobre HTML
-        # renderizado no se puede ver si el navegador llegó a ejecutar Alpine. Cerrar eso pide un
+        # Lo que queda fuera, dicho en vez de disimulado: `_TAPADERAS_*` es una lista negra y una
+        # lista negra nunca está completa. Y sobre todo, este nivel de test (ADR-015: HTML
+        # renderizado, sin motor de JavaScript) no puede ver si el navegador llegó a ejecutar
+        # Alpine: borrando su `<script>`, el menú no abre y esto sigue verde. Cerrar eso pide un
         # navegador de verdad, y este contrato no lo pide.
-        i = contenido.index('x-show="ajustesAbierto"')
-        etiqueta = contenido[contenido.rindex("<div", 0, i) : contenido.index(">", i)]
-        sin_espacios = etiqueta.replace(" ", "")
-        for tapadera in ("hidden", "invisible", "opacity-0", "pointer-events-none", "sr-only"):
-            with self.subTest(tapadera=tapadera):
-                self.assertNotIn(tapadera, etiqueta.split("class=")[-1] if "class=" in etiqueta else etiqueta)
-        for tapadera in ("display:none", "visibility:hidden", "opacity:0"):
-            with self.subTest(tapadera=tapadera):
-                self.assertNotIn(tapadera, sin_espacios)
+        _nada_lo_tapa(self, contenido, "x-show", "ajustesAbierto")
 
 
 class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
