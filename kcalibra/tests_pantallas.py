@@ -87,6 +87,23 @@ def _texto(ruta):
     return ruta.read_text(encoding="utf-8")
 
 
+def _rutas_de_las_siete_pantallas(persona, entreno):
+    """Las siete rutas de verdad (las nueve plantillas de esta unidad menos las dos parciales
+    sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que se renderizan igual
+    porque `progreso/ver.html` y `paginas/inicio.html` las incluyen) — factorizada para que R6
+    y R7 (vuelta 9, comparación de firma sobre HTML renderizado) barran exactamente el mismo
+    conjunto sin repetir la lista a mano dos veces."""
+    return [
+        "/",
+        f"/planes/{persona.id}/apuntar/",
+        "/entrenos/",
+        f"/entrenos/{persona.id}/{entreno.id}/corregir/",
+        "/perfiles/peso/",
+        f"/progreso/{persona.id}/",
+        f"/cierres/{persona.id}/",
+    ]
+
+
 def _indices_del_h1_de_titulo(contenido):
     """El `<h1>` que `{% block titulo_grande %}` pinta dentro de `<header>` (`base.html`), o
     `None` si esta pantalla no lo llena.
@@ -476,53 +493,119 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # se exige `.cifra` en el propio elemento o en ALGUNO de sus ancestros — se hereda de verdad
 # (`font-variant-numeric`/`letter-spacing`, medido por el revisor en el CSS servido), así que
 # un envoltorio con `.cifra` también vale.
-_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)\b")
+#
+# Falso verde 1, 2ª mitad (revisión, 7ª vuelta): esta versión SEGUÍA saliendo del texto PROPIO
+# de cada elemento (`_flush()` cortaba en cada `<tag>`/`</tag>`) — si el valor y su unidad
+# viven en elementos DISTINTOS (`perfiles/peso.html:152`:
+# `<span class="cifra">{{ medicion.peso_kg }}</span> kg`, la unidad fuera del `<span>`), el
+# barrido no ve un número de dato EN ABSOLUTO: no es que lo perdone, es que no lo encuentra.
+# Medido por el revisor: quitando `cifra` a ese `<span>`, `Ran 45 — OK`. Y el `\\b` final
+# detrás de `%` nunca podía casar (`%` no es carácter de palabra: `78%`, `78% de`, `78%)` no
+# casaban nunca, sólo `5%de`, que no existe) — la rama `%` del regex no había cazado nada
+# jamás. Los dos arreglos: (a) el barrido sale del VALOR, no de la unidad — se recorre el
+# texto renderizado en el orden del documento SIN cortar en cada etiqueta, y cada coincidencia
+# se ancla a la UNIÓN de las cadenas de ancestros de todos los trozos de texto que la
+# componen (basta que UNO — el que envuelve el número, aunque la unidad quede fuera — lleve
+# `.cifra`); (b) `%` se ancla con `(?!\\w)` en vez de `\\b`, igual que el resto de unidades
+# (`(?!\\w)` y `\\b` coinciden para las que terminan en letra, y sólo `(?!\\w)` funciona
+# también para `%`, que no es un carácter de palabra).
+_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)")
 
 
 class _NumerosDeDatoEnElTexto(HTMLParser):
-    """Para cada trozo de texto propio de un elemento (sin cruzar hijos: se acumula entre dos
-    etiquetas cualesquiera, como ya acumula `_ElementosConTexto` de
-    `kcalibra.ayuda_de_alcanzabilidad`) que combina un número con una unidad de dato, la
-    cadena de ancestros MÁS el propio elemento que lo contiene — el mismo patrón de
-    `CadenaDeAncestros`, pero anclado al TEXTO en vez de a los atributos, porque aquí lo que
-    hay que encontrar es un número escrito en la página, no un elemento con un `id`/`aria-*`
-    concreto."""
+    """Acumula TODO el texto de la página en el orden del documento (sin cortar en cada
+    etiqueta) para que un número y su unidad se encuentren aunque vivan en elementos
+    hermanos distintos, pero recordando, para cada trozo, la cadena de ancestros que lo
+    envolvía en ese punto. Cada coincidencia de `_NUMERO_CON_UNIDAD_RE` sobre el texto
+    completo se asocia a la UNIÓN de las cadenas de ancestros de todos los trozos que la
+    componen — así `_algun_elemento_de_la_cadena_lleva_cifra` (sin cambios, ya la usa el
+    resto de R6) acepta la coincidencia si CUALQUIERA de esos trozos cuelga de un `.cifra`,
+    esté el número o la unidad en el elemento que sea."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.pila = []
-        self.hallazgos = []
-        self._buffer = []
-
-    def _flush(self):
-        texto = "".join(self._buffer)
-        self._buffer = []
-        if self.pila:
-            for coincidencia in _NUMERO_CON_UNIDAD_RE.finditer(texto):
-                self.hallazgos.append((coincidencia.group(), list(self.pila)))
+        self._trozos = []  # (texto, cadena_de_ancestros_en_ese_punto), en orden del documento
 
     def handle_starttag(self, etiqueta, atributos_crudos):
-        self._flush()
         attrs = atributos(atributos_crudos)
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
-        self._buffer.append(datos)
+        if datos:
+            self._trozos.append((datos, list(self.pila)))
 
     def handle_endtag(self, etiqueta):
-        self._flush()
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:
                 del self.pila[k:]
                 return
+
+    @property
+    def hallazgos(self):
+        limites = []
+        cursor = 0
+        for texto, cadena in self._trozos:
+            limites.append((cursor, cursor + len(texto), cadena))
+            cursor += len(texto)
+        texto_completo = "".join(texto for texto, _ in self._trozos)
+        resultado = []
+        for coincidencia in _NUMERO_CON_UNIDAD_RE.finditer(texto_completo):
+            inicio, fin = coincidencia.span()
+            cadena_combinada = [
+                ancestro
+                for (s, e, cadena) in limites
+                if s < fin and e > inicio
+                for ancestro in cadena
+            ]
+            resultado.append((coincidencia.group(), cadena_combinada))
+        return resultado
 
 
 def _algun_elemento_de_la_cadena_lleva_cifra(cadena):
     return any("cifra" in (attrs.get("class") or "").split() for _, attrs in cadena)
 
 
+def _normaliza_espacios(cadena):
+    return re.sub(r"\s+", " ", cadena)
+
+
+# Deuda FR-B (revisión, 7ª vuelta): el barrido de arriba exigía `.cifra` a números LITERALES
+# de prosa ("Consejo: apunta al menos 30 min de entreno.") que no salen de ningún `{{ … }}` y
+# por tanto no pueden "bailar" al repintar — que es la razón literal por la que R6 existe. Un
+# valor SÍ puede bailar cuando lo pinta una variable de Django; uno que no pueda, por
+# definición, tiene que estar escrito BYTE A BYTE en el fichero fuente de la plantilla. Se
+# comprueba justo eso: si el número+unidad renderizado aparece LITERAL (espacios
+# normalizados) en el texto fuente de las nueve plantillas + `_ui.html`, es prosa fija, no un
+# dato — un valor que sale de `{{ … }}` no puede coincidir por accidente con el texto fuente
+# (la plantilla no tiene sus dígitos escritos, tiene el nombre de la variable).
+_FUENTE_DE_TODAS_LAS_PLANTILLAS = _normaliza_espacios(
+    "\n".join(_texto(p) for p in PLANTILLAS + [RUTA_UI])
+)
+
+
+def _es_prosa_fija_de_la_plantilla(numero_con_unidad):
+    return _normaliza_espacios(numero_con_unidad) in _FUENTE_DE_TODAS_LAS_PLANTILLAS
+
+
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
+    def setUp(self):
+        super().setUp()
+        # Cierra el día de hoy (revisión, 7ª vuelta): sin ningún `CierreDeDia`,
+        # `cumplimiento.cerrados` es 0 y `progreso/ver.html` nunca llega a renderizar la `<p
+        # class="cifra …">{{ cumplimiento.porcentaje }}%</p>` (l.178) — el barrido de abajo no
+        # puede vigilar un elemento que nunca aparece. Mismo POST que ya usa `cierres/tests.py`.
+        self.client.post(
+            f"/cierres/{self.alejandro.id}/",
+            {
+                "fecha": timezone.localdate().isoformat(),
+                "respuesta": "lo_segui",
+                "calorias_comidas": "",
+                "nota": "",
+            },
+        )
+
     def _elemento_lleva_cifra(self, ruta, id_elemento):
         """Hueco 6 (revisión, 4ª vuelta): la versión anterior exigía, con comillas dobles
         FIJAS, que `class` fuera pegado JUSTO DETRÁS de `id` (`id="…"\\s+class="cifra\\b`) —
@@ -618,24 +701,18 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
         con datos reales — la fixture de esta clase ya trae un plan, un entreno y dos
         pesadas, así que todos los números de dato de las nueve plantillas tienen algo que
         mostrar."""
-        rutas = [
-            "/",
-            f"/planes/{self.alejandro.id}/apuntar/",
-            "/entrenos/",
-            f"/entrenos/{self.alejandro.id}/{self.entreno.id}/corregir/",
-            "/perfiles/peso/",
-            f"/progreso/{self.alejandro.id}/",
-            f"/cierres/{self.alejandro.id}/",
-        ]
         sin_cifra = []
-        for ruta in rutas:
+        for ruta in _rutas_de_las_siete_pantallas(self.alejandro, self.entreno):
             respuesta = self.client.get(ruta)
             self.assertEqual(respuesta.status_code, 200, ruta)
             lector = _NumerosDeDatoEnElTexto()
             lector.feed(respuesta.content.decode())
             for numero, cadena in lector.hallazgos:
-                if not _algun_elemento_de_la_cadena_lleva_cifra(cadena):
-                    sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
+                if _algun_elemento_de_la_cadena_lleva_cifra(cadena):
+                    continue
+                if _es_prosa_fija_de_la_plantilla(numero):
+                    continue
+                sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
         self.assertEqual(
             sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
         )
@@ -644,6 +721,12 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
 # ------------------------------------------------------------------------------------------ #
 # R7 — las piezas compartidas viven UNA SOLA VEZ, en `_ui.html`, y las pantallas las usan.
 # ------------------------------------------------------------------------------------------ #
+
+# Borra `{{ … }}` y `{% … %}` del texto fuente antes de tokenizar un `class="…"`: lo que el
+# navegador ve ahí es texto plano (una vez Django resuelve la etiqueta), y una comilla de
+# Django dentro del atributo (`{% if tono == 'racha' %}`) ya no rompe el cierre de `_CLASE_RE`
+# (revisión, 7ª vuelta — ver el docstring de `test_ninguna_pantalla_copia_…` más abajo).
+_ETIQUETAS_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
 
 
 class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
@@ -662,11 +745,23 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         añadiendo ese partial a `entrenos/ver.html`, `Ran 44 — OK`). Se cuenta sobre las NUEVE
         plantillas de pantalla MÁS `_ui.html`, no solo sobre `_ui.html` — ninguna de las
         nueve define hoy un partial con alguno de estos nombres, así que el recuento sigue
-        dando 1 en cada uno sin tocar el código de producción."""
+        dando 1 en cada uno sin tocar el código de producción.
+
+        FALSO VERDE 2, mitad "inline" (revisión, 7ª vuelta): `{% partialdef nombre inline %}`
+        es un argumento REAL de `django-template-partials`
+        (`_START_TAG = r"\\{%\\s*(startpartial|partialdef)\\s+([\\w-]+)(\\s+inline)?\\s*%}"`,
+        `template_partials/templatetags/partials.py:9`) y define la pieza IGUAL que sin
+        `inline` — pero el `\\s*%\\}` de este regex exigía que el nombre fuera seguido
+        directamente por el cierre, así que una segunda definición con `inline` no la contaba
+        (medido: la misma mutación de arriba, con `inline` añadido, `Ran 44 — OK`). Se tolera
+        el argumento opcional, y se ancla el nombre con `\\b` (que no lo llevaba: sin él,
+        `distintivo` también casaría dentro de un futuro `distintivo_2`)."""
         contenido = "\n".join(_texto(p) for p in PLANTILLAS + [RUTA_UI])
         conteos = {}
         for pieza in PIEZAS_PORTADAS:
-            conteos[pieza] = len(re.findall(rf"\{{%\s*partialdef\s+{pieza}\s*%\}}", contenido))
+            conteos[pieza] = len(
+                re.findall(rf"\{{%\s*partialdef\s+{pieza}\b(?:\s+inline)?\s*%\}}", contenido)
+            )
         self.assertEqual(
             conteos,
             {pieza: 1 for pieza in PIEZAS_PORTADAS},
@@ -685,8 +780,12 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         ]
         self.assertEqual(sin_uso, [], f"piezas portadas que ninguna pantalla incluye: {sin_uso}")
 
-    # Firma de clases por pieza: el subconjunto de tokens LITERALES (sin `{{ }}`/`{% %}` de
-    # Django dentro) que identifica el marcado de esa pieza en `_ui.html` sin ambigüedad.
+    # Firma de clases por pieza: (tokens fijos, alternativas). `firma_fija` son los tokens
+    # LITERALES (sin `{{ }}`/`{% %}` de Django dentro) que tienen que estar TODOS; `alternativas`
+    # (lista de conjuntos, puede ir vacía) exige que ALGUNA de ellas esté completa además —
+    # para las piezas cuyo color sale de una rama `{% if %}` (`aviso`), de forma que la firma
+    # no dispare sólo por compartir la utilidad de espaciado con cualquier botón corriente
+    # (FR-A, revisión 7ª vuelta: ver el porqué en `test_ninguna_pantalla_copia_…` más abajo).
     # Verificado (script aparte, no un test — no hay nada que mutar en un negativo) que
     # NINGUNA de las nueve plantillas tiene hoy estos tokens juntos en un mismo `class`, ni
     # por separado ni en combinación con otra firma. `anillo_cierra` no tiene firma posible
@@ -694,18 +793,48 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
     # puede distinguir de cualquier otro `</div>`, así que copiarlo no es "el hueco que
     # nombra R7" en el mismo sentido — no hay clase que decir que se copió.
     _FIRMAS_DE_CLASE_POR_PIEZA = {
-        "tarjeta_abre": {"rounded-tarjeta", "bg-superficie"},
-        "titulo_seccion": {"mb-3", "items-end", "justify-between"},
-        "numero_grande": {"font-bold", "leading-none"},
-        "pildora_macro": {"rounded-pastilla", "px-3", "py-1.5"},
-        "barra_macro": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"},
-        "anillo_abre": {"shrink-0", "rounded-full", "relative"},
-        "boton": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"},
-        "aviso": {"rounded-control", "px-4", "py-3", "font-medium"},
-        "distintivo": {"px-2.5", "py-1", "gap-1"},
-        "boton_redondo": {"pointer-events-none", "fixed", "inset-x-0", "z-40"},
-        "boton_redondo_menu": {"bottom-16", "right-0", "w-56"},
+        "tarjeta_abre": ({"rounded-tarjeta", "bg-superficie"}, []),
+        "titulo_seccion": ({"mb-3", "items-end", "justify-between"}, []),
+        # `cifra` (revisión 7ª vuelta, FR-A): sin este token, `{font-bold, leading-none}` son
+        # dos utilidades tan comunes que un `<h2 class="text-[18px] font-bold leading-none
+        # tracking-tight">` de diseño legítimo (nada que ver con `numero_grande`) se declaraba
+        # copia. `numero_grande` SIEMPRE lleva `.cifra` (es su razón de ser, R6) y ningún
+        # encabezado normal la lleva sin ser, de hecho, un número de dato.
+        "numero_grande": ({"cifra", "font-bold", "leading-none"}, []),
+        "pildora_macro": ({"rounded-pastilla", "px-3", "py-1.5"}, []),
+        "barra_macro": ({"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}, []),
+        "anillo_abre": ({"shrink-0", "rounded-full", "relative"}, []),
+        "boton": ({"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}, []),
+        # (revisión 7ª vuelta, FR-A): el botón de "Comprobar hora del servidor"
+        # (`paginas/inicio.html:50`) ya lleva `rounded-control px-4 … font-medium` — a un
+        # token (`py-2` en vez de `py-3`) de la firma fija. Exigir ADEMÁS uno de los tres
+        # pares de color de la pieza (que salen de la rama `{% if tipo == … %}` de `aviso` y
+        # no aparecen juntos en ningún botón de acción — ese botón usa `bg-acento`/
+        # `text-white`, no `bg-acento-suave`/`text-acento`) hace que ni siquiera un cambio de
+        # padding coincidente dispare sobre ese botón, porque no es la pieza `aviso`.
+        "aviso": (
+            {"rounded-control", "px-4", "py-3", "font-medium"},
+            [
+                {"bg-racha-suave", "text-racha"},
+                {"bg-carbos-suave", "text-carbos"},
+                {"bg-acento-suave", "text-acento"},
+            ],
+        ),
+        # `gap-1` fuera de la firma (revisión 7ª vuelta): un `gap-*` es el token MÁS fácil de
+        # tocar sin querer al copiar (reordenar/ajustar espaciado) y no aporta nada que
+        # `rounded-pastilla`+`px-2.5`+`py-1` ya no digan sobre la forma de la pieza —
+        # verificado que este trío tampoco colisiona con nada de las nueve plantillas.
+        "distintivo": ({"rounded-pastilla", "px-2.5", "py-1"}, []),
+        "boton_redondo": ({"pointer-events-none", "fixed", "inset-x-0", "z-40"}, []),
+        "boton_redondo_menu": ({"bottom-16", "right-0", "w-56"}, []),
     }
+
+    @staticmethod
+    def _copia_el_marcado_de_la_pieza(clases, firma):
+        fija, alternativas = firma
+        if not (fija <= clases):
+            return False
+        return not alternativas or any(alt <= clases for alt in alternativas)
 
     def test_ninguna_pantalla_copia_el_marcado_de_ninguna_pieza_en_vez_de_incluirla(self):
         """El "hueco" que nombra R7 en persona: una pieza copiada y pegada en vez de incluida.
@@ -724,14 +853,29 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         sólo UNA de nueve. Pegando a mano el marcado de OTRA pieza (`numero_grande`) dentro de
         `entrenos/ver.html`, en vez de incluirla, el revisor midió `Ran 44 — OK`: la red no se
         enteraba. Mismo bucle de antes, ahora contra un DICCIONARIO de pieza → firma de clase
-        (`_FIRMAS_DE_CLASE_POR_PIEZA`, arriba) en vez de sólo `tarjeta`."""
+        (`_FIRMAS_DE_CLASE_POR_PIEZA`, arriba) en vez de sólo `tarjeta`.
+
+        FALSO VERDE 2, mitad "el fichero no es el HTML" (revisión, 7ª vuelta): esta
+        comprobación leía el `class="…"` del FICHERO fuente con `_CLASE_RE`
+        (`[^"']*` entre las dos comillas del mismo tipo) — una pieza pegada entera y literal,
+        con un token de su firma envuelto en `{% if True %}` DENTRO del propio atributo
+        `class` (Django la renderiza byte a byte igual: `{% if True %}py-1{% endif %}` imprime
+        `py-1`), rompe ese token en fragmentos (`{%`, `if`, `True`, `%}py-1{%`, `endif`, `%}`)
+        que ya no son el token de la firma — medido: `Ran 45 — OK` con esa copia. Y una pieza
+        con una comilla de Django DENTRO del `class` (`{% if tono == 'racha' %}…`, el propio
+        `distintivo`) hace que `_CLASE_RE` ni siquiera cierre el atributo (`[^"']*` no puede
+        cruzar esa comilla simple), así que esa copia era invisible por partida doble. Se
+        NORMALIZAN los `{{ … }}` y `{% … %}` de Django (se borran del texto) ANTES de buscar
+        `class="…"` — lo que renderiza el navegador para un `{% if True %}` es texto plano, y
+        eso es lo que se compara; `_CLASE_RE` ya no tropieza con una comilla de Django
+        camuflada dentro del atributo tampoco."""
         for ruta in PLANTILLAS:
-            contenido = _texto(ruta)
+            contenido = _ETIQUETAS_DE_DJANGO_RE.sub("", _texto(ruta))
             for coincidencia in _CLASE_RE.finditer(contenido):
                 clases = set(coincidencia.group("clases").split())
                 for pieza, firma in self._FIRMAS_DE_CLASE_POR_PIEZA.items():
                     self.assertFalse(
-                        firma <= clases,
+                        self._copia_el_marcado_de_la_pieza(clases, firma),
                         f"{ruta.relative_to(BASE_DIR)} copia el marcado de `{pieza}` en vez de "
                         f'incluirla con `{{% include "_ui.html#{pieza}" %}}`',
                     )
