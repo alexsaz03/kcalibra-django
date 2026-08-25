@@ -50,13 +50,19 @@
             x-transition
             class="absolute right-5 z-50 mt-2 w-48 rounded-control bg-superficie py-1 shadow-lg ring-1 ring-linea"
           >
-            <a href="{% url 'perfiles:ver_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tus datos</a>
-            <a href="{% url 'perfiles:peso_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tu peso</a>
-            <a href="{% url 'recetas:lista' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Recetas</a>
-            <a href="{% url 'hogares:mi_hogar' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">El hogar</a>
+            <a data-ajuste="tus-datos" href="{% url 'perfiles:ver_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tus datos</a>
+            <a data-ajuste="tu-peso" href="{% url 'perfiles:peso_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tu peso</a>
+            <a data-ajuste="recetas" href="{% url 'recetas:lista' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Recetas</a>
+            <a data-ajuste="el-hogar" href="{% url 'hogares:mi_hogar' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">El hogar</a>
+            {# Unidad 056: hasta aquí, cambiar la contraseña estando dentro NO la enlazaba nadie —  #}
+            {# la pantalla existía y funcionaba, pero solo se llegaba escribiendo la dirección.     #}
+            {# Va la última de los destinos y antes de Salir: es ajuste de cuenta, no un sitio de   #}
+            {# la app. Por `{% url %}` y nunca a mano, para que un cambio de rutas de allauth       #}
+            {# reviente el render en vez de dejar un enlace muerto que nadie note.                  #}
+            <a data-ajuste="cambiar-contrasena" href="{% url 'account_change_password' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Cambiar tu contraseña</a>
             <form method="post" action="{% url 'account_logout' %}">
               {% csrf_token %}
-              <button type="submit" class="block w-full px-4 py-2 text-left text-[15px] text-tinta hover:bg-lienzo">Salir</button>
+              <button data-ajuste="salir" type="submit" class="block w-full px-4 py-2 text-left text-[15px] text-tinta hover:bg-lienzo">Salir</button>
             </form>
           </div>
         </div>

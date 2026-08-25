@@ -18,6 +18,13 @@ from django.test import SimpleTestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from kcalibra.ayuda_de_alcanzabilidad import (
+    el_estado_es_compartido,
+    atributos,
+    elementos_con_texto,
+    nada_lo_tapa,
+    re_de_atributo,
+)
 from hogares.models import Persona
 
 # --- Ayudas para leer la barra inferior sin depender del orden de los atributos ---------- #
@@ -87,27 +94,32 @@ class R2_NueveDestinosTests(_ConAlejandroYSuHogar):
         self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
 
-        # Inicio, Tu progreso, Entrenos, Despensa: cubiertos por las pestañas (R1).
-        self.assertIn('href="/"', contenido)
-        self.assertIn('href="/progreso/"', contenido)
-        self.assertIn('href="/entrenos/"', contenido)
-        self.assertIn('href="/despensa/"', contenido)
-
-        # Tus datos, Tu peso, Recetas, El hogar: en el menú de ajustes.
-        self.assertIn('href="/perfiles/"', contenido)
-        self.assertIn('href="/perfiles/peso/"', contenido)
-        self.assertIn('href="/recetas/"', contenido)
-        self.assertIn('href="/hogares/mi-hogar/"', contenido)
+        # Leído del HTML PARSEADO y no del texto: `href='/x'` con comillas simples es HTML igual
+        # de válido y ningún navegador lo distingue, pero un `assertIn` con comillas dobles fijas
+        # lo dejaba en ROJO con el enlace funcionando. Falso rojo, cazado en la 14ª revisión de la
+        # 056 en otras dos piezas; estas nueve tenían el mismo defecto.
+        rutas = {
+            attrs.get("href")
+            for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "a" and "href" in a)
+        }
+        for ruta in ("/", "/progreso/", "/entrenos/", "/despensa/",       # las pestañas (R1)
+                     "/perfiles/", "/perfiles/peso/", "/recetas/", "/hogares/mi-hogar/"):
+            with self.subTest(destino=ruta):
+                self.assertIn(ruta, rutas)
 
         # Salir: un formulario que postea al logout de allauth (como hoy).
-        self.assertIn('action="/cuentas/logout/"', contenido)
+        acciones = {
+            attrs.get("action")
+            for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "form")
+        }
+        self.assertIn("/cuentas/logout/", acciones)
 
     def test_el_enlace_a_recetas_dice_recetas_a_secas(self):
         """`recetas/tests.py:501` ya exige `>Recetas<` literal — la red del padre."""
-        respuesta = self.client.get("/recetas/")
-        contenido = respuesta.content.decode()
-        self.assertIn('href="/recetas/"', contenido)
-        self.assertIn(">Recetas<", contenido)
+        contenido = self.client.get("/recetas/").content.decode()
+        enlaces = elementos_con_texto(contenido, lambda e, a: e == "a" and a.get("href") == "/recetas/")
+        self.assertTrue(enlaces, "no hay ningún enlace a /recetas/")
+        self.assertIn("Recetas", [texto for _, texto in enlaces])
 
     def test_el_enlace_a_el_hogar_dice_el_hogar_a_secas(self):
         """`perfiles/tests.py:1598` ya exige `>El hogar<` literal — la red del padre."""
@@ -322,3 +334,215 @@ class R7_SinPersonaNoRompeLaPaginaTests(PruebaConRegistroAbierto):
         self.assertIn("Stock", etiquetas)
         self.assertIn("Entrenos", etiquetas)
         self.assertIn("Progreso", etiquetas)
+
+
+# ------------------------------------------------------------------------------------------ #
+# Unidad 056 (el-camino-que-faltaba-a-tu-contrasena.md): R1-R3.
+#
+# El marco es de la 050, pero el agujero es suyo: la rueda de ajustes nació con cuatro
+# destinos y `/cuentas/password/change/` no quedó enlazada desde NINGUNA parte de la app —
+# medido recorriendo la app entera con sesión y cruzándolo con la lista completa de rutas.
+# La pantalla existía y funcionaba; solo se llegaba escribiendo la dirección a mano.
+# ------------------------------------------------------------------------------------------ #
+
+_ENLACE_RE = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>\s*(.*?)\s*</a>', re.S)
+
+
+# Tapaderas: formas de esconder algo que sobreviven a que Alpine "abra" el menú (`x-show` solo
+
+
+# --------------------------------------------------------------------------------------------- #
+# Alcanzabilidad. Las ocho piezas y el porqué de cada una viven en
+# `kcalibra/ayuda_de_alcanzabilidad.py`, NO aquí: este patrón se copió a mano una vez (unidad 053)
+# y se dejó cuatro de las ocho, lo que abrió siete agujeros que su revisión demostró uno a uno.
+# Aquí solo quedan los emparejadores concretos de ESTA pantalla.
+# --------------------------------------------------------------------------------------------- #
+
+_MENU_RE = re_de_atributo("x-show", "ajustesAbierto")
+
+
+def _es_el_menu(etiqueta, attrs):
+    return (attrs.get("x-show") or "").strip() == "ajustesAbierto"
+
+
+def _es_la_rueda(etiqueta, attrs):
+    return etiqueta == "button" and attrs.get("aria-label") == "Ajustes"
+
+
+def _es_el_enlace_de_la_contrasena(etiqueta, attrs):
+    return etiqueta == "a" and attrs.get("href") == "/cuentas/password/change/"
+
+
+# Los SEIS destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una marca
+# propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también en el
+# cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca, cada
+# destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión: solo se
+# comprobaban tres de los ocho elementos que hay que poder pulsar).
+DESTINOS_DE_LA_RUEDA = (
+    ("tus-datos", "Tus datos"), ("tu-peso", "Tu peso"), ("recetas", "Recetas"),
+    ("el-hogar", "El hogar"), ("cambiar-contrasena", "Cambiar tu contraseña"), ("salir", "Salir"),
+)
+
+
+def _es_el_destino(marca):
+    return lambda etiqueta, attrs: attrs.get("data-ajuste") == marca
+
+
+def _zona_de_ajustes(contenido):
+    """El menú que despliega la rueda: desde su `x-show` hasta el final de la cabecera.
+
+    Se acota A PROPÓSITO. Si se mirara la página entera, un enlace a la misma ruta puesto en
+    el cuerpo de una pantalla cualquiera dejaría verde un test que dice "está en la rueda":
+    la misma cara del bug 027 que ya nos costó una unidad.
+    """
+    cuantos = len(_MENU_RE.findall(contenido))
+    if cuantos != 1:
+        # Con dos, `index` coge el primero y la zona se estira hasta `</header>` abarcando también
+        # el otro: los destinos se encuentran por texto y el test miente sin mentir. 4ª revisión.
+        raise AssertionError(
+            f"hay {cuantos} elementos con x-show=\"ajustesAbierto\": no se sabe cuál es el menú"
+        )
+    inicio = _MENU_RE.search(contenido).start()
+    fin = contenido.index("</header>", inicio)
+    zona = contenido[inicio:fin]
+    if not zona.strip():
+        # Guarda de rojo mudo: sin esto, un cambio que vaciara la zona haría pasar todos los
+        # `assertNotIn` y fallar los `assertIn` por el motivo equivocado, sin decir cuál.
+        raise AssertionError("la zona del menú de ajustes salió VACÍA: el test no prueba nada")
+    return zona
+
+
+def _destinos_de_ajustes(contenido):
+    """[(texto, ruta), ...] de los destinos de la rueda, leyendo HTML PARSEADO.
+
+    Devuelve el par JUNTO, nunca las dos listas por separado: comprobarlo por un lado el texto y
+    por otro la ruta deja verde un enlace que dice lo que toca y lleva a otro sitio (1ª vuelta).
+
+    Y se lee con un parser, no con una expresión regular: `href='...'` con comillas simples es HTML
+    igual de válido, y el regex de comillas dobles lo dejaba en ROJO con el enlace funcionando
+    (14ª revisión). Ese falso rojo se curó primero solo en el botón de la rueda; aquí estaba el
+    mismo defecto, sosteniendo la aserción central de esta unidad.
+    """
+    en_la_rueda = lambda etiqueta, attrs: etiqueta == "a" and "data-ajuste" in attrs
+    return [(texto, attrs.get("href")) for attrs, texto in elementos_con_texto(contenido, en_la_rueda)]
+
+
+class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
+    """R1 — desde cualquier pantalla, la rueda lleva a cambiar la contraseña."""
+
+    ENLACE = ("Cambiar tu contraseña", "/cuentas/password/change/")
+
+    def test_la_rueda_lleva_a_cambiar_la_contrasena(self):
+        contenido = self.client.get("/").content.decode()
+        self.assertIn(self.ENLACE, _destinos_de_ajustes(contenido))
+
+    def test_esta_en_todas_las_pantallas_no_solo_en_la_portada(self):
+        """El marco va en todas; si el enlace se colara en una sola plantilla, esto lo caza."""
+        for ruta in ("/despensa/", "/entrenos/", "/progreso/", "/recetas/", "/perfiles/"):
+            with self.subTest(ruta=ruta):
+                contenido = self.client.get(ruta).content.decode()
+                self.assertIn(self.ENLACE, _destinos_de_ajustes(contenido))
+
+
+    def test_la_rueda_se_puede_abrir_de_verdad(self):
+        """Que el enlace ESTÉ en el HTML no es que se pueda usar.
+
+        Lo cazó el revisor de esta unidad: si alguien le quita al botón de la rueda el `@click`
+        que despliega el menú, o le pone `hidden` al menú, el enlace sigue en el HTML y el test
+        de R1 sigue verde — y la pantalla sigue sin poder alcanzarse, que era el problema que
+        esta unidad venía a resolver. Así que aquí se ancla el botón AL MENÚ.
+        """
+        contenido = self.client.get("/").content.decode()
+
+        # Todo lo que sigue se lee del HTML PARSEADO, nunca del texto crudo. La 13ª revisión
+        # encontró que `'aria-label="Ajustes"' in etiqueta` daba un ROJO FALSO con comillas
+        # simples, que son igual de válidas — el propio módulo predica tolerar lo que el navegador
+        # tolera, y esta línea no lo hacía. Con el parser, las comillas dejan de existir como
+        # problema. Y `@click` y `@click.outside` son atributos DISTINTOS, así que ya no hace falta
+        # distinguirlos a mano.
+        cadena_rueda = nada_lo_tapa(self, contenido, _es_la_rueda, "el botón de la rueda")
+        attrs_rueda = cadena_rueda[-1][1]
+        # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
+        # `@click.outside="ajustesAbierto = false"` (cerrar al tocar fuera), así que buscar solo
+        # "ajustesAbierto" dejaba verde quitarle el que ABRE. Cazado mutando: la primera versión
+        # de este test se quedó verde con el `@click` de abrir borrado.
+        self.assertRegex(
+            attrs_rueda.get("@click") or "",
+            r"(?<![\w$])ajustesAbierto(?![\w$])",
+            "el botón de la rueda no ABRE el menú: el enlace estaría ahí y sería inalcanzable",
+        )
+
+        # Y el botón no puede estar apagado: `disabled` no dispara click en ningún navegador,
+        # así que el menú quedaría tan inalcanzable como sin `@click` — y el regex de arriba
+        # seguiría contento. (Agujero 2 de la 2ª revisión.)
+        self.assertNotIn("disabled", attrs_rueda)
+        self.assertNotEqual(attrs_rueda.get("aria-disabled"), "true")
+
+        # Y el menú no puede nacer tapado — ni él, NI NADIE QUE LO ENVUELVA. Alpine, con
+        # `x-show`, solo alterna `display` en el propio elemento: si un padre está escondido, el
+        # menú "abre" y sigue sin verse. Mirar solo la etiqueta del menú dejaba pasar eso, y es
+        # el agujero que firmó la 3ª revisión (`<div class="hidden">` alrededor, test verde).
+        #
+        # Lo que queda fuera, dicho en vez de disimulado: `_TAPADERAS_*` es una lista negra y una
+        # lista negra nunca está completa. Y sobre todo, este nivel de test (ADR-015: HTML
+        # renderizado, sin motor de JavaScript) no puede ver si el navegador llegó a ejecutar
+        # Alpine: borrando su `<script>`, el menú no abre y esto sigue verde. Cerrar eso pide un
+        # navegador de verdad, y este contrato no lo pide.
+        # La rueda TAMBIÉN: es lo primero que hay que poder pulsar, y hasta la 12ª revisión era el
+        # único de los tres que nunca se pasaba por aquí — se le miraba la etiqueta (`disabled`,
+        # el `@click`) pero jamás su cadena de ancestros. Envolviendo SOLO el botón en un
+        # `<div class="hidden">`, los 20 tests seguían verdes y la rueda no existía en pantalla.
+        # Es la pieza 8 del propio módulo ("sobre cada elemento que hay que poder USAR") sin
+        # aplicar al elemento más obvio de los tres.
+        nada_lo_tapa(self, contenido, _es_el_menu, "el menú de ajustes")
+        # Y los SEIS destinos, no solo el de esta unidad: un menú alcanzable con los destinos
+        # tapados sigue siendo un menú inútil (13ª revisión).
+        for marca, etiqueta in DESTINOS_DE_LA_RUEDA:
+            with self.subTest(destino=etiqueta):
+                nada_lo_tapa(self, contenido, _es_el_destino(marca), f"el destino «{etiqueta}»")
+        el_estado_es_compartido(
+            self, contenido, _es_la_rueda, _es_el_menu, "ajustesAbierto",
+            "el botón de la rueda", "el menú de ajustes",
+        )
+
+
+class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
+    """R2 — quien no ha entrado no ve la rueda ni el camino a la contraseña."""
+
+    def test_sin_sesion_no_hay_rueda_ni_enlace(self):
+        self.client.logout()
+        contenido = self.client.get("/").content.decode()
+        self.assertNotIn('x-show="ajustesAbierto"', contenido)
+        self.assertNotIn("/cuentas/password/change/", contenido)
+        self.assertNotIn("Cambiar tu contraseña", contenido)
+
+
+class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
+    """R3 — el enlace nuevo SE SUMA: los cinco destinos de siempre siguen donde estaban."""
+
+    def test_los_cuatro_enlaces_de_siempre_siguen_con_su_texto(self):
+        destinos = _destinos_de_ajustes(self.client.get("/").content.decode())
+        for esperado in (
+            ("Tus datos", "/perfiles/"),
+            ("Tu peso", "/perfiles/peso/"),
+            ("Recetas", "/recetas/"),
+            ("El hogar", "/hogares/mi-hogar/"),
+        ):
+            with self.subTest(destino=esperado):
+                self.assertIn(esperado, destinos)
+
+    def test_salir_sigue_siendo_un_formulario_que_postea(self):
+        """Salir no es un enlace: cerrar sesión con un GET lo dispararía cualquier precarga."""
+        contenido = self.client.get("/").content.decode()
+        # Anclado al MISMO <form> que el action: el nombre de este test prometía que Salir postea,
+        # pero la primera versión solo miraba el `action=` y dejaba VERDE cambiar el método a GET
+        # (agujero 3 de la 2ª revisión). Un logout por GET lo dispara cualquier precarga del
+        # navegador, así que la promesa importa.
+        es_el_form = lambda etiqueta, attrs: etiqueta == "form" and attrs.get("action") == "/cuentas/logout/"
+        formularios = elementos_con_texto(contenido, es_el_form)
+        self.assertEqual(len(formularios), 1, "Salir ya no es un formulario que apunte al logout")
+        self.assertEqual(
+            (formularios[0][0].get("method") or "").lower(), "post",
+            "Salir no postea: un logout por GET lo dispara cualquier precarga del navegador",
+        )
+        self.assertIn("Salir", formularios[0][1])
