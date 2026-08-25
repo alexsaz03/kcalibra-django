@@ -369,26 +369,46 @@ class R4_SinPaletaViejaTests(SimpleTestCase):
 # EL NOMBRE Y LOS GRAMOS viven dentro del MISMO chip, no que las dos cosas aparecen en algún
 # sitio de la respuesta (lo que pasaría también si el nombre apareciera suelto en otra parte
 # de la pantalla, sin ninguna relación con el color).
-_PILDORA_MACRO_RE = re.compile(r'<span class="inline-flex items-center gap-1\.5 rounded-pastilla.*?</span>\s*</span>', re.S)
+#
+# Hueco 9 (revisión, 5ª vuelta): la versión anterior era un `re.compile` con las comillas del
+# `class` y el ORDEN de sus cuatro primeras clases escritos a mano
+# (`class="inline-flex items-center gap-1\.5 rounded-pastilla…`) — ni las comillas ni el orden
+# de las clases de un atributo Tailwind significan nada para un navegador, y
+# `prettier-plugin-tailwindcss` reordena solo (medido, dos formas: comillas simples y orden de
+# clases distinto, hallazgos.md). Se aísla la píldora por los TOKENS de su `class`
+# (`rounded-pastilla` + una de las tres clases de fondo, que es lo que de verdad la identifica
+# como píldora de macro y no como cualquier otro `<span>`), leyendo HTML de verdad con
+# `elementos_con_texto` — mismo patrón que ya usa `_elemento_lleva_cifra` (R6) para el mismo
+# problema.
+_CLASES_DE_FONDO_DE_MACRO = {"bg-proteina-suave", "bg-carbos-suave", "bg-grasa-suave"}
+
+
+def _es_pildora_de_macro(etiqueta, attrs):
+    clases = (attrs.get("class") or "").split()
+    return (
+        etiqueta == "span"
+        and "rounded-pastilla" in clases
+        and _CLASES_DE_FONDO_DE_MACRO & set(clases)
+    )
 
 
 class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
     def test_las_pildoras_de_la_comida_llevan_su_nombre_junto_al_color(self):
         respuesta = self.client.get(f"/planes/{self.alejandro.id}/apuntar/")
         contenido = respuesta.content.decode()
-        pildoras = _PILDORA_MACRO_RE.findall(contenido)
+        pildoras = elementos_con_texto(contenido, _es_pildora_de_macro)
         self.assertEqual(len(pildoras), 3, "se esperaban las 3 píldoras de la comida apuntada")
 
         # R9 — el vocabulario de la app, no el del prototipo viejo: "Carbohidratos" y "Grasa"
         # (`planes/forms.py`: "Carbohidratos (g)"/"Grasa (g)"), nunca "Carbos"/"Grasas".
         nombres_esperados = {"Proteína", "Grasa", "Carbohidratos"}
         nombres_vistos = set()
-        for pildora in pildoras:
+        for _, texto in pildoras:
             # Cada chip trae su nombre Y sus gramos con `.cifra` — ni el nombre solo (sin
             # dato) ni el dato solo (sin nombre, el fallo que prohíbe R5) pasa este assert.
-            self.assertRegex(pildora, r"\d+\s*g", pildora)
+            self.assertRegex(texto, r"\d+\s*g", texto)
             for nombre in nombres_esperados:
-                if nombre in pildora:
+                if nombre in texto:
                     nombres_vistos.add(nombre)
         self.assertEqual(nombres_vistos, nombres_esperados)
 
@@ -396,10 +416,17 @@ class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
         """Mutación fijada en el propio test: `_pildora_macro_interna` (`_ui.html`) siempre
         imprime `{{ nombre_macro }}` antes de los gramos — se comprueba aquí, sobre la pieza
         en sí, no solo sobre una pantalla que la usa (para que un futuro uso nuevo de la
-        pieza no pueda perder el nombre sin que este test lo note)."""
+        pieza no pueda perder el nombre sin que este test lo note).
+
+        Hueco 11 (revisión, 5ª vuelta): el `re.search` de `{% partialdef … %}` llevaba los
+        espacios alrededor del nombre escritos a mano — Django acepta
+        `{%partialdef _pildora_macro_interna%}` igual que con espacios (esta misma unidad ya
+        lo usó como CONTROL verde para R1 en la 3ª revisión, y `hogares/` lo trata con `\\s*`
+        por el mismo motivo). Se tolera con `\\s*`, como `_BLOQUE_TITULO_GRANDE_DECLARADO_RE`
+        en `hogares/tests_personas_de_la_casa.py`."""
         contenido = _texto(RUTA_UI)
         interna = re.search(
-            r"\{% partialdef _pildora_macro_interna %\}(.*?)\{% endpartialdef %\}",
+            r"\{%\s*partialdef\s+_pildora_macro_interna\s*%\}(.*?)\{%\s*endpartialdef\s*%\}",
             contenido,
             re.S,
         ).group(1)
@@ -477,12 +504,16 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
         `[^"']*` —que excluye las dos comillas, no solo la de apertura— se para ahí y nunca
         llega a `cifra`. `_CLASE_DE_LA_PIEZA_RE`, abajo, sólo para en la comilla de la MISMA
         clase que abrió el atributo (`\\1`, no `[^"']`), que es la regla real de HTML: una
-        comilla del otro tipo dentro del valor no cierra nada."""
+        comilla del otro tipo dentro del valor no cierra nada.
+
+        Hueco 11 (revisión, 5ª vuelta): el `re.search` de `{% partialdef … %}` llevaba los
+        espacios alrededor del nombre escritos a mano — se tolera con `\\s*`, mismo motivo y
+        mismo arreglo que `test_la_pieza_pildora_macro_no_tiene_un_camino_sin_nombre` (R5)."""
         contenido = _texto(RUTA_UI)
         for pieza in ("numero_grande", "_pildora_macro_interna", "_barra_macro_interna"):
             with self.subTest(pieza=pieza):
                 interna = re.search(
-                    rf"\{{% partialdef {pieza} %\}}(.*?)\{{% endpartialdef %\}}",
+                    rf"\{{%\s*partialdef\s+{pieza}\s*%\}}(.*?)\{{%\s*endpartialdef\s*%\}}",
                     contenido,
                     re.S,
                 ).group(1)
@@ -501,10 +532,13 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
     databases = set()
 
     def test_cada_pieza_se_define_exactamente_una_vez_en_ui_html(self):
+        """Hueco 11 (revisión, 5ª vuelta): `{% partialdef … %}` llevaba los espacios alrededor
+        del nombre escritos a mano — Django acepta `{%partialdef numero_grande%}` igual que con
+        espacios. Se tolera con `\\s*`, mismo arreglo que en R5 más arriba."""
         contenido = _texto(RUTA_UI)
         conteos = {}
         for pieza in PIEZAS_PORTADAS:
-            conteos[pieza] = len(re.findall(rf"\{{% partialdef {pieza} %\}}", contenido))
+            conteos[pieza] = len(re.findall(rf"\{{%\s*partialdef\s+{pieza}\s*%\}}", contenido))
         self.assertEqual(
             conteos,
             {pieza: 1 for pieza in PIEZAS_PORTADAS},
@@ -512,11 +546,14 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         )
 
     def test_cada_pieza_usada_la_incluye_alguna_de_las_diez_pantallas(self):
+        """Hueco 10 (revisión, 5ª vuelta): la comilla de cierre de `_ui.html#{pieza}"` iba
+        fija a doble — Django acepta `{% include '_ui.html#pieza' %}` con comillas simples
+        igual que con dobles. Se acepta cualquiera de las dos con `["']`."""
         fuente_de_las_pantallas = "\n".join(_texto(p) for p in PLANTILLAS)
         sin_uso = [
             pieza
             for pieza in PIEZAS_USADAS_EN_LAS_PANTALLAS
-            if f'_ui.html#{pieza}"' not in fuente_de_las_pantallas
+            if not re.search(rf"""_ui\.html#{pieza}["']""", fuente_de_las_pantallas)
         ]
         self.assertEqual(sin_uso, [], f"piezas portadas que ninguna pantalla incluye: {sin_uso}")
 
