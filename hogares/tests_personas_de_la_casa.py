@@ -14,6 +14,7 @@ que `hogares/tests_persona.py`.
 
 import re
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import ProtectedError
 
@@ -103,6 +104,32 @@ def _zona_de_cuerpo(contenido):
     return zona
 
 
+def _tiene_h1_de_titulo(contenido):
+    """Sólo necesita saber SI el `<h1>` de `titulo_grande` está dentro de `<header>`, no
+    dónde — envoltorio de `_indices_del_h1_de_titulo` para la guarda del Hueco 4 de abajo."""
+    inicio = contenido.index("<header")
+    fin = contenido.index("</header>", inicio) + len("</header>")
+    return _indices_del_h1_de_titulo(contenido, inicio, fin) is not None
+
+
+def _plantilla_llena_titulo_grande(ruta_de_plantilla):
+    """Hueco 4 (revisión de la unidad, hallazgos.md): la guarda de rojo mudo de
+    `_zona_de_la_barra_de_arriba`/`_zona_de_cuerpo` sólo dispara si la zona sale VACÍA — si el
+    `<h1>` desaparece pero el resto de `<header>` sigue teniendo contenido (p. ej. el `<h1>`
+    mudado a `<div>`, que R1 no cazaría porque su test sólo compara POSICIONES contra
+    `<main>`), la zona nunca sale vacía y la guarda no ve nada raro: el título vuelve a colarse
+    en la zona de la barra en silencio, exactamente el bug 027 otra vez.
+    No hay forma de que `_indices_del_h1_de_titulo` distinga "esta pantalla nunca tuvo título"
+    de "esta pantalla debería tener título y lo perdió" mirando sólo la respuesta HTTP — hace
+    falta una segunda fuente que diga qué pantallas DEBEN traerlo. En vez de escribir esa lista
+    a mano (se quedaría vieja el día que una pantalla gane o pierda su `{% block
+    titulo_grande %}`, que es justo lo que pasó una vez para abrir R10), se deriva del propio
+    fichero de plantilla: si su texto declara el bloque, el `<h1>` es obligatorio, y la
+    lista de rutas de abajo sólo dice QUÉ plantilla mirar, no si tiene título."""
+    texto = (settings.BASE_DIR / ruta_de_plantilla).read_text()
+    return "{% block titulo_grande %}" in texto
+
+
 # Los mismos datos físicos de Euridice que usa el resto de la suite (R1 de crear-cuenta.md,
 # C-112 de darle-cuenta-propia-a-los-de-casa.md): 167 cm, 62 kg, objetivo "adelgazar" (la
 # clave real es "perder_grasa", ver perfiles/constantes.py) — 1.894 kcal es su cifra conocida.
@@ -175,15 +202,18 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
         # `R3_LaPantallaDeLasPersonasDeLaCasaTests.test_ve_las_dos_fichas_marcadas_correctamente`
         # más abajo — este subtest solo cierra el hueco de R1 (correo vs. cuerpo), no
         # duplica esa precisión.
+        # La tercera columna es la plantilla que responde a esa ruta — sólo para que
+        # `_plantilla_llena_titulo_grande` sepa qué fichero mirar; si esa pantalla trae
+        # `titulo_grande` o no lo decide el propio fichero, no esta lista (ver su docstring).
         rutas_y_fragmento_de_identidad = [
-            ("/", "Tú (Alejandro)"),  # Inicio: solo la produce la tarjeta de la casa
-            (f"/progreso/{self.alejandro.id}/", "Tu progreso"),
-            (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso"),
-            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan"),
-            (f"/perfiles/{self.alejandro.id}/", "Tus datos"),
-            ("/hogares/mi-hogar/", "Alejandro"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
+            ("/", "Tú (Alejandro)", "paginas/templates/paginas/inicio.html"),  # Inicio: solo la produce la tarjeta de la casa
+            (f"/progreso/{self.alejandro.id}/", "Tu progreso", "progreso/templates/progreso/ver.html"),
+            (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso", "perfiles/templates/perfiles/peso.html"),
+            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan", "planes/templates/planes/apuntar.html"),
+            (f"/perfiles/{self.alejandro.id}/", "Tus datos", "perfiles/templates/perfiles/ver.html"),
+            ("/hogares/mi-hogar/", "Alejandro", "hogares/templates/hogares/mi_hogar.html"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
         ]
-        for ruta, fragmento_de_identidad in rutas_y_fragmento_de_identidad:
+        for ruta, fragmento_de_identidad, ruta_de_plantilla in rutas_y_fragmento_de_identidad:
             with self.subTest(ruta=ruta):
                 respuesta = self.client.get(ruta)
                 self.assertEqual(respuesta.status_code, 200)
@@ -201,6 +231,22 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
                     f"{ruta} no dice de quién es en su propio contenido "
                     "(fuera de la barra de arriba)",
                 )
+                # Hueco 4 (revisión, hallazgos.md): con el `<h1>` de titulo_grande mudado a
+                # otra etiqueta (algo que R1 no cazaría, su test sólo compara POSICIONES),
+                # `_indices_del_h1_de_titulo` vuelve `None` en silencio, la zona de la barra
+                # vuelve a incluir el título de pantalla y la red del bug 027 queda otra vez
+                # rota sin que ningún test lo diga — medido: `<h1>` de inicio.html mudado a
+                # `<div>` + barra de base.html sin el nombre, las dos juntas, daban
+                # "Ran 40 tests — OK" antes de esta guarda. Sólo se exige donde la propia
+                # plantilla declara el bloque (ver `_plantilla_llena_titulo_grande`), así que
+                # "Tus datos" y "mi-hogar" —que hoy no lo llenan— no se ven afectadas.
+                if _plantilla_llena_titulo_grande(ruta_de_plantilla):
+                    self.assertTrue(
+                        _tiene_h1_de_titulo(contenido),
+                        f"{ruta}: {ruta_de_plantilla} llena titulo_grande pero no encontré "
+                        "su <h1> dentro de <header> — la guarda de rojo mudo de R10 se "
+                        "quedaría ciega",
+                    )
 
     def test_la_barra_de_arriba_enseña_el_nombre_no_el_correo(self):
         respuesta = self.client.get("/")
