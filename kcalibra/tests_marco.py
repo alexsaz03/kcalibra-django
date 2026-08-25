@@ -12,13 +12,17 @@ la suite) — hoy fallan contra el marco de la barra de arriba plana.
 """
 
 import re
-from html.parser import HTMLParser
 
 from django.contrib.staticfiles import finders
 from django.test import SimpleTestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from kcalibra.ayuda_de_alcanzabilidad import (
+    el_estado_es_compartido,
+    nada_lo_tapa,
+    re_de_atributo,
+)
 from hogares.models import Persona
 
 # --- Ayudas para leer la barra inferior sin depender del orden de los atributos ---------- #
@@ -338,71 +342,16 @@ _ENLACE_RE = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>\s*(.*?)\s*</a>', re.S)
 
 
 # Tapaderas: formas de esconder algo que sobreviven a que Alpine "abra" el menú (`x-show` solo
-# alterna `display`). La lista es NEGRA y por tanto nunca completa — pero la grieta que la hacía
-# inútil no era la lista, era DÓNDE se miraba: hasta la 3ª revisión solo se miraba la etiqueta del
-# propio menú, así que envolverlo en un `<div class="hidden">` lo escondía con el test en verde.
-# Ahora se recorre la cadena de ANCESTROS de verdad, parseando el HTML.
-_TAPADERAS_DE_CLASE = ("hidden", "invisible", "opacity-0", "pointer-events-none", "sr-only",
-                       "w-0", "h-0", "scale-0")
-_TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0",
-                        "pointer-events:none")  # heredable: deja el menú visible e inclicable (6ª rev.)
-_SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
-
-# El menú se identifica por su `x-show`, y se identifica FALLANDO EN ROJO ante cualquier forma que
-# no sea la canónica. La 5ª revisión enseñó por qué: `x-show=" ajustesAbierto "` (un espacio dentro
-# de las comillas) es para Alpine EXACTAMENTE la misma expresión —la evalúa como JavaScript, y el
-# espacio no significa nada—, pero para una comparación de texto es otra cosa. Con eso, un señuelo
-# escrito de forma exacta se llevaba la única coincidencia y el menú de verdad, tapado, no llegaba
-# ni a inspeccionarse.
-#
-# Se tolera lo que Alpine considera igual (espacios alrededor, comilla simple o doble) y NADA MÁS.
-# Una expresión equivalente pero escrita de otro modo (`!!ajustesAbierto`, por ejemplo) no cuenta
-# como el menú: el test se pone ROJO diciendo que no lo encuentra. Falla cerrado, que es lo único
-# aceptable en una red — un falso rojo se ve y se arregla; un falso verde no se ve nunca.
-_MENU_RE = re.compile(r"""x-show\s*=\s*(?P<c>["'])\s*ajustesAbierto\s*(?P=c)""")
 
 
-class _CadenaDeAncestros(HTMLParser):
-    """Para cada elemento que cumple `coincide`, su cadena de ancestros MÁS él mismo.
+# --------------------------------------------------------------------------------------------- #
+# Alcanzabilidad. Las ocho piezas y el porqué de cada una viven en
+# `kcalibra/ayuda_de_alcanzabilidad.py`, NO aquí: este patrón se copió a mano una vez (unidad 053)
+# y se dejó cuatro de las ocho, lo que abrió siete agujeros que su revisión demostró uno a uno.
+# Aquí solo quedan los emparejadores concretos de ESTA pantalla.
+# --------------------------------------------------------------------------------------------- #
 
-    Hace falta un parser de verdad y no buscar hacia atrás en el texto: `rindex("<div")` encuentra
-    la etiqueta más cercana, que es el propio elemento, y jamás sube a quien lo envuelve (3ª
-    revisión). Y se guardan TODAS las coincidencias, no la primera: quedarse con la primera deja
-    que un señuelo sin tapar conteste por el elemento de verdad (4ª revisión).
-    """
-
-    def __init__(self, coincide):
-        super().__init__(convert_charrefs=True)
-        self.coincide = coincide
-        self.pila = []
-        self.cadenas = []
-
-    def handle_starttag(self, etiqueta, atributos):
-        attrs = dict(atributos)
-        if self.coincide(etiqueta, attrs):
-            self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
-        if etiqueta not in _SIN_CIERRE:
-            self.pila.append((etiqueta, attrs))
-
-    def handle_endtag(self, etiqueta):
-        for k in range(len(self.pila) - 1, -1, -1):
-            if self.pila[k][0] == etiqueta:
-                del self.pila[k:]
-                return
-
-
-def _cadena_unica(caso, contenido, coincide, nombre):
-    """La cadena del único elemento que cumple `coincide`. Falla si no hay o si hay más de uno."""
-    lector = _CadenaDeAncestros(coincide)
-    lector.feed(contenido)
-    if not lector.cadenas:
-        raise AssertionError(f"no hay ningún {nombre} en la página: el test no prueba nada")
-    caso.assertEqual(
-        len(lector.cadenas), 1,
-        f"hay {len(lector.cadenas)} elementos que pasan por «{nombre}»: uno puede ser un señuelo "
-        f"sin tapar que conteste por el de verdad.",
-    )
-    return lector.cadenas[0]
+_MENU_RE = re_de_atributo("x-show", "ajustesAbierto")
 
 
 def _es_el_menu(etiqueta, attrs):
@@ -415,65 +364,6 @@ def _es_la_rueda(etiqueta, attrs):
 
 def _es_el_enlace_de_la_contrasena(etiqueta, attrs):
     return etiqueta == "a" and attrs.get("href") == "/cuentas/password/change/"
-
-
-def _nada_lo_tapa(caso, contenido, coincide, nombre):
-    """Falla si el elemento, o CUALQUIERA de sus ancestros, lo deja inalcanzable.
-
-    Cubre tres familias, y las tres las trajo una revisión distinta:
-      · escondido por clase o por estilo (2ª y 3ª: `hidden`, `invisible`, `opacity-0`…),
-      · escondido por un ANCESTRO y no por él mismo (3ª),
-      · y dentro de un `<template>`, que en HTML estándar NUNCA entra al DOM vivo por sí solo —
-        `<template x-if="false">` alrededor del enlace lo borra de la página de verdad y el test
-        no se enteraba (6ª revisión, el más grave de todos).
-    """
-    cadena = _cadena_unica(caso, contenido, coincide, nombre)
-    for etiqueta, attrs in cadena:
-        caso.assertNotEqual(
-            etiqueta, "template",
-            f"«{nombre}» vive dentro de un <template>: su contenido no entra al DOM por sí solo, "
-            f"así que en un navegador de verdad no existe",
-        )
-        clases = (attrs.get("class") or "").split()
-        estilo = (attrs.get("style") or "").replace(" ", "")
-        quien = "el propio elemento" if (etiqueta, attrs) == cadena[-1] else f"un ancestro <{etiqueta}>"
-        for tapadera in _TAPADERAS_DE_CLASE:
-            caso.assertNotIn(tapadera, clases, f"{quien} tapa «{nombre}» con la clase '{tapadera}'")
-        for tapadera in _TAPADERAS_DE_ESTILO:
-            caso.assertNotIn(tapadera, estilo, f"{quien} tapa «{nombre}» con el estilo '{tapadera}'")
-
-    propio = cadena[-1][1]
-    # Y no basta con que se vea: quien navega con teclado o con lector de pantalla también tiene
-    # que llegar. R4 dice "se puede usar", no "se puede ver" (6ª revisión, agujero 4).
-    caso.assertNotEqual(propio.get("tabindex"), "-1", f"«{nombre}» está fuera del orden de tabulación")
-    caso.assertNotEqual(propio.get("aria-hidden"), "true", f"«{nombre}» está fuera del árbol de accesibilidad")
-    return cadena
-
-
-def _el_estado_es_compartido(caso, contenido):
-    """El botón y el menú tienen que colgar del MISMO `x-data` que declara `ajustesAbierto`.
-
-    Si el botón alterna una variable y el menú mira otra —un `x-data` renombrado, un `x-data`
-    nuevo intercalado—, los dos siguen escritos igual de bien por separado y el menú no abre
-    jamás. Lo trajo la 6ª revisión.
-    """
-    def _duenos(cadena):
-        return [(t, a) for t, a in cadena if "x-data" in a]
-
-    rueda = _cadena_unica(caso, contenido, _es_la_rueda, "el botón de la rueda")
-    menu = _cadena_unica(caso, contenido, _es_el_menu, "el menú de ajustes")
-    dueno_rueda, dueno_menu = _duenos(rueda), _duenos(menu)
-    caso.assertTrue(dueno_rueda, "el botón de la rueda no cuelga de ningún x-data")
-    caso.assertEqual(
-        dueno_rueda, dueno_menu,
-        "el botón y el menú no cuelgan del mismo x-data: cada uno alternaría su propia variable "
-        "y el menú no abriría nunca",
-    )
-    caso.assertIn(
-        "ajustesAbierto", dueno_rueda[-1][1].get("x-data", ""),
-        "el x-data del que cuelgan no declara `ajustesAbierto`: la variable no existe y `x-show` "
-        "no se enciende jamás",
-    )
 
 
 def _zona_de_ajustes(contenido):
@@ -568,9 +458,12 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
         # renderizado, sin motor de JavaScript) no puede ver si el navegador llegó a ejecutar
         # Alpine: borrando su `<script>`, el menú no abre y esto sigue verde. Cerrar eso pide un
         # navegador de verdad, y este contrato no lo pide.
-        _nada_lo_tapa(self, contenido, _es_el_menu, "el menú de ajustes")
-        _nada_lo_tapa(self, contenido, _es_el_enlace_de_la_contrasena, "el enlace a cambiar la contraseña")
-        _el_estado_es_compartido(self, contenido)
+        nada_lo_tapa(self, contenido, _es_el_menu, "el menú de ajustes")
+        nada_lo_tapa(self, contenido, _es_el_enlace_de_la_contrasena, "el enlace a cambiar la contraseña")
+        el_estado_es_compartido(
+            self, contenido, _es_la_rueda, _es_el_menu, "ajustesAbierto",
+            "el botón de la rueda", "el menú de ajustes",
+        )
 
 
 class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
