@@ -141,6 +141,77 @@ def _como_entero(valor):
     return int(encaje.group(1) + encaje.group(2))
 
 
+def claves_de_primer_nivel(x_data):
+    """Las claves que Alpine expone de verdad como variables, o `None` si esto no es un objeto.
+
+    La 9ª vuelta de la 056 midió por qué no basta con buscar el identificador en el texto: puede
+    aparecer entero, con sus límites de palabra en su sitio, y **no estar declarado**. Las tres
+    formas, las tres comprobadas en el Chromium real (el menú NO abre en ninguna):
+
+      · dentro de un comentario:  `{ /* ajustesAbierto */ otra: false }`
+      · como VALOR de un string:  `{ otraReal: false, etiqueta: 'ajustesAbierto' }`
+      · en un objeto ANIDADO:     `{ config: { ajustesAbierto: false } }`  ← la más plausible
+
+    Alpine solo expone las claves de PRIMER NIVEL. Así que se leen esas, saltando cadenas y
+    comentarios y sin bajar de nivel.
+
+    Devuelve `None` cuando esto no es un objeto literal que se pueda leer (por ejemplo, una llamada
+    a función). Quien llame debe tratar ese `None` como ROJO, no como "adelante": es la regla de
+    esta casa — **falla cerrado**.
+    """
+    texto = (x_data or "").strip()
+    if not (texto.startswith("{") and texto.endswith("}")):
+        return None
+    dentro = texto[1:-1]
+    claves, profundidad, i, inicio_tramo = [], 0, 0, 0
+    tramos = []
+    while i < len(dentro):
+        c = dentro[i]
+        if c in "\"'`":                                  # una cadena: se salta entera
+            cierre = c
+            i += 1
+            while i < len(dentro):
+                if dentro[i] == "\\":
+                    i += 2
+                    continue
+                if dentro[i] == cierre:
+                    break
+                i += 1
+        elif c == "/" and i + 1 < len(dentro) and dentro[i + 1] == "*":
+            fin = dentro.find("*/", i + 2)
+            i = len(dentro) if fin == -1 else fin + 1
+        elif c == "/" and i + 1 < len(dentro) and dentro[i + 1] == "/":
+            fin = dentro.find("\n", i)
+            i = len(dentro) if fin == -1 else fin
+        elif c in "{[(":
+            profundidad += 1
+        elif c in "}])":
+            profundidad -= 1
+        elif c == "," and profundidad == 0:
+            tramos.append(dentro[inicio_tramo:i])
+            inicio_tramo = i + 1
+        i += 1
+    tramos.append(dentro[inicio_tramo:])
+
+    for tramo in tramos:
+        # La clave es lo que va antes de los dos puntos de PRIMER nivel del tramo.
+        corte, prof = -1, 0
+        for k, c in enumerate(tramo):
+            if c in "{[(":
+                prof += 1
+            elif c in "}])":
+                prof -= 1
+            elif c == ":" and prof == 0:
+                corte = k
+                break
+        bruto = (tramo if corte == -1 else tramo[:corte]).strip()
+        if len(bruto) >= 2 and bruto[0] == bruto[-1] and bruto[0] in "\"'":
+            bruto = bruto[1:-1]              # `'ajustesAbierto': false` es declaración legítima
+        if bruto:
+            claves.append(bruto)
+    return claves
+
+
 def nada_lo_tapa(caso, contenido, coincide, nombre):
     """Falla si el elemento, o CUALQUIERA de sus ancestros, lo deja inalcanzable.
 
@@ -205,14 +276,19 @@ def el_estado_es_compartido(caso, contenido, es_el_control, es_lo_que_abre, vari
         f"{nombre_control} y {nombre_abierto} no cuelgan del mismo x-data: cada uno alternaría "
         f"su propia variable y no se abriría nunca",
     )
-    # Identificador COMPLETO, no subcadena: `"ajustesAbierto" in "{ ajustesAbiertoV2: false }"` es
-    # `True`, y con ese renombrado el `@click` y el `x-show` leen una variable que ya no existe —
-    # Chromium tira `ajustesAbierto is not defined` y el menú no abre jamás. La 8ª revisión lo
-    # comprobó en un navegador de verdad; E3 (`ajustesAbierta`) no lo cazaba porque cambia el final,
-    # pero un sufijo (`...V2`, `...Nuevo`) deja la subcadena intacta y colaba.
-    caso.assertRegex(
-        dueno_rueda[-1][1].get("x-data", ""),
-        r"(?<![\w$])" + re.escape(variable) + r"(?![\w$])",
+    # No basta con que el identificador APAREZCA: tiene que estar DECLARADO como clave de primer
+    # nivel. La 8ª vuelta cerró la subcadena (`ajustesAbiertoV2`); la 9ª demostró que un límite de
+    # palabra tampoco basta — el nombre puede aparecer entero dentro de un comentario, como valor
+    # de un string, o en un objeto anidado, y en las tres el menú NO abre en Chromium.
+    x_data = dueno_rueda[-1][1].get("x-data", "")
+    claves = claves_de_primer_nivel(x_data)
+    caso.assertIsNotNone(
+        claves,
+        f"el x-data del que cuelgan no es un objeto que se pueda leer ({x_data!r}): no se puede "
+        f"afirmar que declare `{variable}`, así que esto es ROJO y no un adelante",
+    )
+    caso.assertIn(
+        variable, claves,
         f"el x-data del que cuelgan no declara `{variable}`: la variable no existe y `x-show` "
         f"no se enciende jamás",
     )
