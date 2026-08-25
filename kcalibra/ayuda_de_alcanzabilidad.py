@@ -155,8 +155,10 @@ def claves_de_primer_nivel(x_data):
     Alpine solo expone las claves de PRIMER NIVEL. Así que se leen esas, saltando cadenas y
     comentarios y sin bajar de nivel.
 
-    Devuelve `None` cuando esto no es un objeto literal que se pueda leer (por ejemplo, una llamada
-    a función). Quien llame debe tratar ese `None` como ROJO, no como "adelante": es la regla de
+    Devuelve `None` cuando esto no es un objeto literal que se pueda leer: una llamada a función,
+    o —lo que firmó la 10ª revisión— un texto que **empieza y acaba con llaves en la superficie**
+    pero que por dentro deja una cadena o un comentario **sin cerrar**, de modo que el `}` final
+    está dentro de ellos y el objeto nunca se cierra de verdad. Quien llame debe tratar ese `None` como ROJO, no como "adelante": es la regla de
     esta casa — **falla cerrado**.
     """
     texto = (x_data or "").strip()
@@ -170,19 +172,31 @@ def claves_de_primer_nivel(x_data):
         if c in "\"'`":                                  # una cadena: se salta entera
             cierre = c
             i += 1
+            cerrada = False
             while i < len(dentro):
                 if dentro[i] == "\\":
                     i += 2
                     continue
                 if dentro[i] == cierre:
+                    cerrada = True
                     break
                 i += 1
+            if not cerrada:
+                return None                              # cadena sin cerrar: el `}` final es suyo
         elif c == "/" and i + 1 < len(dentro) and dentro[i + 1] == "*":
             fin = dentro.find("*/", i + 2)
-            i = len(dentro) if fin == -1 else fin + 1
+            if fin == -1:
+                return None                              # comentario sin cerrar: igual
+            i = fin + 1
         elif c == "/" and i + 1 < len(dentro) and dentro[i + 1] == "/":
             fin = dentro.find("\n", i)
-            i = len(dentro) if fin == -1 else fin
+            if fin == -1:
+                # Un `//` que llega al final del atributo se come el `}` de cierre del objeto: en
+                # el navegador eso NO es un objeto. Es un error natural —quien escribe piensa en
+                # JavaScript de varias líneas, y un atributo HTML suele ir en una sola—, y rompe
+                # TODA la app: este `x-data` envuelve la página entera. Lo firmó la 10ª revisión.
+                return None
+            i = fin
         elif c in "{[(":
             profundidad += 1
         elif c in "}])":
