@@ -116,6 +116,22 @@ def cadena_unica(caso, contenido, coincide, nombre):
     return lector.cadenas[0]
 
 
+def _como_entero(valor):
+    """El entero que vería el navegador, o `None` si ahí no hay un entero.
+
+    Recorta espacios y acepta ceros a la izquierda o un `+` delante, como las "rules for parsing
+    integers" de WHATWG. Lo que no encaja devuelve `None` — y `None` nunca es igual a `-1`, así que
+    un atributo raro NO se da por bueno como "está fuera del teclado": se ignora, que es lo mismo
+    que hace el navegador con un `tabindex` que no sabe leer.
+    """
+    if valor is None:
+        return None
+    try:
+        return int(valor.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
 def nada_lo_tapa(caso, contenido, coincide, nombre):
     """Falla si el elemento, o CUALQUIERA de sus ancestros, lo deja inalcanzable.
 
@@ -144,8 +160,19 @@ def nada_lo_tapa(caso, contenido, coincide, nombre):
     propio = cadena[-1][1]
     # Y no basta con que se vea: quien navega con teclado o con lector de pantalla también tiene
     # que llegar. R4 dice "se puede usar", no "se puede ver" (6ª revisión, agujero 4).
-    caso.assertNotEqual(propio.get("tabindex"), "-1", f"«{nombre}» está fuera del orden de tabulación")
-    caso.assertNotEqual(propio.get("aria-hidden"), "true", f"«{nombre}» está fuera del árbol de accesibilidad")
+    # `==` de texto NO sirve aquí, y la 7ª vuelta de la 056 lo midió: `tabindex="-1 "` (un espacio
+    # dentro de las comillas) y `tabindex="-01"` dejaban el test verde y el enlace fuera del
+    # teclado. El navegador no compara cadenas: para `tabindex` aplica las "rules for parsing
+    # integers" de WHATWG, que recortan espacios y aceptan ceros a la izquierda. Es la lección de
+    # la pieza 3 —tolerar lo que el navegador tolera— que no había llegado a esta pieza 6.
+    caso.assertNotEqual(
+        _como_entero(propio.get("tabindex")), -1,
+        f"«{nombre}» está fuera del orden de tabulación: con teclado no se llega",
+    )
+    caso.assertNotEqual(
+        (propio.get("aria-hidden") or "").strip().lower(), "true",
+        f"«{nombre}» está fuera del árbol de accesibilidad: un lector de pantalla no lo anuncia",
+    )
     return cadena
 
 
