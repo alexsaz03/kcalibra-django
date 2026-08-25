@@ -84,11 +84,28 @@ def _texto(ruta):
     return ruta.read_text(encoding="utf-8")
 
 
-def _indice_inicio_main(contenido):
-    """El primer carácter DESPUÉS del que empieza `<main>` (base.html): todo lo que hay antes
-    de aquí es cabecera (nombre, `{% block titulo_grande %}`, ajustes) — nunca el contenido de
-    la pantalla."""
-    return contenido.index('<main class="space-y-4 px-4 pb-32">')
+def _indices_del_h1_de_titulo(contenido):
+    """El `<h1>` que `{% block titulo_grande %}` pinta dentro de `<header>` (`base.html`), o
+    `None` si esta pantalla no lo llena.
+
+    Hueco 1 (revisión, 3ª vuelta): comparar la posición del título contra `<main>` no basta —
+    `base.html:7` pinta `<title>{% block titulo %}…{% endblock %} · KCalibra</title>` DENTRO
+    de `<head>`, que también va antes de `<main>` trivialmente, y cuatro de las siete
+    pantallas llenan `{% block titulo %}` con el MISMO texto que `{% block titulo_grande %}`:
+    la primera aparición del texto buscado era la del `<head>`, así que el assert se cumplía
+    aunque `titulo_grande` estuviera vacío del todo (medido: vaciándolo en
+    `entrenos/corregir.html`, la pantalla se queda sin título grande y `Ran 834 tests — OK`;
+    hallazgos.md). El arreglo mira DENTRO del `<h1>`, el mismo patrón que
+    `_indices_del_h1_de_titulo`/`_fragmento_esta_dentro_del_h1_de_titulo` de
+    `hogares/tests_personas_de_la_casa.py` (R10 de esta misma unidad)."""
+    inicio_header = contenido.index("<header")
+    fin_header = contenido.index("</header>", inicio_header) + len("</header>")
+    try:
+        inicio_h1 = contenido.index("<h1", inicio_header, fin_header)
+    except ValueError:
+        return None
+    fin_h1 = contenido.index("</h1>", inicio_h1, fin_header) + len("</h1>")
+    return inicio_h1, fin_h1
 
 
 class _ConAlejandroYSusDatos(PruebaConRegistroAbierto):
@@ -142,21 +159,29 @@ class _ConAlejandroYSusDatos(PruebaConRegistroAbierto):
 
 
 class R1_TituloGrandeTests(_ConAlejandroYSusDatos):
-    """R1 — el título de cada pantalla sale DENTRO de la cabecera (antes de `<main>`), no
-    suelto en cualquier parte del contenido: si una pantalla dejara el título donde estaba
-    antes (dentro de `{% block content %}`) el título seguiría "apareciendo en la página",
-    pero no llenaría `{% block titulo_grande %}` — de ahí que el test compare posiciones, no
-    solo presencia."""
+    """R1 — el título de cada pantalla sale DENTRO del `<h1>` que pinta
+    `{% block titulo_grande %}` en `<header>` (`base.html`), no suelto en cualquier parte del
+    contenido: si una pantalla dejara el título donde estaba antes (dentro de
+    `{% block content %}`) el título seguiría "apareciendo en la página", pero no llenaría
+    `{% block titulo_grande %}` — de ahí que el test mire el `<h1>` de la cabecera, no solo
+    presencia. (Antes miraba la POSICIÓN del texto contra `<main>`, no el `<h1>`: el `<title>`
+    de `<head>` también va antes de `<main>` y cuatro pantallas repiten el mismo texto ahí —
+    Hueco 1, revisión 3ª vuelta, hallazgos.md.)"""
 
     def _titulo_esta_en_la_cabecera(self, ruta, titulo_esperado):
         respuesta = self.client.get(ruta)
         self.assertEqual(respuesta.status_code, 200, ruta)
         contenido = respuesta.content.decode()
-        self.assertIn(titulo_esperado, contenido, ruta)
-        self.assertLess(
-            contenido.index(titulo_esperado),
-            _indice_inicio_main(contenido),
-            f"'{titulo_esperado}' no está en la cabecera (antes de <main>) en {ruta}",
+        limites_h1 = _indices_del_h1_de_titulo(contenido)
+        self.assertIsNotNone(
+            limites_h1,
+            f"{ruta} no tiene ningún <h1> dentro de <header>: ¿sigue llenando "
+            "{% block titulo_grande %}?",
+        )
+        inicio_h1, fin_h1 = limites_h1
+        self.assertIn(
+            titulo_esperado, contenido[inicio_h1:fin_h1],
+            f"'{titulo_esperado}' no está dentro del <h1> de la cabecera en {ruta}",
         )
 
     def test_portada_hola_nombre(self):
@@ -380,6 +405,26 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
     def test_peso_de_calculo_lleva_cifra(self):
         self._elemento_lleva_cifra("/perfiles/peso/", "peso-calculo")
 
+    def test_las_piezas_compartidas_no_tienen_un_camino_sin_cifra(self):
+        """Hueco 2 (revisión, 3ª vuelta): R6 dice "TODO número de dato lleva `.cifra`", pero
+        los tres tests de arriba solo miran TRES ids escritos a mano en sus plantillas — las
+        piezas de `_ui.html` que imprimen números (justo las que R7 obliga a COMPARTIR, y por
+        tanto las que rompen VARIAS pantallas a la vez si fallan) no las mira nadie. Medido:
+        quitando `cifra` de `numero_grande` y de `_pildora_macro_interna` (los gramos de las
+        seis píldoras de macro de Inicio y de Apuntar el plan, que se refrescan por HTMX —
+        justo donde "bailar" se ve), la suite completa seguía en verde (hallazgos.md). Mismo
+        patrón que `test_la_pieza_pildora_macro_no_tiene_un_camino_sin_nombre` (R5): se
+        comprueba la PIEZA en sí, no solo una pantalla que la usa."""
+        contenido = _texto(RUTA_UI)
+        for pieza in ("numero_grande", "_pildora_macro_interna", "_barra_macro_interna"):
+            with self.subTest(pieza=pieza):
+                interna = re.search(
+                    rf"\{{% partialdef {pieza} %\}}(.*?)\{{% endpartialdef %\}}",
+                    contenido,
+                    re.S,
+                ).group(1)
+                self.assertRegex(interna, r'class="cifra\b', f"{pieza} perdió `.cifra`")
+
 
 # ------------------------------------------------------------------------------------------ #
 # R7 — las piezas compartidas viven UNA SOLA VEZ, en `_ui.html`, y las pantallas las usan.
@@ -446,19 +491,61 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
 # ------------------------------------------------------------------------------------------ #
 
 
-def _resuelto_como_pointer_events_auto(cadena):
+def _resuelto_como_pointer_events_auto(caso, cadena, nombre):
     """El elemento (último de `cadena`) recibe el toque de verdad si, resolviendo
     `pointer-events` de DENTRO hacia FUERA —como un navegador: hereda del ancestro más
     cercano que lo declare—, el primero en decidir dice `auto`. Sin ninguna declaración, el
-    valor por defecto del navegador es `auto`."""
+    valor por defecto del navegador es `auto`.
+
+    Hueco 3 (revisión, 3ª vuelta): si el MISMO elemento lleva las DOS utilidades a la vez
+    (`pointer-events-auto` Y `pointer-events-none` en el mismo `class`), la versión anterior
+    preguntaba primero por `-auto` y devolvía `True` sin llegar a mirar `-none` — pero en el
+    CSS servido `.pointer-events-none` se define DESPUÉS de `.pointer-events-auto` (misma
+    especificidad, comprobado en `static/css/tailwind.css`): en un navegador real gana
+    `none`, el toque no llega. Se comprueban las dos ANTES de decidir nada, y si conviven en
+    el mismo elemento, es ROJO explícito, no un `True` por casualidad de orden."""
     for etiqueta, attrs in reversed(cadena):
         clases = (attrs.get("class") or "").split()
         estilo = (attrs.get("style") or "").replace(" ", "")
-        if "pointer-events-auto" in clases or "pointer-events:auto" in estilo:
+        tiene_auto = "pointer-events-auto" in clases or "pointer-events:auto" in estilo
+        tiene_none = "pointer-events-none" in clases or "pointer-events:none" in estilo
+        if tiene_auto and tiene_none:
+            caso.fail(
+                f"«{nombre}»: <{etiqueta}> lleva 'pointer-events-auto' Y 'pointer-events-none' "
+                "en el mismo elemento — en el CSS servido gana 'none' (se define después, "
+                "misma especificidad): el navegador no le deja pasar el toque"
+            )
+        if tiene_auto:
             return True
-        if "pointer-events-none" in clases or "pointer-events:none" in estilo:
+        if tiene_none:
             return False
     return True
+
+
+_CLASE_RE = re.compile(r'''class=(["'])(?P<clases>[^"']*)\1''')
+
+
+def _sin_pointer_events_none_del_envoltorio_fijo(contenido):
+    """Neutraliza `pointer-events-none` SOLO en el `class` del envoltorio `fixed` de
+    `boton_redondo`/`boton_redondo_menu` (`_ui.html`), que lo lleva A PROPÓSITO (nota de
+    `_boton_redondo_es_alcanzable` más abajo) — nunca en el de cualquier otro elemento.
+
+    Hueco 3 (revisión, 3ª vuelta), segunda mitad: la versión anterior hacía
+    `contenido.replace("pointer-events-none", "")` sobre la página ENTERA, así que un
+    `pointer-events-none` fuera de sitio en cualquier otro elemento (incluido el propio botón
+    mutado con las dos utilidades a la vez) tampoco lo cazaba nadie. Se identifica el
+    envoltorio por llevar el token `fixed` en el MISMO `class` —lo único que lo distingue de
+    cualquier otro elemento de estas plantillas—, comparando TOKENS (no la cadena completa),
+    así que tolera comillas simples o dobles, orden de clases y clases de más."""
+    def _reemplazo(m):
+        tokens = m.group("clases").split()
+        if "pointer-events-none" in tokens and "fixed" in tokens:
+            tokens = [t for t in tokens if t != "pointer-events-none"]
+            comilla = m.group(1)
+            return f"class={comilla}{' '.join(tokens)}{comilla}"
+        return m.group(0)
+
+    return _CLASE_RE.sub(_reemplazo, contenido)
 
 
 def _boton_redondo_es_alcanzable(caso, contenido, coincide, nombre):
@@ -468,15 +555,18 @@ def _boton_redondo_es_alcanzable(caso, contenido, coincide, nombre):
     llama necesita mirar algún atributo del propio elemento."""
     cadena = cadena_unica(caso, contenido, coincide, nombre)
     caso.assertTrue(
-        _resuelto_como_pointer_events_auto(cadena),
+        _resuelto_como_pointer_events_auto(caso, cadena, nombre),
         f"«{nombre}» queda bajo un envoltorio con 'pointer-events-none' sin que nada más "
         "cerca lo reactive con 'pointer-events-auto': en un navegador real el toque no le "
         "llega",
     )
-    # Ya resuelto aparte: se neutraliza el único 'pointer-events-none' legítimo de la página
-    # para que el resto de `nada_lo_tapa` (hidden/invisible/opacity-0/…, <template>, tabindex,
-    # aria-hidden, unicidad) no dé un rojo falso sobre código bueno.
-    nada_lo_tapa(caso, contenido.replace("pointer-events-none", ""), coincide, nombre)
+    # Ya resuelto aparte: se neutraliza el 'pointer-events-none' del envoltorio `fixed`
+    # legítimo (y SÓLO el suyo) para que el resto de `nada_lo_tapa` (hidden/invisible/
+    # opacity-0/…, <template>, tabindex, aria-hidden, unicidad) no dé un rojo falso sobre
+    # código bueno.
+    nada_lo_tapa(
+        caso, _sin_pointer_events_none_del_envoltorio_fijo(contenido), coincide, nombre
+    )
     return cadena
 
 
@@ -507,18 +597,36 @@ class R8_BotonRedondoDeProgresoTests(_ConAlejandroYSusDatos):
     el menú entero desaparece cuando `puede_editar` es falso."""
 
     def test_el_menu_ofrece_apuntar_pesada_y_cerrar_dia_de_quien_se_esta_mirando(self):
+        """Falso rojo confirmado (revisión, 3ª vuelta): los `assertIn` de comillas dobles
+        FIJAS (`href="…"`, `aria-haspopup="true"`, `role="menu"`, `role="menuitem"`) ponían
+        este test en ROJO con el menú funcionando perfectamente si el marcado se escribía con
+        comillas simples — HTML igual de válido (medido con `boton_redondo_menu` reescrito
+        así: `Ran 2 tests` de alcanzabilidad en VERDE, este test en ROJO; hallazgos.md). Se
+        lee el HTML de verdad con `elementos_con_texto` (ya importado), como ya hace
+        `test_el_boton_del_menu_se_puede_abrir_de_verdad` más abajo."""
         respuesta = self.client.get(f"/progreso/{self.alejandro.id}/")
         self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
-        self.assertIn(f'href="/perfiles/{self.alejandro.id}/peso/"', contenido)
-        self.assertIn(f'href="/cierres/{self.alejandro.id}/"', contenido)
-        self.assertIn("Apuntar una pesada", contenido)
-        self.assertIn("Cerrar un día", contenido)
+
+        botones = elementos_con_texto(contenido, _es_el_boton_del_menu_de_progreso)
+        self.assertEqual(len(botones), 1, "no hay un único botón que abra el menú de Progreso")
         # Accesible con teclado y lector de pantalla (R8), no solo con el dedo: el botón que
-        # despliega el menú se anuncia como tal y dice qué desplegará.
-        self.assertIn('aria-haspopup="true"', contenido)
-        self.assertIn('role="menu"', contenido)
-        self.assertIn('role="menuitem"', contenido)
+        # despliega el menú se anuncia como tal.
+        self.assertEqual(botones[0][0].get("aria-haspopup"), "true")
+
+        menus = elementos_con_texto(contenido, _es_el_menu_de_progreso)
+        self.assertEqual(len(menus), 1, "no hay un único menú de Progreso")
+        self.assertEqual(menus[0][0].get("role"), "menu")
+
+        destinos = elementos_con_texto(contenido, _es_un_destino_del_menu_de_progreso)
+        hrefs_y_textos = {(attrs.get("href"), texto) for attrs, texto in destinos}
+        self.assertEqual(
+            hrefs_y_textos,
+            {
+                (f"/perfiles/{self.alejandro.id}/peso/", "Apuntar una pesada"),
+                (f"/cierres/{self.alejandro.id}/", "Cerrar un día"),
+            },
+        )
 
     def test_quien_solo_mira_no_ve_un_menu_que_el_servidor_le_rechazaria(self):
         """Aislada la PLANTILLA (mismo patrón de `RequestFactory` que
@@ -654,13 +762,22 @@ class R8_ElMenuApuntaSiempreAQuienSeMiraTests(_ConAlejandroYSusDatos):
         self.euridice = Persona.objects.get(nombre="Euridice", hogar=self.alejandro.hogar)
 
     def test_el_menu_de_progreso_apunta_a_la_persona_a_cargo_no_a_quien_mira(self):
+        """Falso rojo confirmado (revisión, 3ª vuelta), la mitad peor: los dos `assertNotIn`
+        de abajo leían HTML como texto con comillas dobles FIJAS — un `assertNotIn` así
+        FALLA ABIERTO por construcción (si el marcado pasara a comillas simples, la regresión
+        del bug 028 volvería a colar en verde). `elementos_con_texto` (ya importado) lee el
+        HTML de verdad; comparar el conjunto de destinos EXACTO ya implica que ninguno es el
+        de Alejandro, sin depender de cómo estén escritas las comillas."""
         respuesta = self.client.get(f"/progreso/{self.euridice.id}/")
         self.assertEqual(respuesta.status_code, 200)
         contenido = respuesta.content.decode()
-        self.assertIn(f'href="/perfiles/{self.euridice.id}/peso/"', contenido)
-        self.assertIn(f'href="/cierres/{self.euridice.id}/"', contenido)
-        # El hueco exacto que cazó el bug 028: sin estos dos `assertNotIn`, un menú que
-        # SIEMPRE llevara a Alejandro (quien mira) en vez de a Euridice (a quien se mira)
-        # seguía pasando por los dos `assertIn` de arriba.
-        self.assertNotIn(f'href="/perfiles/{self.alejandro.id}/peso/"', contenido)
-        self.assertNotIn(f'href="/cierres/{self.alejandro.id}/"', contenido)
+
+        # El hueco exacto que cazó el bug 028: un menú que SIEMPRE llevara a Alejandro (quien
+        # mira) en vez de a Euridice (a quien se mira) da un conjunto de hrefs DISTINTO al
+        # esperado — se detecta sin necesitar un `assertNotIn` aparte, sin fallar abierto.
+        destinos = elementos_con_texto(contenido, _es_un_destino_del_menu_de_progreso)
+        hrefs = {attrs.get("href") for attrs, _texto in destinos}
+        self.assertEqual(
+            hrefs,
+            {f"/perfiles/{self.euridice.id}/peso/", f"/cierres/{self.euridice.id}/"},
+        )
