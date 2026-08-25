@@ -405,12 +405,31 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
             "el botón de la rueda no ABRE el menú: el enlace estaría ahí y sería inalcanzable",
         )
 
-        # Y el menú no puede nacer tapado: `hidden` o `display:none` lo dejarían fuera de la vista
-        # con el enlace intacto en el HTML.
+        # Y el botón no puede estar apagado: `disabled` no dispara click en ningún navegador,
+        # así que el menú quedaría tan inalcanzable como sin `@click` — y el regex de arriba
+        # seguiría contento. (Agujero 2 de la 2ª revisión.)
+        self.assertNotIn(" disabled", rueda[0])
+        self.assertNotIn('aria-disabled="true"', rueda[0])
+
+        # Y el menú no puede nacer tapado. Alpine, con `x-show`, solo alterna `display`: cualquier
+        # otra forma de esconder sobrevive a que el menú "se abra". La 2ª revisión lo demostró con
+        # `invisible` y con `opacity-0 pointer-events-none`, que dejaban el test VERDE y el menú
+        # invisible en un navegador de verdad (agujero 1).
+        #
+        # Esto es una LISTA NEGRA, y una lista negra nunca está completa: cubre las formas que
+        # Tailwind ofrece para esconder algo, no todas las imaginables. El límite de verdad está
+        # más abajo, y es del nivel de test que eligió el contrato (ADR-015): sobre HTML
+        # renderizado no se puede ver si el navegador llegó a ejecutar Alpine. Cerrar eso pide un
+        # navegador de verdad, y este contrato no lo pide.
         i = contenido.index('x-show="ajustesAbierto"')
         etiqueta = contenido[contenido.rindex("<div", 0, i) : contenido.index(">", i)]
-        self.assertNotIn(" hidden", etiqueta)
-        self.assertNotIn("display:none", etiqueta.replace(" ", ""))
+        sin_espacios = etiqueta.replace(" ", "")
+        for tapadera in ("hidden", "invisible", "opacity-0", "pointer-events-none", "sr-only"):
+            with self.subTest(tapadera=tapadera):
+                self.assertNotIn(tapadera, etiqueta.split("class=")[-1] if "class=" in etiqueta else etiqueta)
+        for tapadera in ("display:none", "visibility:hidden", "opacity:0"):
+            with self.subTest(tapadera=tapadera):
+                self.assertNotIn(tapadera, sin_espacios)
 
 
 class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
@@ -441,5 +460,11 @@ class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
     def test_salir_sigue_siendo_un_formulario_que_postea(self):
         """Salir no es un enlace: cerrar sesión con un GET lo dispararía cualquier precarga."""
         zona = _zona_de_ajustes(self.client.get("/").content.decode())
-        self.assertIn('action="/cuentas/logout/"', zona)
+        # Anclado al MISMO <form> que el action: el nombre de este test prometía que Salir postea,
+        # pero la primera versión solo miraba el `action=` y dejaba VERDE cambiar el método a GET
+        # (agujero 3 de la 2ª revisión). Un logout por GET lo dispara cualquier precarga del
+        # navegador, así que la promesa importa.
+        formulario = re.search(r"<form\b[^>]*action=\"/cuentas/logout/\"[^>]*>", zona)
+        self.assertIsNotNone(formulario, "Salir ya no es un formulario que apunte al logout")
+        self.assertIn('method="post"', formulario.group(0))
         self.assertIn("Salir", zona)
