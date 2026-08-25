@@ -62,7 +62,7 @@
       <div class="mt-1 flex items-baseline gap-2">
         {% include "_ui.html#numero_grande" with valor=resumen.calorias unidad="kcal" tam="text-[32px]" %}
         {% if objetivo %}
-          <p class="text-[13px] text-tinta-media">({{ resumen.porcentaje }}% de tu objetivo de {{ objetivo.calorias }} kcal)</p>
+          <p class="cifra text-[13px] text-tinta-media">({{ resumen.porcentaje }}% de tu objetivo de {{ objetivo.calorias }} kcal)</p>
         {% endif %}
       </div>
     {% include "_ui.html#tarjeta_cierra" %}

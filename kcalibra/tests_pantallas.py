@@ -22,6 +22,7 @@ cae — la mutación y su salida en rojo están pegadas en hallazgos.md, no desc
 """
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from django.conf import settings
@@ -30,6 +31,8 @@ from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
 from kcalibra.ayuda_de_alcanzabilidad import (
+    SIN_CIERRE,
+    atributos,
     cadena_unica,
     el_estado_es_compartido,
     elementos_con_texto,
@@ -412,11 +415,23 @@ class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
                     nombres_vistos.add(nombre)
         self.assertEqual(nombres_vistos, nombres_esperados)
 
-    def test_la_pieza_pildora_macro_no_tiene_un_camino_sin_nombre(self):
-        """Mutación fijada en el propio test: `_pildora_macro_interna` (`_ui.html`) siempre
-        imprime `{{ nombre_macro }}` antes de los gramos — se comprueba aquí, sobre la pieza
-        en sí, no solo sobre una pantalla que la usa (para que un futuro uso nuevo de la
-        pieza no pueda perder el nombre sin que este test lo note).
+    def test_las_piezas_de_macro_no_tienen_un_camino_sin_nombre(self):
+        """Mutación fijada en el propio test: `_pildora_macro_interna`/`_barra_macro_interna`
+        (`_ui.html`) siempre imprimen `{{ nombre_macro }}` antes de los gramos — se comprueba
+        aquí, sobre las piezas en sí, no solo sobre una pantalla que las usa (para que un
+        futuro uso nuevo de cualquiera de las dos no pueda perder el nombre sin que este test
+        lo note).
+
+        Hueco de muestreo hallado en el repaso R1-R10 pedido por la revisión de la 6ª vuelta
+        (la misma familia que sus dos falsos verdes de R6/R7, aunque la revisión no llegó a
+        auditar R5): este test, antes de esta vuelta, sólo miraba `_pildora_macro_interna` —
+        pero R5 dice, literal, "Toda píldora **o barra** de macro lleva el nombre", y
+        `_barra_macro_interna` es la otra mitad de esa frase, sin ninguna prueba propia
+        (comprobado: `grep -rn "_barra_macro_interna"` fuera de este fichero no encuentra
+        nada). Ninguna de las nueve pantallas usa hoy `barra_macro` (nace con la primera que
+        la use, nota de `PIEZAS_PORTADAS` más arriba), así que el único sitio donde HOY se
+        puede comprobar es la propia pieza — igual que ya hace R6 con
+        `test_las_piezas_compartidas_no_tienen_un_camino_sin_cifra` para el mismo motivo.
 
         Hueco 11 (revisión, 5ª vuelta): el `re.search` de `{% partialdef … %}` llevaba los
         espacios alrededor del nombre escritos a mano — Django acepta
@@ -425,16 +440,18 @@ class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
         por el mismo motivo). Se tolera con `\\s*`, como `_BLOQUE_TITULO_GRANDE_DECLARADO_RE`
         en `hogares/tests_personas_de_la_casa.py`."""
         contenido = _texto(RUTA_UI)
-        interna = re.search(
-            r"\{%\s*partialdef\s+_pildora_macro_interna\s*%\}(.*?)\{%\s*endpartialdef\s*%\}",
-            contenido,
-            re.S,
-        ).group(1)
-        self.assertIn("{{ nombre_macro }}", interna)
-        self.assertIn("{{ gramos }} g", interna)
-        # El nombre no puede ir detrás de un `{% if %}` que lo esconda: tiene que estar en la
-        # rama incondicional del partial (mismo criterio que exige R5: "SIEMPRE").
-        self.assertNotIn("{% if", interna)
+        for pieza in ("_pildora_macro_interna", "_barra_macro_interna"):
+            with self.subTest(pieza=pieza):
+                interna = re.search(
+                    rf"\{{%\s*partialdef\s+{pieza}\s*%\}}(.*?)\{{%\s*endpartialdef\s*%\}}",
+                    contenido,
+                    re.S,
+                ).group(1)
+                self.assertIn("{{ nombre_macro }}", interna)
+                self.assertIn("{{ gramos }} g", interna)
+                # El nombre no puede ir detrás de un `{% if %}` que lo esconda: tiene que
+                # estar en la rama incondicional del partial (lo que exige R5: "SIEMPRE").
+                self.assertNotIn("{% if", interna)
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -447,6 +464,62 @@ class R5_NombreDelMacroSiempreEscritoTests(_ConAlejandroYSusDatos):
 # (más abajo, pensada para HTML renderizado sin Django dentro), aguanta un argumento de filtro
 # con la comilla contraria, como `{{ tam|default:'text-[44px]' }}` dentro de un `class="…"`.
 _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
+
+
+# Falso verde 1 (revisión, 6ª vuelta): R6 dice "TODO número de dato (kcal, peso, gramos,
+# minutos) lleva `.cifra`", pero los tres tests de la clase de abajo fijan tres `id` escritos
+# a mano y el de las piezas compartidas fija tres piezas — ninguno barre los números que las
+# propias pantallas escriben en línea, que son la mayoría. Medido por el revisor:
+# `planes/apuntar.html:65` se entregaba sin `.cifra` en un número que HTMX repinta
+# (`hx-target="#plan-de-hoy"`) y los 835 tests seguían en verde. Se recorre el HTML
+# RENDERIZADO buscando texto que combine un número con una de las unidades que R6 enumera, y
+# se exige `.cifra` en el propio elemento o en ALGUNO de sus ancestros — se hereda de verdad
+# (`font-variant-numeric`/`letter-spacing`, medido por el revisor en el CSS servido), así que
+# un envoltorio con `.cifra` también vale.
+_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)\b")
+
+
+class _NumerosDeDatoEnElTexto(HTMLParser):
+    """Para cada trozo de texto propio de un elemento (sin cruzar hijos: se acumula entre dos
+    etiquetas cualesquiera, como ya acumula `_ElementosConTexto` de
+    `kcalibra.ayuda_de_alcanzabilidad`) que combina un número con una unidad de dato, la
+    cadena de ancestros MÁS el propio elemento que lo contiene — el mismo patrón de
+    `CadenaDeAncestros`, pero anclado al TEXTO en vez de a los atributos, porque aquí lo que
+    hay que encontrar es un número escrito en la página, no un elemento con un `id`/`aria-*`
+    concreto."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.pila = []
+        self.hallazgos = []
+        self._buffer = []
+
+    def _flush(self):
+        texto = "".join(self._buffer)
+        self._buffer = []
+        if self.pila:
+            for coincidencia in _NUMERO_CON_UNIDAD_RE.finditer(texto):
+                self.hallazgos.append((coincidencia.group(), list(self.pila)))
+
+    def handle_starttag(self, etiqueta, atributos_crudos):
+        self._flush()
+        attrs = atributos(atributos_crudos)
+        if etiqueta not in SIN_CIERRE:
+            self.pila.append((etiqueta, attrs))
+
+    def handle_data(self, datos):
+        self._buffer.append(datos)
+
+    def handle_endtag(self, etiqueta):
+        self._flush()
+        for k in range(len(self.pila) - 1, -1, -1):
+            if self.pila[k][0] == etiqueta:
+                del self.pila[k:]
+                return
+
+
+def _algun_elemento_de_la_cadena_lleva_cifra(cadena):
+    return any("cifra" in (attrs.get("class") or "").split() for _, attrs in cadena)
 
 
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
@@ -522,6 +595,51 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
                     tokens.update(coincidencia.group("clases").split())
                 self.assertIn("cifra", tokens, f"{pieza} perdió `.cifra`")
 
+    def test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra(self):
+        """FALSO VERDE 1, BLOQUEANTE (revisión, 6ª vuelta): un barrido de verdad, no una
+        muestra escrita a mano — los tres tests de arriba fijan tres `id` y el de las piezas
+        compartidas fija tres piezas; ninguno mira los números que cada pantalla escribe en
+        línea, que son la mayoría. Es la tercera vez que la misma lección asoma en esta
+        unidad (Hueco 2 de la revisión 3ª vuelta, ya sobre R6): *cada vez que un criterio
+        dice "TODO" o "CADA", la red lo había comprobado sobre una muestra*.
+
+        El revisor lo midió sobre HTML renderizado, imprimiendo la cadena de ancestros de
+        `(19% de tu objetivo de 2677 kcal)` en `planes/apuntar.html:65`: ningún ancestro
+        llevaba `.cifra`, y ese número vive dentro de `#plan-de-hoy` (l.29), la diana de HTMX
+        (`hx-target="#plan-de-hoy"`, `hx-swap="outerHTML"`, l.76-77) que se repinta cada vez
+        que apuntas una comida — el escenario exacto por el que R6 existe, con `kcal`
+        enumerado en su criterio con todas las letras. Antes de añadirle `.cifra` a esa `<p>`,
+        este mismo test caía en rojo con ese mensaje exacto; con el token puesto, en verde (la
+        mutación y su control están en hallazgos.md, "Vuelta 8").
+
+        Se recorren las siete pantallas de verdad (las nueve plantillas de esta unidad menos
+        las dos parciales sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que
+        se renderizan igual porque `progreso/ver.html` y `paginas/inicio.html` las incluyen)
+        con datos reales — la fixture de esta clase ya trae un plan, un entreno y dos
+        pesadas, así que todos los números de dato de las nueve plantillas tienen algo que
+        mostrar."""
+        rutas = [
+            "/",
+            f"/planes/{self.alejandro.id}/apuntar/",
+            "/entrenos/",
+            f"/entrenos/{self.alejandro.id}/{self.entreno.id}/corregir/",
+            "/perfiles/peso/",
+            f"/progreso/{self.alejandro.id}/",
+            f"/cierres/{self.alejandro.id}/",
+        ]
+        sin_cifra = []
+        for ruta in rutas:
+            respuesta = self.client.get(ruta)
+            self.assertEqual(respuesta.status_code, 200, ruta)
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(respuesta.content.decode())
+            for numero, cadena in lector.hallazgos:
+                if not _algun_elemento_de_la_cadena_lleva_cifra(cadena):
+                    sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
+        self.assertEqual(
+            sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
+        )
+
 
 # ------------------------------------------------------------------------------------------ #
 # R7 — las piezas compartidas viven UNA SOLA VEZ, en `_ui.html`, y las pantallas las usan.
@@ -534,8 +652,18 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
     def test_cada_pieza_se_define_exactamente_una_vez_en_ui_html(self):
         """Hueco 11 (revisión, 5ª vuelta): `{% partialdef … %}` llevaba los espacios alrededor
         del nombre escritos a mano — Django acepta `{%partialdef numero_grande%}` igual que con
-        espacios. Se tolera con `\\s*`, mismo arreglo que en R5 más arriba."""
-        contenido = _texto(RUTA_UI)
+        espacios. Se tolera con `\\s*`, mismo arreglo que en R5 más arriba.
+
+        FALSO VERDE 2, mitad "definición" (revisión, 6ª vuelta): esto solo contaba las
+        ocurrencias DENTRO de `_ui.html` — una pantalla podía declarar su PROPIO
+        `{% partialdef distintivo %}` (una segunda definición, fuera de `_ui.html`, que es
+        exactamente lo que R7 prohíbe: "una sola vez, en `templates/_ui.html`") y este test no
+        se enteraba, porque nunca miraba fuera de ese fichero (medido por el revisor:
+        añadiendo ese partial a `entrenos/ver.html`, `Ran 44 — OK`). Se cuenta sobre las NUEVE
+        plantillas de pantalla MÁS `_ui.html`, no solo sobre `_ui.html` — ninguna de las
+        nueve define hoy un partial con alguno de estos nombres, así que el recuento sigue
+        dando 1 en cada uno sin tocar el código de producción."""
+        contenido = "\n".join(_texto(p) for p in PLANTILLAS + [RUTA_UI])
         conteos = {}
         for pieza in PIEZAS_PORTADAS:
             conteos[pieza] = len(re.findall(rf"\{{%\s*partialdef\s+{pieza}\s*%\}}", contenido))
@@ -557,11 +685,30 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         ]
         self.assertEqual(sin_uso, [], f"piezas portadas que ninguna pantalla incluye: {sin_uso}")
 
-    def test_ninguna_pantalla_copia_el_marcado_de_la_tarjeta_en_vez_de_incluirlo(self):
+    # Firma de clases por pieza: el subconjunto de tokens LITERALES (sin `{{ }}`/`{% %}` de
+    # Django dentro) que identifica el marcado de esa pieza en `_ui.html` sin ambigüedad.
+    # Verificado (script aparte, no un test — no hay nada que mutar en un negativo) que
+    # NINGUNA de las nueve plantillas tiene hoy estos tokens juntos en un mismo `class`, ni
+    # por separado ni en combinación con otra firma. `anillo_cierra` no tiene firma posible
+    # (su marcado son sólo `</div></div>`, sin ninguna clase): un cierre sin clase no se
+    # puede distinguir de cualquier otro `</div>`, así que copiarlo no es "el hueco que
+    # nombra R7" en el mismo sentido — no hay clase que decir que se copió.
+    _FIRMAS_DE_CLASE_POR_PIEZA = {
+        "tarjeta_abre": {"rounded-tarjeta", "bg-superficie"},
+        "titulo_seccion": {"mb-3", "items-end", "justify-between"},
+        "numero_grande": {"font-bold", "leading-none"},
+        "pildora_macro": {"rounded-pastilla", "px-3", "py-1.5"},
+        "barra_macro": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"},
+        "anillo_abre": {"shrink-0", "rounded-full", "relative"},
+        "boton": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"},
+        "aviso": {"rounded-control", "px-4", "py-3", "font-medium"},
+        "distintivo": {"px-2.5", "py-1", "gap-1"},
+        "boton_redondo": {"pointer-events-none", "fixed", "inset-x-0", "z-40"},
+        "boton_redondo_menu": {"bottom-16", "right-0", "w-56"},
+    }
+
+    def test_ninguna_pantalla_copia_el_marcado_de_ninguna_pieza_en_vez_de_incluirla(self):
         """El "hueco" que nombra R7 en persona: una pieza copiada y pegada en vez de incluida.
-        Se comprueba con la más repetida de las nueve (`tarjeta`, en las nueve plantillas):
-        ninguna puede tener el marcado (las clases de `tarjeta_abre`) escrito a mano, solo el
-        `{% include %}`.
 
         Hueco 8 (revisión, 4ª vuelta): un `assertNotIn` de la cadena fija
         "rounded-tarjeta bg-superficie" FALLA ABIERTO — en un atributo `class` las clases no
@@ -570,18 +717,24 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         esa copia añadida a `entrenos/corregir.html`, hallazgos.md). Se compara por TOKENS,
         como ya hace `_sin_pointer_events_none_del_envoltorio_fijo` más abajo en este mismo
         fichero (`_CLASE_RE`, definido ahí): tolera comillas simples o dobles, cualquier orden
-        de clases y clases de más — sólo exige que las DOS de `tarjeta_abre` estén juntas en el
-        mismo atributo `class`."""
-        clases_de_la_tarjeta = {"rounded-tarjeta", "bg-superficie"}
+        de clases y clases de más.
+
+        FALSO VERDE 2, mitad "copia" (revisión, 6ª vuelta): esta comprobación, antes de esta
+        vuelta, sólo miraba las dos clases de `tarjeta_abre` — la pieza más repetida, pero
+        sólo UNA de nueve. Pegando a mano el marcado de OTRA pieza (`numero_grande`) dentro de
+        `entrenos/ver.html`, en vez de incluirla, el revisor midió `Ran 44 — OK`: la red no se
+        enteraba. Mismo bucle de antes, ahora contra un DICCIONARIO de pieza → firma de clase
+        (`_FIRMAS_DE_CLASE_POR_PIEZA`, arriba) en vez de sólo `tarjeta`."""
         for ruta in PLANTILLAS:
             contenido = _texto(ruta)
             for coincidencia in _CLASE_RE.finditer(contenido):
                 clases = set(coincidencia.group("clases").split())
-                self.assertFalse(
-                    clases_de_la_tarjeta <= clases,
-                    f"{ruta.relative_to(BASE_DIR)} copia el marcado de `tarjeta` en vez de "
-                    "incluirla con `{% include \"_ui.html#tarjeta_abre\" %}`",
-                )
+                for pieza, firma in self._FIRMAS_DE_CLASE_POR_PIEZA.items():
+                    self.assertFalse(
+                        firma <= clases,
+                        f"{ruta.relative_to(BASE_DIR)} copia el marcado de `{pieza}` en vez de "
+                        f'incluirla con `{{% include "_ui.html#{pieza}" %}}`',
+                    )
 
 
 # ------------------------------------------------------------------------------------------ #
