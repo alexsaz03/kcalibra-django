@@ -347,6 +347,19 @@ _TAPADERAS_DE_CLASE = ("hidden", "invisible", "opacity-0", "pointer-events-none"
 _TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0")
 _SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
 
+# El menú se identifica por su `x-show`, y se identifica FALLANDO EN ROJO ante cualquier forma que
+# no sea la canónica. La 5ª revisión enseñó por qué: `x-show=" ajustesAbierto "` (un espacio dentro
+# de las comillas) es para Alpine EXACTAMENTE la misma expresión —la evalúa como JavaScript, y el
+# espacio no significa nada—, pero para una comparación de texto es otra cosa. Con eso, un señuelo
+# escrito de forma exacta se llevaba la única coincidencia y el menú de verdad, tapado, no llegaba
+# ni a inspeccionarse.
+#
+# Se tolera lo que Alpine considera igual (espacios alrededor, comilla simple o doble) y NADA MÁS.
+# Una expresión equivalente pero escrita de otro modo (`!!ajustesAbierto`, por ejemplo) no cuenta
+# como el menú: el test se pone ROJO diciendo que no lo encuentra. Falla cerrado, que es lo único
+# aceptable en una red — un falso rojo se ve y se arregla; un falso verde no se ve nunca.
+_MENU_RE = re.compile(r"""x-show\s*=\s*(?P<c>["'])\s*ajustesAbierto\s*(?P=c)""")
+
 
 class _CadenaDeAncestros(HTMLParser):
     """El primer elemento que lleva `atributo=valor`, MÁS toda su cadena de ancestros.
@@ -365,7 +378,9 @@ class _CadenaDeAncestros(HTMLParser):
 
     def handle_starttag(self, etiqueta, atributos):
         attrs = dict(atributos)
-        if attrs.get(self.buscado[0]) == self.buscado[1]:
+        # `.strip()`: Alpine evalúa el atributo como expresión JS, así que los espacios de los
+        # extremos no significan nada para él y tampoco pueden significar nada aquí (5ª revisión).
+        if (attrs.get(self.buscado[0]) or "").strip() == self.buscado[1]:
             # TODAS, no la primera: quedarse con la primera deja que un señuelo sin tapar
             # conteste por el menú de verdad, que sí está tapado. Lo firmó la 4ª revisión.
             self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
@@ -413,14 +428,14 @@ def _zona_de_ajustes(contenido):
     el cuerpo de una pantalla cualquiera dejaría verde un test que dice "está en la rueda":
     la misma cara del bug 027 que ya nos costó una unidad.
     """
-    cuantos = contenido.count('x-show="ajustesAbierto"')
+    cuantos = len(_MENU_RE.findall(contenido))
     if cuantos != 1:
         # Con dos, `index` coge el primero y la zona se estira hasta `</header>` abarcando también
         # el otro: los destinos se encuentran por texto y el test miente sin mentir. 4ª revisión.
         raise AssertionError(
             f"hay {cuantos} elementos con x-show=\"ajustesAbierto\": no se sabe cuál es el menú"
         )
-    inicio = contenido.index('x-show="ajustesAbierto"')
+    inicio = _MENU_RE.search(contenido).start()
     fin = contenido.index("</header>", inicio)
     zona = contenido[inicio:fin]
     if not zona.strip():
