@@ -22,7 +22,6 @@ cae — la mutación y su salida en rojo están pegadas en hallazgos.md, no desc
 """
 
 import re
-from html.parser import HTMLParser
 from pathlib import Path
 
 from django.conf import settings
@@ -30,6 +29,12 @@ from django.test import SimpleTestCase
 from django.utils import timezone
 
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from kcalibra.ayuda_de_alcanzabilidad import (
+    cadena_unica,
+    el_estado_es_compartido,
+    elementos_con_texto,
+    nada_lo_tapa,
+)
 from hogares.models import Persona
 
 BASE_DIR = Path(settings.BASE_DIR)
@@ -248,6 +253,28 @@ class R2_BotonRedondoTests(_ConAlejandroYSusDatos):
         self.assertNotIn("formulario-entreno", html)
         self.assertNotIn('aria-label="Apuntar un entreno"', html)
 
+    def test_el_boton_redondo_se_puede_usar_de_verdad(self):
+        """Hueco 2 (R2) de la revisión (2ª vuelta): `_ancla_lleva_a_un_elemento_que_existe` de
+        arriba sólo mira que existan dos cadenas sueltas (`href="#id"`, `id="id"`) en la misma
+        respuesta — con `_ui.html#boton_redondo` tapado (`class="hidden invisible opacity-0
+        pointer-events-none …"`), los cuatro botones morían a la vez y ese test seguía en
+        verde (medido, hallazgos.md). Mismo agujero, mismo arreglo que R8: se importa de
+        `kcalibra.ayuda_de_alcanzabilidad` en vez de copiarse a mano — ver
+        `_boton_redondo_es_alcanzable` más abajo, la pieza compartida entre R2 y R8."""
+        casos = (
+            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar comida"),
+            ("/entrenos/", "Apuntar un entreno"),
+            ("/perfiles/peso/", "Apuntar una pesada"),
+            (f"/cierres/{self.alejandro.id}/", "Cerrar un día"),
+        )
+        for ruta, etiqueta in casos:
+            with self.subTest(ruta=ruta):
+                contenido = self.client.get(ruta).content.decode()
+                coincide = lambda e, a, etiqueta=etiqueta: (
+                    e == "a" and a.get("aria-label") == etiqueta
+                )
+                _boton_redondo_es_alcanzable(self, contenido, coincide, f"el botón redondo «{etiqueta}»")
+
 
 # ------------------------------------------------------------------------------------------ #
 # R4 — ninguna de las diez plantillas conserva utilidades de la paleta vieja.
@@ -398,104 +425,59 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
 
 
 # ------------------------------------------------------------------------------------------ #
-# Ayudas de R8 (hueco 1 de la revisión 2) — que el botón del menú de Progreso se pueda abrir
-# DE VERDAD, no solo que ciertas cadenas estén en el HTML. Mismo patrón (y los mismos agujeros,
-# ya cazados uno detrás de otro en cinco rondas de revisión) que
-# `kcalibra/tests_marco.py::test_la_rueda_se_puede_abrir_de_verdad` en la 056
-# (`origin/056-el-camino-que-faltaba-a-tu-contrasena`, posterior a `ee93822`). Se copia aquí,
-# adaptado al menú de Progreso, en vez de importarse: `tests_marco.py` no vive en `ficheros:`
-# de esta unidad.
+# Ayudas de alcanzabilidad (R2/R8) — que un botón redondo, su menú y sus destinos se puedan
+# usar DE VERDAD, no solo que ciertas cadenas estén en el HTML. Las ocho piezas del patrón
+# viven en `kcalibra/ayuda_de_alcanzabilidad.py` y se IMPORTAN, no se copian: la revisión de
+# esta unidad (2ª vuelta) demostró que copiarlas a mano se dejó cuatro de las ocho y abrió
+# siete agujeros medidos uno a uno (Hueco 1) — y que dejar la red sólo en el contenedor del
+# menú, sin aplicarla a los otros cuatro botones redondos de la unidad, abría un octavo
+# (Hueco 2).
+#
+# Lo único que el módulo compartido NO cubre es específico de esta unidad: el envoltorio
+# `fixed` de `boton_redondo`/`boton_redondo_menu` (`_ui.html`) lleva `pointer-events-none` A
+# PROPÓSITO (deja pasar el toque en el resto de la pantalla) y el elemento usable lo reactiva
+# con `pointer-events-auto` — un patrón que la rueda de ajustes de la 056 (el origen del
+# módulo) nunca necesitó, así que su lista negra trata `pointer-events-none` como tapadera
+# INCONDICIONAL (medido: llamar a `nada_lo_tapa` tal cual sobre el botón real, sin mutar nada,
+# revienta con ese envoltorio legítimo). Se resuelve aparte, de DENTRO hacia FUERA — la misma
+# lógica que ya escribió la vuelta 2 —, y sólo entonces se neutraliza ESE `pointer-events-none`
+# ya resuelto para que las otras siete piezas de `nada_lo_tapa` sigan comprobándose sin ese
+# falso positivo.
 # ------------------------------------------------------------------------------------------ #
 
-_TAPADERAS_DE_CLASE = (
-    "hidden", "invisible", "opacity-0", "sr-only", "w-0", "h-0", "scale-0",
-)
-_TAPADERAS_DE_ESTILO = ("display:none", "visibility:hidden", "opacity:0")
-_SIN_CIERRE = {"br", "img", "input", "meta", "link", "hr", "source", "path", "circle", "area"}
 
-
-class _CadenaDeAncestros(HTMLParser):
-    """El primer elemento que lleva `atributo=valor`, MÁS toda su cadena de ancestros.
-
-    Hace falta un parser de verdad y no un `rindex("<div", ...)`: ese truco encuentra la
-    etiqueta más cercana hacia atrás —el propio elemento— y nunca sube a quien lo envuelve. Fue
-    justo el agujero que firmó la 3ª revisión de la 056: un `<div class="hidden">` alrededor del
-    menú lo escondía en cualquier navegador con el test tan verde como antes.
-    """
-
-    def __init__(self, atributo, valor):
-        super().__init__(convert_charrefs=True)
-        self.buscado = (atributo, valor)
-        self.pila = []
-        self.cadenas = []
-
-    def handle_starttag(self, etiqueta, atributos):
-        attrs = dict(atributos)
-        if attrs.get(self.buscado[0]) == self.buscado[1]:
-            # TODAS, no la primera: quedarse con la primera deja que un señuelo sin tapar
-            # conteste por el menú de verdad, que sí está tapado (4ª revisión de la 056).
-            self.cadenas.append(list(self.pila) + [(etiqueta, attrs)])
-        if etiqueta not in _SIN_CIERRE:
-            self.pila.append((etiqueta, attrs))
-
-    def handle_endtag(self, etiqueta):
-        for k in range(len(self.pila) - 1, -1, -1):
-            if self.pila[k][0] == etiqueta:
-                del self.pila[k:]
-                return
-
-
-def _nada_lo_tapa(caso, contenido, atributo, valor):
-    """Falla si el elemento buscado, o CUALQUIERA de sus ancestros, está escondido — y si el
-    atributo no identifica un único elemento (un señuelo sin tapar podría contestar por el de
-    verdad, que sí está tapado)."""
-    lector = _CadenaDeAncestros(atributo, valor)
-    lector.feed(contenido)
-    if not lector.cadenas:
-        raise AssertionError(f"no hay ningún elemento con {atributo}={valor!r}: el test no prueba nada")
-    caso.assertEqual(
-        len(lector.cadenas), 1,
-        f"hay {len(lector.cadenas)} elementos con {atributo}={valor!r}: uno puede ser un "
-        "señuelo sin tapar que conteste por el de verdad.",
-    )
-    cadena = lector.cadenas[0]  # [ancestro_raíz, ..., el propio elemento buscado]
-
-    for etiqueta, attrs in cadena:
-        clases = (attrs.get("class") or "").split()
-        estilo = (attrs.get("style") or "").replace(" ", "")
-        for tapadera in _TAPADERAS_DE_CLASE:
-            caso.assertNotIn(
-                tapadera, clases,
-                f"<{etiqueta}> esconde el menú con la clase '{tapadera}'",
-            )
-        for tapadera in _TAPADERAS_DE_ESTILO:
-            caso.assertNotIn(
-                tapadera, estilo,
-                f"<{etiqueta}> esconde el menú con el estilo '{tapadera}'",
-            )
-
-    # `pointer-events-none` es distinto de las tapaderas de arriba: a diferencia de `hidden` o
-    # `display:none` (que ningún descendiente puede revertir), un descendiente con
-    # `pointer-events-auto` SÍ reactiva el clic para sí mismo y los suyos — es justo el patrón
-    # que usa el propio botón redondo (el envoltorio `fixed` lleva `pointer-events-none` para
-    # dejar pasar el toque en el resto de la pantalla, y el botón/el menú lo reactivan con
-    # `pointer-events-auto`). Se resuelve de DENTRO hacia FUERA, parando en el primer elemento
-    # de la cadena que declara `pointer-events` explícitamente.
+def _resuelto_como_pointer_events_auto(cadena):
+    """El elemento (último de `cadena`) recibe el toque de verdad si, resolviendo
+    `pointer-events` de DENTRO hacia FUERA —como un navegador: hereda del ancestro más
+    cercano que lo declare—, el primero en decidir dice `auto`. Sin ninguna declaración, el
+    valor por defecto del navegador es `auto`."""
     for etiqueta, attrs in reversed(cadena):
         clases = (attrs.get("class") or "").split()
         estilo = (attrs.get("style") or "").replace(" ", "")
         if "pointer-events-auto" in clases or "pointer-events:auto" in estilo:
-            break
-        if "pointer-events-none" in clases:
-            caso.fail(
-                f"<{etiqueta}> esconde el menú con la clase 'pointer-events-none' "
-                "(nada más cerca del elemento la reactiva con 'pointer-events-auto')"
-            )
-        if "pointer-events:none" in estilo:
-            caso.fail(
-                f"<{etiqueta}> esconde el menú con el estilo 'pointer-events:none' "
-                "(nada más cerca del elemento la reactiva con 'pointer-events-auto')"
-            )
+            return True
+        if "pointer-events-none" in clases or "pointer-events:none" in estilo:
+            return False
+    return True
+
+
+def _boton_redondo_es_alcanzable(caso, contenido, coincide, nombre):
+    """`nada_lo_tapa` (las siete piezas del módulo compartido que no son sobre
+    `pointer-events`) MÁS la resolución de `pointer-events` de dentro hacia fuera que el
+    módulo no cubre (ver la nota de arriba). Devuelve la cadena de ancestros, por si quien
+    llama necesita mirar algún atributo del propio elemento."""
+    cadena = cadena_unica(caso, contenido, coincide, nombre)
+    caso.assertTrue(
+        _resuelto_como_pointer_events_auto(cadena),
+        f"«{nombre}» queda bajo un envoltorio con 'pointer-events-none' sin que nada más "
+        "cerca lo reactive con 'pointer-events-auto': en un navegador real el toque no le "
+        "llega",
+    )
+    # Ya resuelto aparte: se neutraliza el único 'pointer-events-none' legítimo de la página
+    # para que el resto de `nada_lo_tapa` (hidden/invisible/opacity-0/…, <template>, tabindex,
+    # aria-hidden, unicidad) no dé un rojo falso sobre código bueno.
+    nada_lo_tapa(caso, contenido.replace("pointer-events-none", ""), coincide, nombre)
+    return cadena
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -504,6 +486,18 @@ def _nada_lo_tapa(caso, contenido, atributo, valor):
 # una pesada y cerrar un día, las dos de la persona que se está mirando (`persona_objetivo`,
 # no siempre la propia: `progreso/ver.html` se mira por persona).
 # ------------------------------------------------------------------------------------------ #
+
+
+def _es_el_boton_del_menu_de_progreso(etiqueta, attrs):
+    return etiqueta == "button" and attrs.get("aria-label") == "Apuntar peso o cerrar un día"
+
+
+def _es_el_menu_de_progreso(etiqueta, attrs):
+    return (attrs.get("x-show") or "").strip() == "abierto"
+
+
+def _es_un_destino_del_menu_de_progreso(etiqueta, attrs):
+    return etiqueta == "a" and attrs.get("role") == "menuitem"
 
 
 class R8_BotonRedondoDeProgresoTests(_ConAlejandroYSusDatos):
@@ -561,35 +555,64 @@ class R8_BotonRedondoDeProgresoTests(_ConAlejandroYSusDatos):
         self.assertNotIn('aria-label="Apuntar peso o cerrar un día"', html)
 
     def test_el_boton_del_menu_se_puede_abrir_de_verdad(self):
-        """Hueco 1 de la revisión 2: `test_el_menu_ofrece_...` de arriba solo mira que ciertas
-        cadenas estén en el HTML (`aria-haspopup`, `role="menu"`, los `href`, los textos) — no
-        ancla el botón AL menú. Medido: con `@click="abierto = !abierto"` borrado y solo el
-        `@click.outside` intacto, o con el botón `disabled` + tapado con `invisible opacity-0
-        pointer-events-none`, ese test seguía verde. Mismo patrón que
-        `kcalibra/tests_marco.py::test_la_rueda_se_puede_abrir_de_verdad` (056)."""
+        """Hueco 1 de la revisión (2ª vuelta): la primera versión de este test aplicaba
+        `nada_lo_tapa` sólo al CONTENEDOR del menú, copiado a mano y sin cuatro de las ocho
+        piezas del patrón de la 056. Siete mutaciones quedaban en verde (hallazgos.md, Hueco 1
+        de la 2ª revisión): quitar `pointer-events-auto` del botón, taparlo con `hidden
+        invisible opacity-0`, meter el menú en `<template x-if="false">`, renombrar o borrar el
+        `x-data`, tapar los DOS destinos, y `tabindex="-1"` + `aria-hidden="true"` en el botón.
+        Aquí se aplica `_boton_redondo_es_alcanzable` (que importa `nada_lo_tapa` del módulo
+        compartido) al BOTÓN, al MENÚ y a CADA UNO de sus destinos — no sólo al contenedor —,
+        más `el_estado_es_compartido` entre el botón y el menú."""
         contenido = self.client.get(f"/progreso/{self.alejandro.id}/").content.decode()
 
-        boton = [
-            b for b in re.findall(r"<button\b[^>]*>", contenido)
-            if 'aria-label="Apuntar peso o cerrar un día"' in b
-        ]
-        self.assertEqual(len(boton), 1, "el botón del menú no está, o hay más de uno")
+        cadena_boton = _boton_redondo_es_alcanzable(
+            self, contenido, _es_el_boton_del_menu_de_progreso, "el botón del menú de Progreso"
+        )
         # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
         # `@click.outside="abierto = false"` (cerrar al tocar fuera), así que buscar solo
-        # "abierto" dejaría verde quitarle el `@click` que ABRE.
+        # "abierto" dejaría verde quitarle el `@click` que ABRE. Con límites de palabra (no una
+        # subcadena): `abiertoV2` no debe colar.
+        attrs_boton = cadena_boton[-1][1]
         self.assertRegex(
-            boton[0],
-            r'@click="[^"]*abierto',
-            "el botón no ABRE el menú: los destinos estarían en el HTML y serían inalcanzables",
+            attrs_boton.get("@click") or "",
+            r"(?<![\w$])abierto(?![\w$])",
+            "el botón del menú de Progreso no ABRE el menú: los destinos estarían en el HTML "
+            "y serían inalcanzables",
         )
         # Y el botón no puede estar apagado: `disabled` no dispara click en ningún navegador.
-        self.assertNotIn(" disabled", boton[0])
-        self.assertNotIn('aria-disabled="true"', boton[0])
+        self.assertNotIn("disabled", attrs_boton)
+        self.assertNotEqual(attrs_boton.get("aria-disabled"), "true")
 
-        # Y el menú no puede nacer tapado — ni él, NI NINGUNO DE SUS ANCESTROS —, y el atributo
-        # que lo identifica (`x-show="abierto"`) tiene que señalar a un único elemento: un
-        # señuelo sin tapar podría contestar por el menú de verdad, que sí está tapado.
-        _nada_lo_tapa(self, contenido, "x-show", "abierto")
+        # El menú entero, no sólo el botón que lo abre — el agujero que dejaba pasar tapar el
+        # `<div x-show="abierto">` con `hidden` cuando sólo se miraba el contenedor.
+        _boton_redondo_es_alcanzable(self, contenido, _es_el_menu_de_progreso, "el menú de Progreso")
+
+        # Y los DOS destinos, no sólo el menú que los contiene: un menú alcanzable con sus
+        # destinos tapados sigue siendo un menú inútil (pieza 8 del módulo). Identificados por
+        # `role="menuitem"` Y su `href` — el `href` solo no basta: la propia pantalla repite la
+        # misma ruta en un enlace de texto más abajo ("Ver tu histórico y apuntar una pesada
+        # →"), y sin el `role` la unicidad de `cadena_unica` encontraría dos.
+        destinos = elementos_con_texto(contenido, _es_un_destino_del_menu_de_progreso)
+        self.assertEqual(len(destinos), 2, "el menú de Progreso no ofrece exactamente dos destinos")
+        for attrs, texto in destinos:
+            href = attrs.get("href")
+            with self.subTest(destino=texto):
+                _boton_redondo_es_alcanzable(
+                    self, contenido,
+                    lambda etiqueta, a, href=href: (
+                        etiqueta == "a" and a.get("role") == "menuitem" and a.get("href") == href
+                    ),
+                    f"el destino «{texto}»",
+                )
+
+        # El botón y el menú tienen que colgar del MISMO `x-data` que declara `abierto`: un
+        # `x-data` renombrado o duplicado deja a los dos perfectos por separado y el menú no
+        # abre jamás (pieza 7 del módulo).
+        el_estado_es_compartido(
+            self, contenido, _es_el_boton_del_menu_de_progreso, _es_el_menu_de_progreso, "abierto",
+            "el botón del menú de Progreso", "el menú de Progreso",
+        )
 
 
 class R8_ElMenuApuntaSiempreAQuienSeMiraTests(_ConAlejandroYSusDatos):

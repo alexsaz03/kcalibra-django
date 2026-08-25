@@ -104,16 +104,27 @@ def _zona_de_cuerpo(contenido):
     return zona
 
 
-def _tiene_h1_de_titulo(contenido):
-    """Sólo necesita saber SI el `<h1>` de `titulo_grande` está dentro de `<header>`, no
-    dónde — envoltorio de `_indices_del_h1_de_titulo` para la guarda del Hueco 4 de abajo."""
+def _fragmento_esta_dentro_del_h1_de_titulo(contenido, fragmento):
+    """Hueco 3 de la revisión (2ª vuelta), escape 2 de `_plantilla_llena_titulo_grande`: no
+    basta con que HAYA un `<h1>` dentro de `<header>` — un `<h1>` señuelo vacío
+    (`<h1 class="sr-only">Inicio</h1>`) con el título de verdad movido a un `<div>` a su lado
+    también "hay un `<h1>`" y dejaba pasar exactamente el escape que este hueco vino a cerrar.
+    Lo que `_zona_de_la_barra_de_arriba` necesita para acotar bien es que el fragmento que
+    identifica la pantalla viva DENTRO de ese `<h1>`, no sólo en algún sitio de la cabecera."""
     inicio = contenido.index("<header")
     fin = contenido.index("</header>", inicio) + len("</header>")
-    return _indices_del_h1_de_titulo(contenido, inicio, fin) is not None
+    limites_h1 = _indices_del_h1_de_titulo(contenido, inicio, fin)
+    if limites_h1 is None:
+        return False
+    inicio_h1, fin_h1 = limites_h1
+    return fragmento in contenido[inicio_h1:fin_h1]
+
+
+_BLOQUE_TITULO_GRANDE_DECLARADO_RE = re.compile(r"\{%\s*block\s+titulo_grande\s*%\}")
 
 
 def _plantilla_llena_titulo_grande(ruta_de_plantilla):
-    """Hueco 4 (revisión de la unidad, hallazgos.md): la guarda de rojo mudo de
+    """Hueco 4 (revisión, 1ª vuelta) y Hueco 3 (revisión, 2ª vuelta): la guarda de rojo mudo de
     `_zona_de_la_barra_de_arriba`/`_zona_de_cuerpo` sólo dispara si la zona sale VACÍA — si el
     `<h1>` desaparece pero el resto de `<header>` sigue teniendo contenido (p. ej. el `<h1>`
     mudado a `<div>`, que R1 no cazaría porque su test sólo compara POSICIONES contra
@@ -125,9 +136,25 @@ def _plantilla_llena_titulo_grande(ruta_de_plantilla):
     a mano (se quedaría vieja el día que una pantalla gane o pierda su `{% block
     titulo_grande %}`, que es justo lo que pasó una vez para abrir R10), se deriva del propio
     fichero de plantilla: si su texto declara el bloque, el `<h1>` es obligatorio, y la
-    lista de rutas de abajo sólo dice QUÉ plantilla mirar, no si tiene título."""
+    lista de rutas de abajo sólo dice QUÉ plantilla mirar, no si tiene título.
+
+    La 1ª versión de esto comparaba la cadena EXACTA `"{% block titulo_grande %}"` y devolvía
+    `False` -"no lo declara"- ante cualquier otra forma, incluida `{%block titulo_grande%}`
+    (sin espacios dentro de las llaves, que Django acepta igual): la guarda se apagaba en
+    silencio sin que nada lo dijera (Hueco 3, 2ª revisión). Ahora sólo se reconocen DOS formas:
+    declarado (la expresión de abajo, tolerante a los espacios que el propio Django tolera) o
+    AUSENTE (ni siquiera aparece el nombre del bloque en el texto). Cualquier otra cosa -el
+    nombre del bloque aparece pero en una forma que ninguna de las dos reconoce- es el mismo
+    fallar-abierto que abrió este hueco la primera vez, así que revienta en vez de adivinar."""
     texto = (settings.BASE_DIR / ruta_de_plantilla).read_text()
-    return "{% block titulo_grande %}" in texto
+    if _BLOQUE_TITULO_GRANDE_DECLARADO_RE.search(texto):
+        return True
+    if "titulo_grande" not in texto:
+        return False
+    raise AssertionError(
+        f"{ruta_de_plantilla} menciona 'titulo_grande' pero no en una forma reconocible -ni "
+        "declarado ni ausente-: la guarda no puede decidir en silencio"
+    )
 
 
 # Los mismos datos físicos de Euridice que usa el resto de la suite (R1 de crear-cuenta.md,
@@ -205,15 +232,21 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
         # La tercera columna es la plantilla que responde a esa ruta — sólo para que
         # `_plantilla_llena_titulo_grande` sepa qué fichero mirar; si esa pantalla trae
         # `titulo_grande` o no lo decide el propio fichero, no esta lista (ver su docstring).
+        # La cuarta es el fragmento que debe vivir DENTRO del propio `<h1>` de esa pantalla —
+        # `None` donde `titulo_grande` no aplica. NO es la misma cadena que la segunda columna
+        # a propósito: en Inicio el ancla del CUERPO es "Tú (Alejandro)" (la tarjeta de la
+        # casa, R1 de esta unidad), pero el `<h1>` de `titulo_grande` dice "Hola, Alejandro"
+        # (el saludo) — dos frases distintas de la misma pantalla que prueban dos cosas
+        # distintas (Hueco 3, 2ª revisión).
         rutas_y_fragmento_de_identidad = [
-            ("/", "Tú (Alejandro)", "paginas/templates/paginas/inicio.html"),  # Inicio: solo la produce la tarjeta de la casa
-            (f"/progreso/{self.alejandro.id}/", "Tu progreso", "progreso/templates/progreso/ver.html"),
-            (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso", "perfiles/templates/perfiles/peso.html"),
-            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan", "planes/templates/planes/apuntar.html"),
-            (f"/perfiles/{self.alejandro.id}/", "Tus datos", "perfiles/templates/perfiles/ver.html"),
-            ("/hogares/mi-hogar/", "Alejandro", "hogares/templates/hogares/mi_hogar.html"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
+            ("/", "Tú (Alejandro)", "paginas/templates/paginas/inicio.html", "Hola, Alejandro"),  # Inicio: solo la produce la tarjeta de la casa
+            (f"/progreso/{self.alejandro.id}/", "Tu progreso", "progreso/templates/progreso/ver.html", "Tu progreso"),
+            (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso", "perfiles/templates/perfiles/peso.html", "Tu peso"),
+            (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan", "planes/templates/planes/apuntar.html", "Apuntar tu plan de hoy"),
+            (f"/perfiles/{self.alejandro.id}/", "Tus datos", "perfiles/templates/perfiles/ver.html", None),
+            ("/hogares/mi-hogar/", "Alejandro", "hogares/templates/hogares/mi_hogar.html", None),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
         ]
-        for ruta, fragmento_de_identidad, ruta_de_plantilla in rutas_y_fragmento_de_identidad:
+        for ruta, fragmento_de_identidad, ruta_de_plantilla, fragmento_del_h1 in rutas_y_fragmento_de_identidad:
             with self.subTest(ruta=ruta):
                 respuesta = self.client.get(ruta)
                 self.assertEqual(respuesta.status_code, 200)
@@ -231,21 +264,26 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
                     f"{ruta} no dice de quién es en su propio contenido "
                     "(fuera de la barra de arriba)",
                 )
-                # Hueco 4 (revisión, hallazgos.md): con el `<h1>` de titulo_grande mudado a
-                # otra etiqueta (algo que R1 no cazaría, su test sólo compara POSICIONES),
-                # `_indices_del_h1_de_titulo` vuelve `None` en silencio, la zona de la barra
-                # vuelve a incluir el título de pantalla y la red del bug 027 queda otra vez
-                # rota sin que ningún test lo diga — medido: `<h1>` de inicio.html mudado a
-                # `<div>` + barra de base.html sin el nombre, las dos juntas, daban
-                # "Ran 40 tests — OK" antes de esta guarda. Sólo se exige donde la propia
-                # plantilla declara el bloque (ver `_plantilla_llena_titulo_grande`), así que
-                # "Tus datos" y "mi-hogar" —que hoy no lo llenan— no se ven afectadas.
+                # Hueco 4 (revisión, 1ª vuelta) y Hueco 3 (revisión, 2ª vuelta): con el `<h1>`
+                # de titulo_grande mudado a otra etiqueta (algo que R1 no cazaría, su test
+                # sólo compara POSICIONES), `_indices_del_h1_de_titulo` vuelve `None` en
+                # silencio, la zona de la barra vuelve a incluir el título de pantalla y la
+                # red del bug 027 queda otra vez rota sin que ningún test lo diga — medido:
+                # `<h1>` de inicio.html mudado a `<div>` + barra de base.html sin el nombre,
+                # las dos juntas, daban "Ran 40 tests — OK" antes de esta guarda. No basta con
+                # que HAYA un `<h1>`: un `<h1>` señuelo vacío (`<h1 class="sr-only">Inicio</h1>`)
+                # con el título de verdad movido a un `<div>` a su lado también "tiene un
+                # `<h1>`" y colaba el mismo agujero (Hueco 3, escape 2) — de ahí que se exija
+                # que el fragmento propio de esta pantalla viva DENTRO del `<h1>`, no que el
+                # `<h1>` simplemente exista. Sólo se exige donde la propia plantilla declara el
+                # bloque (ver `_plantilla_llena_titulo_grande`), así que "Tus datos" y
+                # "mi-hogar" —que hoy no lo llenan— no se ven afectadas.
                 if _plantilla_llena_titulo_grande(ruta_de_plantilla):
                     self.assertTrue(
-                        _tiene_h1_de_titulo(contenido),
-                        f"{ruta}: {ruta_de_plantilla} llena titulo_grande pero no encontré "
-                        "su <h1> dentro de <header> — la guarda de rojo mudo de R10 se "
-                        "quedaría ciega",
+                        _fragmento_esta_dentro_del_h1_de_titulo(contenido, fragmento_del_h1),
+                        f"{ruta}: {ruta_de_plantilla} llena titulo_grande pero «{fragmento_del_h1}» "
+                        "no está dentro de su <h1> — la guarda de rojo mudo de R10 se quedaría "
+                        "ciega",
                     )
 
     def test_la_barra_de_arriba_enseña_el_nombre_no_el_correo(self):
