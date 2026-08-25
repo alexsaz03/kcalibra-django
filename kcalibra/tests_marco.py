@@ -382,6 +382,37 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
                 self.assertIn(self.ENLACE, _destinos_de_ajustes(contenido))
 
 
+    def test_la_rueda_se_puede_abrir_de_verdad(self):
+        """Que el enlace ESTÉ en el HTML no es que se pueda usar.
+
+        Lo cazó el revisor de esta unidad: si alguien le quita al botón de la rueda el `@click`
+        que despliega el menú, o le pone `hidden` al menú, el enlace sigue en el HTML y el test
+        de R1 sigue verde — y la pantalla sigue sin poder alcanzarse, que era el problema que
+        esta unidad venía a resolver. Así que aquí se ancla el botón AL MENÚ.
+        """
+        contenido = self.client.get("/").content.decode()
+        cabecera = contenido[: contenido.index("</header>")]
+
+        rueda = [b for b in re.findall(r"<button\b[^>]*>", cabecera) if 'aria-label="Ajustes"' in b]
+        self.assertEqual(len(rueda), 1, "la rueda de ajustes no está, o hay más de una")
+        # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
+        # `@click.outside="ajustesAbierto = false"` (cerrar al tocar fuera), así que buscar solo
+        # "ajustesAbierto" dejaba verde quitarle el que ABRE. Cazado mutando: la primera versión
+        # de este test se quedó verde con el `@click` de abrir borrado.
+        self.assertRegex(
+            rueda[0],
+            r'@click="[^"]*ajustesAbierto',
+            "el botón de la rueda no ABRE el menú: el enlace estaría ahí y sería inalcanzable",
+        )
+
+        # Y el menú no puede nacer tapado: `hidden` o `display:none` lo dejarían fuera de la vista
+        # con el enlace intacto en el HTML.
+        i = contenido.index('x-show="ajustesAbierto"')
+        etiqueta = contenido[contenido.rindex("<div", 0, i) : contenido.index(">", i)]
+        self.assertNotIn(" hidden", etiqueta)
+        self.assertNotIn("display:none", etiqueta.replace(" ", ""))
+
+
 class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
     """R2 — quien no ha entrado no ve la rueda ni el camino a la contraseña."""
 
