@@ -366,6 +366,21 @@ def _es_el_enlace_de_la_contrasena(etiqueta, attrs):
     return etiqueta == "a" and attrs.get("href") == "/cuentas/password/change/"
 
 
+# Los SEIS destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una marca
+# propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también en el
+# cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca, cada
+# destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión: solo se
+# comprobaban tres de los ocho elementos que hay que poder pulsar).
+DESTINOS_DE_LA_RUEDA = (
+    ("tus-datos", "Tus datos"), ("tu-peso", "Tu peso"), ("recetas", "Recetas"),
+    ("el-hogar", "El hogar"), ("cambiar-contrasena", "Cambiar tu contraseña"), ("salir", "Salir"),
+)
+
+
+def _es_el_destino(marca):
+    return lambda etiqueta, attrs: attrs.get("data-ajuste") == marca
+
+
 def _zona_de_ajustes(contenido):
     """El menú que despliega la rueda: desde su `x-show` hasta el final de la cabecera.
 
@@ -428,25 +443,30 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
         esta unidad venía a resolver. Así que aquí se ancla el botón AL MENÚ.
         """
         contenido = self.client.get("/").content.decode()
-        cabecera = contenido[: contenido.index("</header>")]
 
-        rueda = [b for b in re.findall(r"<button\b[^>]*>", cabecera) if 'aria-label="Ajustes"' in b]
-        self.assertEqual(len(rueda), 1, "la rueda de ajustes no está, o hay más de una")
+        # Todo lo que sigue se lee del HTML PARSEADO, nunca del texto crudo. La 13ª revisión
+        # encontró que `'aria-label="Ajustes"' in etiqueta` daba un ROJO FALSO con comillas
+        # simples, que son igual de válidas — el propio módulo predica tolerar lo que el navegador
+        # tolera, y esta línea no lo hacía. Con el parser, las comillas dejan de existir como
+        # problema. Y `@click` y `@click.outside` son atributos DISTINTOS, así que ya no hace falta
+        # distinguirlos a mano.
+        cadena_rueda = nada_lo_tapa(self, contenido, _es_la_rueda, "el botón de la rueda")
+        attrs_rueda = cadena_rueda[-1][1]
         # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
         # `@click.outside="ajustesAbierto = false"` (cerrar al tocar fuera), así que buscar solo
         # "ajustesAbierto" dejaba verde quitarle el que ABRE. Cazado mutando: la primera versión
         # de este test se quedó verde con el `@click` de abrir borrado.
         self.assertRegex(
-            rueda[0],
-            r'@click="[^"]*ajustesAbierto',
+            attrs_rueda.get("@click") or "",
+            r"(?<![\w$])ajustesAbierto(?![\w$])",
             "el botón de la rueda no ABRE el menú: el enlace estaría ahí y sería inalcanzable",
         )
 
         # Y el botón no puede estar apagado: `disabled` no dispara click en ningún navegador,
         # así que el menú quedaría tan inalcanzable como sin `@click` — y el regex de arriba
         # seguiría contento. (Agujero 2 de la 2ª revisión.)
-        self.assertNotIn(" disabled", rueda[0])
-        self.assertNotIn('aria-disabled="true"', rueda[0])
+        self.assertNotIn("disabled", attrs_rueda)
+        self.assertNotEqual(attrs_rueda.get("aria-disabled"), "true")
 
         # Y el menú no puede nacer tapado — ni él, NI NADIE QUE LO ENVUELVA. Alpine, con
         # `x-show`, solo alterna `display` en el propio elemento: si un padre está escondido, el
@@ -464,9 +484,12 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
         # `<div class="hidden">`, los 20 tests seguían verdes y la rueda no existía en pantalla.
         # Es la pieza 8 del propio módulo ("sobre cada elemento que hay que poder USAR") sin
         # aplicar al elemento más obvio de los tres.
-        nada_lo_tapa(self, contenido, _es_la_rueda, "el botón de la rueda")
         nada_lo_tapa(self, contenido, _es_el_menu, "el menú de ajustes")
-        nada_lo_tapa(self, contenido, _es_el_enlace_de_la_contrasena, "el enlace a cambiar la contraseña")
+        # Y los SEIS destinos, no solo el de esta unidad: un menú alcanzable con los destinos
+        # tapados sigue siendo un menú inútil (13ª revisión).
+        for marca, etiqueta in DESTINOS_DE_LA_RUEDA:
+            with self.subTest(destino=etiqueta):
+                nada_lo_tapa(self, contenido, _es_el_destino(marca), f"el destino «{etiqueta}»")
         el_estado_es_compartido(
             self, contenido, _es_la_rueda, _es_el_menu, "ajustesAbierto",
             "el botón de la rueda", "el menú de ajustes",
