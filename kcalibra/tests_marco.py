@@ -458,6 +458,13 @@ class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
         # renderizado, sin motor de JavaScript) no puede ver si el navegador llegó a ejecutar
         # Alpine: borrando su `<script>`, el menú no abre y esto sigue verde. Cerrar eso pide un
         # navegador de verdad, y este contrato no lo pide.
+        # La rueda TAMBIÉN: es lo primero que hay que poder pulsar, y hasta la 12ª revisión era el
+        # único de los tres que nunca se pasaba por aquí — se le miraba la etiqueta (`disabled`,
+        # el `@click`) pero jamás su cadena de ancestros. Envolviendo SOLO el botón en un
+        # `<div class="hidden">`, los 20 tests seguían verdes y la rueda no existía en pantalla.
+        # Es la pieza 8 del propio módulo ("sobre cada elemento que hay que poder USAR") sin
+        # aplicar al elemento más obvio de los tres.
+        nada_lo_tapa(self, contenido, _es_la_rueda, "el botón de la rueda")
         nada_lo_tapa(self, contenido, _es_el_menu, "el menú de ajustes")
         nada_lo_tapa(self, contenido, _es_el_enlace_de_la_contrasena, "el enlace a cambiar la contraseña")
         el_estado_es_compartido(
