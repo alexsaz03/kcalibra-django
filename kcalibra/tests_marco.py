@@ -322,3 +322,124 @@ class R7_SinPersonaNoRompeLaPaginaTests(PruebaConRegistroAbierto):
         self.assertIn("Stock", etiquetas)
         self.assertIn("Entrenos", etiquetas)
         self.assertIn("Progreso", etiquetas)
+
+
+# ------------------------------------------------------------------------------------------ #
+# Unidad 056 (el-camino-que-faltaba-a-tu-contrasena.md): R1-R3.
+#
+# El marco es de la 050, pero el agujero es suyo: la rueda de ajustes nació con cuatro
+# destinos y `/cuentas/password/change/` no quedó enlazada desde NINGUNA parte de la app —
+# medido recorriendo la app entera con sesión y cruzándolo con la lista completa de rutas.
+# La pantalla existía y funcionaba; solo se llegaba escribiendo la dirección a mano.
+# ------------------------------------------------------------------------------------------ #
+
+_ENLACE_RE = re.compile(r'<a\b[^>]*href="([^"]+)"[^>]*>\s*(.*?)\s*</a>', re.S)
+
+
+def _zona_de_ajustes(contenido):
+    """El menú que despliega la rueda: desde su `x-show` hasta el final de la cabecera.
+
+    Se acota A PROPÓSITO. Si se mirara la página entera, un enlace a la misma ruta puesto en
+    el cuerpo de una pantalla cualquiera dejaría verde un test que dice "está en la rueda":
+    la misma cara del bug 027 que ya nos costó una unidad.
+    """
+    inicio = contenido.index('x-show="ajustesAbierto"')
+    fin = contenido.index("</header>", inicio)
+    zona = contenido[inicio:fin]
+    if not zona.strip():
+        # Guarda de rojo mudo: sin esto, un cambio que vaciara la zona haría pasar todos los
+        # `assertNotIn` y fallar los `assertIn` por el motivo equivocado, sin decir cuál.
+        raise AssertionError("la zona del menú de ajustes salió VACÍA: el test no prueba nada")
+    return zona
+
+
+def _destinos_de_ajustes(contenido):
+    """[(texto, ruta), ...] del menú de la rueda, en orden de aparición.
+
+    Devuelve el par JUNTO, nunca las dos listas por separado: comprobar el texto por un lado
+    y la ruta por otro deja verde un enlace que dice lo que toca y lleva a otro sitio.
+    """
+    return [
+        (texto.strip(), href)
+        for href, texto in _ENLACE_RE.findall(_zona_de_ajustes(contenido))
+    ]
+
+
+class R1_LaRuedaLlevaACambiarLaContrasenaTests(_ConAlejandroYSuHogar):
+    """R1 — desde cualquier pantalla, la rueda lleva a cambiar la contraseña."""
+
+    ENLACE = ("Cambiar tu contraseña", "/cuentas/password/change/")
+
+    def test_la_rueda_lleva_a_cambiar_la_contrasena(self):
+        contenido = self.client.get("/").content.decode()
+        self.assertIn(self.ENLACE, _destinos_de_ajustes(contenido))
+
+    def test_esta_en_todas_las_pantallas_no_solo_en_la_portada(self):
+        """El marco va en todas; si el enlace se colara en una sola plantilla, esto lo caza."""
+        for ruta in ("/despensa/", "/entrenos/", "/progreso/", "/recetas/", "/perfiles/"):
+            with self.subTest(ruta=ruta):
+                contenido = self.client.get(ruta).content.decode()
+                self.assertIn(self.ENLACE, _destinos_de_ajustes(contenido))
+
+
+    def test_la_rueda_se_puede_abrir_de_verdad(self):
+        """Que el enlace ESTÉ en el HTML no es que se pueda usar.
+
+        Lo cazó el revisor de esta unidad: si alguien le quita al botón de la rueda el `@click`
+        que despliega el menú, o le pone `hidden` al menú, el enlace sigue en el HTML y el test
+        de R1 sigue verde — y la pantalla sigue sin poder alcanzarse, que era el problema que
+        esta unidad venía a resolver. Así que aquí se ancla el botón AL MENÚ.
+        """
+        contenido = self.client.get("/").content.decode()
+        cabecera = contenido[: contenido.index("</header>")]
+
+        rueda = [b for b in re.findall(r"<button\b[^>]*>", cabecera) if 'aria-label="Ajustes"' in b]
+        self.assertEqual(len(rueda), 1, "la rueda de ajustes no está, o hay más de una")
+        # Anclado a `@click=`, no a la palabra suelta: el botón lleva TAMBIÉN un
+        # `@click.outside="ajustesAbierto = false"` (cerrar al tocar fuera), así que buscar solo
+        # "ajustesAbierto" dejaba verde quitarle el que ABRE. Cazado mutando: la primera versión
+        # de este test se quedó verde con el `@click` de abrir borrado.
+        self.assertRegex(
+            rueda[0],
+            r'@click="[^"]*ajustesAbierto',
+            "el botón de la rueda no ABRE el menú: el enlace estaría ahí y sería inalcanzable",
+        )
+
+        # Y el menú no puede nacer tapado: `hidden` o `display:none` lo dejarían fuera de la vista
+        # con el enlace intacto en el HTML.
+        i = contenido.index('x-show="ajustesAbierto"')
+        etiqueta = contenido[contenido.rindex("<div", 0, i) : contenido.index(">", i)]
+        self.assertNotIn(" hidden", etiqueta)
+        self.assertNotIn("display:none", etiqueta.replace(" ", ""))
+
+
+class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
+    """R2 — quien no ha entrado no ve la rueda ni el camino a la contraseña."""
+
+    def test_sin_sesion_no_hay_rueda_ni_enlace(self):
+        self.client.logout()
+        contenido = self.client.get("/").content.decode()
+        self.assertNotIn('x-show="ajustesAbierto"', contenido)
+        self.assertNotIn("/cuentas/password/change/", contenido)
+        self.assertNotIn("Cambiar tu contraseña", contenido)
+
+
+class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
+    """R3 — el enlace nuevo SE SUMA: los cinco destinos de siempre siguen donde estaban."""
+
+    def test_los_cuatro_enlaces_de_siempre_siguen_con_su_texto(self):
+        destinos = _destinos_de_ajustes(self.client.get("/").content.decode())
+        for esperado in (
+            ("Tus datos", "/perfiles/"),
+            ("Tu peso", "/perfiles/peso/"),
+            ("Recetas", "/recetas/"),
+            ("El hogar", "/hogares/mi-hogar/"),
+        ):
+            with self.subTest(destino=esperado):
+                self.assertIn(esperado, destinos)
+
+    def test_salir_sigue_siendo_un_formulario_que_postea(self):
+        """Salir no es un enlace: cerrar sesión con un GET lo dispararía cualquier precarga."""
+        zona = _zona_de_ajustes(self.client.get("/").content.decode())
+        self.assertIn('action="/cuentas/logout/"', zona)
+        self.assertIn("Salir", zona)
