@@ -33,23 +33,74 @@ Usuario = get_user_model()
 # para que no diga nada suyo en su cuerpo: la suite seguía en verde (ver
 # docs/bugs/027-asserts-de-la-024-y-una-rama-de-progreso-sin-red.md, sección 2). Estas
 # dos zonas se usan para acotar, nunca para aflojar lo que cada test comprueba.
+#
+# R10 de la unidad 053 (las-pantallas-del-dia-a-dia.md) — R1 de esa misma unidad mudó el
+# título de cada pantalla (`{% block titulo_grande %}`) DENTRO de `<header>`
+# (`templates/base.html`), para que salga en la cabecera de toda pantalla del marco. Eso
+# rompió la red del bug 027 por los DOS lados a la vez: el `<h1>` del título —que es
+# precisamente el texto que `_zona_de_cuerpo` necesita para las pantallas de esta unidad
+# (`test_ninguna_pantalla_muestra_ningun_correo` busca "Tu progreso", "Tu peso", "Apuntar tu
+# plan" ahí dentro)— se mudó a la zona que antes se descartaba por compartida; y la zona de
+# la barra pasó a incluir ese título, así que `test_la_barra_de_arriba_enseña_el_nombre_no_el_
+# correo` podía acertar por el título de pantalla en vez de por la línea de la barra que de
+# verdad promete probar. Las plantillas que esta unidad NO toca (`perfiles/ver.html`,
+# `hogares/mi_hogar.html`: no viven en su `ficheros:`) siguen sin llenar `titulo_grande`, así
+# que su `<header>` no tiene ningún `<h1>` — de ahí que `_indices_del_h1_de_titulo` devuelva
+# `None` para ellas y las dos zonas se comporten exactamente como antes de esta unidad.
+
+
+def _indices_del_h1_de_titulo(contenido, inicio_header, fin_header):
+    """Localiza el `<h1>` del título de pantalla (`{% block titulo_grande %}`, unidad 053)
+    DENTRO de la zona de cabecera ya acotada — `None` si esta pantalla todavía no lo llena
+    (las que la 053 no toca: R10 arriba)."""
+    try:
+        inicio_h1 = contenido.index("<h1", inicio_header, fin_header)
+    except ValueError:
+        return None
+    fin_h1 = contenido.index("</h1>", inicio_h1, fin_header) + len("</h1>")
+    return inicio_h1, fin_h1
 
 
 def _zona_de_la_barra_de_arriba(contenido):
-    """Aísla el `<header>` (`templates/base.html`): el ÚNICO sitio de la página donde esta
-    unidad garantiza el nombre de quien mira, siempre, en toda pantalla autenticada — es
-    exactamente lo que promete `test_la_barra_de_arriba_enseña_el_nombre_no_el_correo`, así
-    que es lo único que ese test debe mirar."""
+    """Aísla el `<header>` (`templates/base.html`) SIN el `<h1>` del título de pantalla
+    (R10 de la unidad 053, nota de arriba): el ÚNICO sitio de la página donde esta unidad
+    garantiza el nombre de quien mira, siempre, en toda pantalla autenticada — es exactamente
+    lo que promete `test_la_barra_de_arriba_enseña_el_nombre_no_el_correo`, así que es lo
+    único que ese test debe mirar, ahora sin colarse por el título de pantalla que vive en
+    la misma etiqueta."""
     inicio = contenido.index("<header")
     fin = contenido.index("</header>", inicio) + len("</header>")
-    return contenido[inicio:fin]
+    limites_h1 = _indices_del_h1_de_titulo(contenido, inicio, fin)
+    if limites_h1 is None:
+        zona = contenido[inicio:fin]
+    else:
+        inicio_h1, fin_h1 = limites_h1
+        zona = contenido[inicio:inicio_h1] + contenido[fin_h1:fin]
+    # Guarda de rojo mudo (R10): una zona vacía no es "no encontró nada que probar", es la
+    # señal de que `<header>` cambió de forma que este helper ya no sabe leer — el test tiene
+    # que fallar diciéndolo, no pasar en falso por `assertIn` contra una cadena vacía.
+    assert zona.strip(), "la zona de la barra de arriba salió vacía: ¿cambió <header>?"
+    return zona
 
 
 def _zona_de_cuerpo(contenido):
-    """Todo lo que hay DESPUÉS de la barra de arriba: el contenido propio de cada pantalla,
-    sin la barra que se repite igual en todas y que por eso no prueba nada específico de
-    ESTA pantalla."""
-    return contenido.split("</header>", 1)[1]
+    """El `<h1>` del título de pantalla (R10 de la unidad 053, nota de arriba) más TODO lo
+    que hay DESPUÉS de la barra de arriba: el contenido propio de cada pantalla, sin la parte
+    de la barra que se repite igual en todas y que por eso no prueba nada específico de ESTA
+    pantalla — pero SIN perder el título, que desde la 053 vive dentro de `<header>` y es
+    precisamente lo que varios de estos tests usan para saber de quién es la pantalla."""
+    inicio = contenido.index("<header")
+    fin_header = contenido.index("</header>", inicio) + len("</header>")
+    limites_h1 = _indices_del_h1_de_titulo(contenido, inicio, fin_header)
+    resto_tras_header = contenido[fin_header:]
+    if limites_h1 is None:
+        zona = resto_tras_header
+    else:
+        inicio_h1, fin_h1 = limites_h1
+        zona = contenido[inicio_h1:fin_h1] + resto_tras_header
+    # Guarda de rojo mudo (R10): ver la de `_zona_de_la_barra_de_arriba`, mismo motivo.
+    assert zona.strip(), "la zona de cuerpo salió vacía: ¿cambió <header> o el <h1> del título?"
+    return zona
 
 
 # Los mismos datos físicos de Euridice que usa el resto de la suite (R1 de crear-cuenta.md,

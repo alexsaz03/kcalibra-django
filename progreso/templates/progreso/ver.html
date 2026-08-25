@@ -1,71 +1,87 @@
 {% extends "base.html" %}
+{% load partials %}
 
 {% block titulo %}
   {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.nombre }}{% endif %}
 {% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">
+  {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.nombre }}{% endif %}
+</h1>
+{% endblock %}
+
+{# R8 — la acción principal de Progreso son DOS, no una: apuntar una pesada y cerrar un    #}
+{# día, las dos de la persona que se está mirando (`persona_objetivo`, no siempre la       #}
+{# propia). Mismo guardián que el resto de botones redondos (`puede_editar`, quien solo    #}
+{# mira nunca ve una acción que el servidor le rechazaría) — los dos destinos comparten el #}
+{# mismo permiso (`puede_editar_progreso`, delegado en `hogares.acceso.puede_cambiar_lo_de`, #}
+{# la MISMA fuente que guarda las pesadas y los cierres).                                  #}
+{% block accion_rapida %}
+{% if puede_editar %}
+  {% url 'perfiles:peso' persona_objetivo.id as href_apuntar_pesada %}
+  {% url 'cierres:cerrar' persona_objetivo.id as href_cerrar_dia %}
+  {% include "_ui.html#boton_redondo_menu" with etiqueta="Apuntar peso o cerrar un día" href_1=href_apuntar_pesada texto_1="Apuntar una pesada" href_2=href_cerrar_dia texto_2="Cerrar un día" %}
+{% endif %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
-  <h1 class="text-2xl font-bold text-slate-900">
-    {% if es_propio %}Tu progreso{% else %}Progreso de {{ persona_objetivo.nombre }}{% endif %}
-  </h1>
-  <p class="mt-1 text-sm text-slate-500">
-    Cómo ha ido {% if es_propio %}tu{% else %}su{% endif %} peso — y, si {% if es_propio %}las tienes apuntadas,{% else %}las tiene apuntadas,{% endif %}
-    también la grasa y la cintura — en las últimas semanas.
-  </p>
+<p class="text-[13px] text-tinta-suave">
+  Cómo ha ido {% if es_propio %}tu{% else %}su{% endif %} peso — y, si {% if es_propio %}las tienes apuntadas,{% else %}las tiene apuntadas,{% endif %}
+  también la grasa y la cintura — en las últimas semanas.
+</p>
 
-  {# ------------------------------------------------------------------------------------ #}
-  {# R81/§8 — el selector de persona: cualquiera del hogar, una cada vez (R10/G-171: nunca #}
-  {# se mezclan). Son enlaces normales (recarga la pantalla entera con la persona nueva),  #}
-  {# no HTMX: cambiar de persona no es "actualizar un trozo", es otra pantalla.            #}
-  {# ------------------------------------------------------------------------------------ #}
-  {% if miembros_del_hogar|length > 1 %}
-    <div class="mt-4 flex flex-wrap gap-2">
-      {% for miembro in miembros_del_hogar %}
-        <a
-          href="{% url 'progreso:ver' miembro.id %}?semanas={{ semanas }}"
-          class="rounded-lg px-3 py-1.5 text-sm font-medium
-            {% if miembro.id == persona_objetivo.id %}bg-emerald-600 text-white{% else %}bg-white text-slate-700 border border-slate-200 hover:border-emerald-300{% endif %}"
-        >
-          {# Unidad 024, R6/G-196: antes comparaba el id de la PERSONA con el de la CUENTA      #}
-          {# (`request.user.id`) — con dos personas en el hogar nunca coincidían, y             #}
-          {# `miembro.email` ni siquiera existe en `Persona` (se pintaba en blanco, en           #}
-          {# silencio). Ahora compara persona con persona, vía `request.user.persona.id`, y      #}
-          {# enseña el nombre, que sí es un campo de `Persona`.                                  #}
-          {% if miembro.id == request.user.persona.id %}Tú{% else %}{{ miembro.nombre }}{% endif %}
-        </a>
-      {% endfor %}
-    </div>
-  {% endif %}
-
-  {# ------------------------------------------------------------------------------------ #}
-  {# R5/R6 — cuántas semanas mirar. Formulario GET normal (sin HTMX): el número de semanas #}
-  {# es parte de la URL a propósito, para que se pueda compartir o recargar el enlace tal  #}
-  {# cual. `min`/`max` son solo una ayuda del navegador (R6 exige que el SERVIDOR también  #}
-  {# lo valide, sin fiarse del cliente: ver servicios/progreso.py:semanas_desde_parametro). #}
-  {# ------------------------------------------------------------------------------------ #}
-  <form method="get" class="mt-4 flex items-end gap-3">
-    <div>
-      <label for="id_semanas" class="block text-xs font-medium text-slate-500">Semanas a mirar</label>
-      <input
-        type="number"
-        id="id_semanas"
-        name="semanas"
-        value="{{ semanas }}"
-        min="{{ semanas_min }}"
-        max="{{ semanas_max }}"
-        class="mt-1 w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+{# ------------------------------------------------------------------------------------ #}
+{# R81/§8 — el selector de persona: cualquiera del hogar, una cada vez (R10/G-171: nunca #}
+{# se mezclan). Son enlaces normales (recarga la pantalla entera con la persona nueva),  #}
+{# no HTMX: cambiar de persona no es "actualizar un trozo", es otra pantalla.            #}
+{# ------------------------------------------------------------------------------------ #}
+{% if miembros_del_hogar|length > 1 %}
+  <div class="mt-4 flex flex-wrap gap-2">
+    {% for miembro in miembros_del_hogar %}
+      <a
+        href="{% url 'progreso:ver' miembro.id %}?semanas={{ semanas }}"
+        class="rounded-control px-3 py-1.5 text-[14px] font-medium
+          {% if miembro.id == persona_objetivo.id %}bg-tinta text-white{% else %}border border-linea bg-superficie text-tinta{% endif %}"
       >
-    </div>
-    <button type="submit" class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
-      Ver
-    </button>
-  </form>
+        {# Unidad 024, R6/G-196: antes comparaba el id de la PERSONA con el de la CUENTA      #}
+        {# (`request.user.id`) — con dos personas en el hogar nunca coincidían, y             #}
+        {# `miembro.email` ni siquiera existe en `Persona` (se pintaba en blanco, en           #}
+        {# silencio). Ahora compara persona con persona, vía `request.user.persona.id`, y      #}
+        {# enseña el nombre, que sí es un campo de `Persona`.                                  #}
+        {% if miembro.id == request.user.persona.id %}Tú{% else %}{{ miembro.nombre }}{% endif %}
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}
 
-  {% if not tiene_alguna_medicion %}
-    {# R11, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
-    {# naturalidad y, si es la propia persona, se invita a apuntar la primera. #}
-    <p id="progreso-sin-datos" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+{# ------------------------------------------------------------------------------------ #}
+{# R5/R6 — cuántas semanas mirar. Formulario GET normal (sin HTMX): el número de semanas #}
+{# es parte de la URL a propósito, para que se pueda compartir o recargar el enlace tal  #}
+{# cual. `min`/`max` son solo una ayuda del navegador (R6 exige que el SERVIDOR también  #}
+{# lo valide, sin fiarse del cliente: ver servicios/progreso.py:semanas_desde_parametro). #}
+{# ------------------------------------------------------------------------------------ #}
+<form method="get" class="mt-4 flex items-end gap-3">
+  <div>
+    <label for="id_semanas" class="block text-[12px] font-medium text-tinta-suave">Semanas a mirar</label>
+    <input
+      type="number"
+      id="id_semanas"
+      name="semanas"
+      value="{{ semanas }}"
+      min="{{ semanas_min }}"
+      max="{{ semanas_max }}"
+      class="mt-1 w-24"
+    >
+  </div>
+  {% include "_ui.html#boton" with tipo="submit" texto="Ver" variante="principal" ancho_completo=False %}
+</form>
+
+{% if not tiene_alguna_medicion %}
+  {# R11, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
+  {# naturalidad y, si es la propia persona, se invita a apuntar la primera. #}
+  {% include "_ui.html#tarjeta_abre" with id="progreso-sin-datos" clase="mt-6" %}
+    <p class="text-[14px] text-tinta-suave">
       {% if es_propio %}
         Todavía no tienes ninguna pesada apuntada. En cuanto apuntes la primera, aquí
         aparecerá su evolución.
@@ -73,150 +89,155 @@
         {{ persona_objetivo.nombre }} todavía no tiene ninguna pesada apuntada.
       {% endif %}
     </p>
-  {% elif not tiene_datos_en_periodo %}
-    {# Tiene mediciones, pero ninguna cae en las semanas elegidas: no es "sin datos", es #}
-    {# "sin datos EN ESTE periodo" — mensajes distintos para no confundir. #}
-    <p id="progreso-sin-datos-en-periodo" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+  {% include "_ui.html#tarjeta_cierra" %}
+{% elif not tiene_datos_en_periodo %}
+  {# Tiene mediciones, pero ninguna cae en las semanas elegidas: no es "sin datos", es #}
+  {# "sin datos EN ESTE periodo" — mensajes distintos para no confundir. #}
+  {% include "_ui.html#tarjeta_abre" with id="progreso-sin-datos-en-periodo" clase="mt-6" %}
+    <p class="text-[14px] text-tinta-suave">
       {% if es_propio %}No tienes{% else %}{{ persona_objetivo.nombre }} no tiene{% endif %}
       ninguna pesada en las últimas {{ semanas }} semanas. Prueba a ampliar el periodo.
     </p>
-  {% else %}
-    {# R1 — el peso, siempre que haya datos en el periodo. #}
-    {% include "progreso/_grafica.html" with grafica=grafica_peso titulo="Peso" unidad=" kg" color="#059669" %}
+  {% include "_ui.html#tarjeta_cierra" %}
+{% else %}
+  {# R1 — el peso, siempre que haya datos en el periodo. #}
+  {% include "progreso/_grafica.html" with grafica=grafica_peso titulo="Peso" unidad=" kg" color="var(--color-acento)" %}
 
-    {# R2/Q-152 — grasa y cintura, cada una SOLO si esa persona la tiene apuntada: ni #}
-    {# hueco vacío ni aviso de que falta, si `grafica_grasa`/`grafica_cintura` es None esta #}
-    {# sección entera no existe. #}
-    {% if grafica_grasa %}
-      {% include "progreso/_grafica.html" with grafica=grafica_grasa titulo="Grasa corporal" unidad="%" color="#dc2626" %}
-    {% endif %}
-    {% if grafica_cintura %}
-      {% include "progreso/_grafica.html" with grafica=grafica_cintura titulo="Cintura" unidad=" cm" color="#2563eb" %}
-    {% endif %}
+  {# R2/Q-152 — grasa y cintura, cada una SOLO si esa persona la tiene apuntada: ni #}
+  {# hueco vacío ni aviso de que falta, si `grafica_grasa`/`grafica_cintura` es None esta #}
+  {# sección entera no existe. #}
+  {% if grafica_grasa %}
+    {% include "progreso/_grafica.html" with grafica=grafica_grasa titulo="Grasa corporal" unidad="%" color="var(--color-racha)" %}
   {% endif %}
-
-  {# -------------------------------------------------------------------------------------- #}
-  {# Unidad 013 (completar-progreso.md) — R-79: los entrenos REALIZADOS agrupados por        #}
-  {# semanas (cuántos, minutos y calorías). R6/G-172: sin ningún entreno en el periodo, la    #}
-  {# sección entera no aparece — mismo trato que ya reciben grasa y cintura arriba. Las       #}
-  {# barras son divs con una altura porcentual (`altura_pct`, calculada en                    #}
-  {# servicios/progreso.py), sin ninguna librería de gráficos (bias.md).                      #}
-  {# -------------------------------------------------------------------------------------- #}
-  {% if semanas_de_entreno %}
-    <section id="progreso-entrenos" class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-      <h3 class="text-sm font-medium uppercase tracking-wide text-slate-500">Entrenos</h3>
-      <div class="mt-3 flex items-end gap-3" style="height: 8rem;">
-        {% for semana in semanas_de_entreno %}
-          <div class="flex flex-1 flex-col items-center justify-end gap-1 text-center">
-            <div
-              class="w-full rounded-t bg-emerald-500"
-              style="height: {{ semana.altura_pct }}%; min-height: 4px;"
-              aria-hidden="true"
-            ></div>
-            <p class="text-[11px] leading-tight text-slate-400">
-              {{ semana.inicio }} – {{ semana.fin }}
-            </p>
-            <p class="text-xs font-medium text-slate-700">
-              {{ semana.entrenos }} entreno{{ semana.entrenos|pluralize }}
-            </p>
-            <p class="text-[11px] leading-tight text-slate-500">
-              {{ semana.minutos }} min · {{ semana.calorias }} kcal
-            </p>
-          </div>
-        {% endfor %}
-      </div>
-    </section>
+  {% if grafica_cintura %}
+    {% include "progreso/_grafica.html" with grafica=grafica_cintura titulo="Cintura" unidad=" cm" color="var(--color-grasa)" %}
   {% endif %}
+{% endif %}
 
-  {# -------------------------------------------------------------------------------------- #}
-  {# Unidad 013 — R-80: el cumplimiento (cuántos días cerró, cuántos lo siguió, a medias, no  #}
-  {# lo siguió, y el % sobre los que CERRÓ — Q-153/C-87, nunca sobre el periodo entero). A    #}
-  {# diferencia de los entrenos, esta sección NUNCA desaparece (R5: "la pantalla sigue        #}
-  {# entera"); sin ningún cierre, dice con naturalidad que todavía no hay nada que contar.    #}
-  {# -------------------------------------------------------------------------------------- #}
-  <section id="progreso-cumplimiento" class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-    <h3 class="text-sm font-medium uppercase tracking-wide text-slate-500">Cumplimiento</h3>
-    {% if cumplimiento.cerrados %}
-      {% if es_propio %}
-        <p class="mt-2 text-sm text-slate-700">
-          Cerraste <strong>{{ cumplimiento.cerrados }}</strong> día{{ cumplimiento.cerrados|pluralize }}
-          en este periodo: <strong>{{ cumplimiento.lo_segui }}</strong> lo seguiste entero,
-          <strong>{{ cumplimiento.a_medias }}</strong> a medias y
-          <strong>{{ cumplimiento.no_lo_segui }}</strong> no lo seguiste.
-        </p>
-      {% else %}
-        <p class="mt-2 text-sm text-slate-700">
-          {{ persona_objetivo.nombre }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
-          día{{ cumplimiento.cerrados|pluralize }} en este periodo:
-          <strong>{{ cumplimiento.lo_segui }}</strong> lo siguió entero,
-          <strong>{{ cumplimiento.a_medias }}</strong> a medias y
-          <strong>{{ cumplimiento.no_lo_segui }}</strong> no lo siguió.
-        </p>
-      {% endif %}
-      <p class="mt-1 text-2xl font-bold text-emerald-700">{{ cumplimiento.porcentaje }}%</p>
-      <p class="text-xs text-slate-500">
-        de cumplimiento, sobre los días que {% if es_propio %}cerraste{% else %}cerró{% endif %}.
+{# -------------------------------------------------------------------------------------- #}
+{# Unidad 013 (completar-progreso.md) — R-79: los entrenos REALIZADOS agrupados por        #}
+{# semanas (cuántos, minutos y calorías). R6/G-172: sin ningún entreno en el periodo, la    #}
+{# sección entera no aparece — mismo trato que ya reciben grasa y cintura arriba. Las       #}
+{# barras son divs con una altura porcentual (`altura_pct`, calculada en                    #}
+{# servicios/progreso.py), sin ninguna librería de gráficos (bias.md).                      #}
+{# -------------------------------------------------------------------------------------- #}
+{% if semanas_de_entreno %}
+  {% include "_ui.html#tarjeta_abre" with id="progreso-entrenos" clase="mt-4" %}
+    <h3 class="text-[13px] font-semibold uppercase tracking-wide text-tinta-media">Entrenos</h3>
+    <div class="mt-3 flex items-end gap-3" style="height: 8rem;">
+      {% for semana in semanas_de_entreno %}
+        <div class="flex flex-1 flex-col items-center justify-end gap-1 text-center">
+          <div
+            class="w-full rounded-t bg-acento"
+            style="height: {{ semana.altura_pct }}%; min-height: 4px;"
+            aria-hidden="true"
+          ></div>
+          <p class="text-[11px] leading-tight text-tinta-suave">
+            {{ semana.inicio }} – {{ semana.fin }}
+          </p>
+          <p class="text-[12px] font-medium text-tinta">
+            {{ semana.entrenos }} entreno{{ semana.entrenos|pluralize }}
+          </p>
+          <p class="cifra text-[11px] leading-tight text-tinta-media">
+            {{ semana.minutos }} min · {{ semana.calorias }} kcal
+          </p>
+        </div>
+      {% endfor %}
+    </div>
+  {% include "_ui.html#tarjeta_cierra" %}
+{% endif %}
+
+{# -------------------------------------------------------------------------------------- #}
+{# Unidad 013 — R-80: el cumplimiento (cuántos días cerró, cuántos lo siguió, a medias, no  #}
+{# lo siguió, y el % sobre los que CERRÓ — Q-153/C-87, nunca sobre el periodo entero). A    #}
+{# diferencia de los entrenos, esta sección NUNCA desaparece (R5: "la pantalla sigue        #}
+{# entera"); sin ningún cierre, dice con naturalidad que todavía no hay nada que contar.    #}
+{# -------------------------------------------------------------------------------------- #}
+{% include "_ui.html#tarjeta_abre" with id="progreso-cumplimiento" clase="mt-4" %}
+  <h3 class="text-[13px] font-semibold uppercase tracking-wide text-tinta-media">Cumplimiento</h3>
+  {% if cumplimiento.cerrados %}
+    {% if es_propio %}
+      <p class="mt-2 text-[14px] text-tinta">
+        Cerraste <strong>{{ cumplimiento.cerrados }}</strong> día{{ cumplimiento.cerrados|pluralize }}
+        en este periodo: <strong>{{ cumplimiento.lo_segui }}</strong> lo seguiste entero,
+        <strong>{{ cumplimiento.a_medias }}</strong> a medias y
+        <strong>{{ cumplimiento.no_lo_segui }}</strong> no lo seguiste.
       </p>
     {% else %}
-      <p class="mt-2 text-sm text-slate-500">
-        {% if es_propio %}
-          Todavía no has cerrado ningún día en este periodo. En cuanto cierres el primero,
-          aquí verás tu cumplimiento.
-        {% else %}
-          {{ persona_objetivo.nombre }} todavía no ha cerrado ningún día en este periodo.
-        {% endif %}
+      <p class="mt-2 text-[14px] text-tinta">
+        {{ persona_objetivo.nombre }} cerró <strong>{{ cumplimiento.cerrados }}</strong>
+        día{{ cumplimiento.cerrados|pluralize }} en este periodo:
+        <strong>{{ cumplimiento.lo_segui }}</strong> lo siguió entero,
+        <strong>{{ cumplimiento.a_medias }}</strong> a medias y
+        <strong>{{ cumplimiento.no_lo_segui }}</strong> no lo siguió.
       </p>
     {% endif %}
-  </section>
-
-  <p class="mt-6 text-sm">
-    <a href="{% url 'perfiles:peso' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
+    {# NOTA (R3/R6): "N%" tiene que quedar como un solo nodo de texto contiguo —            #}
+    {# `progreso/tests.py` (R3/C-87) exige el literal "70%" tal cual, así que aquí se        #}
+    {# aplica `.cifra` directamente en vez de la pieza `numero_grande`.                      #}
+    <p class="cifra mt-1 text-[28px] font-bold text-acento">{{ cumplimiento.porcentaje }}%</p>
+    <p class="text-[12px] text-tinta-suave">
+      de cumplimiento, sobre los días que {% if es_propio %}cerraste{% else %}cerró{% endif %}.
+    </p>
+  {% else %}
+    <p class="mt-2 text-[14px] text-tinta-suave">
       {% if es_propio %}
-        Ver tu histórico y apuntar una pesada →
-      {% elif puede_editar %}
-        Ver su histórico y apuntarle una pesada →
+        Todavía no has cerrado ningún día en este periodo. En cuanto cierres el primero,
+        aquí verás tu cumplimiento.
       {% else %}
-        Ver su histórico →
+        {{ persona_objetivo.nombre }} todavía no ha cerrado ningún día en este periodo.
       {% endif %}
-    </a>
-  </p>
+    </p>
+  {% endif %}
+{% include "_ui.html#tarjeta_cierra" %}
 
-  {# -------------------------------------------------------------------------------------- #}
-  {# Unidad 036, R9 — desde Progreso se llega a los entrenos y a los días de la persona que  #}
-  {# se está mirando: los dos enlaces existen SIEMPRE (R-23/G-43: todo el hogar los ve), y el #}
-  {# rótulo cambia según `puede_editar` (mirar vs. cambiar) — igual que el enlace al peso de  #}
-  {# arriba. Antes de esta unidad `entrenos:ver` no tenía NINGÚN enlace en toda la app        #}
-  {# (Decisión (3) de la especificación); sin él la mejora sería invisible.                  #}
-  {# -------------------------------------------------------------------------------------- #}
-  <p class="mt-3 text-sm">
-    <a href="{% url 'entrenos:ver' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
-      {% if es_propio %}
-        Ver tus entrenos →
-      {% elif puede_editar %}
-        Ver y apuntarle entrenos a {{ persona_objetivo.nombre }} →
-      {% else %}
-        Ver los entrenos de {{ persona_objetivo.nombre }} →
-      {% endif %}
-    </a>
-  </p>
+<p class="mt-6 text-[14px]">
+  <a href="{% url 'perfiles:peso' persona_objetivo.id %}" class="font-semibold text-acento active:opacity-60">
+    {% if es_propio %}
+      Ver tu histórico y apuntar una pesada →
+    {% elif puede_editar %}
+      Ver su histórico y apuntarle una pesada →
+    {% else %}
+      Ver su histórico →
+    {% endif %}
+  </a>
+</p>
 
-  {# -------------------------------------------------------------------------------------- #}
-  {# Bug 028, unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para el cierre del  #}
-  {# día. Unidad 036, R9 — el enlace ya NO vive dentro de `{% if puede_editar %}`: ahora      #}
-  {# también quien solo MIRA llega a los días cerrados de esa persona (R-23/G-43), con el     #}
-  {# rótulo cambiando según pueda cambiar o solo ver — `cierres/acceso.py` (unidad 036) deja   #}
-  {# pasar el GET a todo el hogar, así que el enlace nunca lleva a un 404.                    #}
-  {# -------------------------------------------------------------------------------------- #}
-  <p class="mt-3 text-sm">
-    <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-medium text-emerald-700 hover:underline">
-      {% if es_propio %}
-        Cerrar un día (¿cumpliste el plan?) →
-      {% elif puede_editar %}
-        Cerrar un día de {{ persona_objetivo.nombre }} →
-      {% else %}
-        Ver los días cerrados de {{ persona_objetivo.nombre }} →
-      {% endif %}
-    </a>
-  </p>
-</div>
+{# -------------------------------------------------------------------------------------- #}
+{# Unidad 036, R9 — desde Progreso se llega a los entrenos y a los días de la persona que  #}
+{# se está mirando: los dos enlaces existen SIEMPRE (R-23/G-43: todo el hogar los ve), y el #}
+{# rótulo cambia según `puede_editar` (mirar vs. cambiar) — igual que el enlace al peso de  #}
+{# arriba. Antes de esta unidad `entrenos:ver` no tenía NINGÚN enlace en toda la app        #}
+{# (Decisión (3) de la especificación); sin él la mejora sería invisible.                  #}
+{# -------------------------------------------------------------------------------------- #}
+<p class="mt-3 text-[14px]">
+  <a href="{% url 'entrenos:ver' persona_objetivo.id %}" class="font-semibold text-acento active:opacity-60">
+    {% if es_propio %}
+      Ver tus entrenos →
+    {% elif puede_editar %}
+      Ver y apuntarle entrenos a {{ persona_objetivo.nombre }} →
+    {% else %}
+      Ver los entrenos de {{ persona_objetivo.nombre }} →
+    {% endif %}
+  </a>
+</p>
+
+{# -------------------------------------------------------------------------------------- #}
+{# Bug 028, unidad 025, R5/G-43 — el mismo camino que el peso (arriba), para el cierre del  #}
+{# día. Unidad 036, R9 — el enlace ya NO vive dentro de `{% if puede_editar %}`: ahora      #}
+{# también quien solo MIRA llega a los días cerrados de esa persona (R-23/G-43), con el     #}
+{# rótulo cambiando según pueda cambiar o solo ver — `cierres/acceso.py` (unidad 036) deja   #}
+{# pasar el GET a todo el hogar, así que el enlace nunca lleva a un 404.                    #}
+{# -------------------------------------------------------------------------------------- #}
+<p class="mt-3 text-[14px]">
+  <a href="{% url 'cierres:cerrar' persona_objetivo.id %}" class="font-semibold text-acento active:opacity-60">
+    {% if es_propio %}
+      Cerrar un día (¿cumpliste el plan?) →
+    {% elif puede_editar %}
+      Cerrar un día de {{ persona_objetivo.nombre }} →
+    {% else %}
+      Ver los días cerrados de {{ persona_objetivo.nombre }} →
+    {% endif %}
+  </a>
+</p>
 {% endblock %}

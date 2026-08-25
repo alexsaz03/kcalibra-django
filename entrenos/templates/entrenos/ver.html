@@ -5,107 +5,129 @@
   {% if es_propio %}Entrenos{% else %}Entrenos de {{ persona_objetivo.nombre }}{% endif %}
 {% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">
+  {% if es_propio %}Tus entrenos{% else %}Entrenos de {{ persona_objetivo.nombre }}{% endif %}
+</h1>
+{% endblock %}
+
+{# R2 — la acción principal: apuntar un entreno. Solo si esta pantalla enseña el formulario   #}
+{# (`puede_editar`, quien solo mira nunca ve un botón que el servidor le rechazaría). #}
+{% block accion_rapida %}
+{% if puede_editar %}
+{% include "_ui.html#boton_redondo" with href="#formulario-entreno" etiqueta="Apuntar un entreno" %}
+{% endif %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
 
-  {# ------------------------------------------------------------------------------------ #}
-  {# {% partialdef %} define la pantalla entera (calorías de hoy + formulario + histórico)  #}
-  {# como un trozo con nombre, para que HTMX pueda pedirlo suelto al apuntar un entreno      #}
-  {# (Q-51) y sustituir SOLO esto, sin recargar nada más — mismo mecanismo que               #}
-  {# perfiles/templates/perfiles/peso.html (unidad 006/010).                                 #}
-  {#                                                                                        #}
-  {# Unidad 025, R2/R5/G-43 — `es_propio` decide el TEXTO ("tus"/"sus"); `puede_editar`     #}
-  {# decide si se enseña el formulario y los botones de corregir/borrar — misma separación  #}
-  {# que perfiles/templates/perfiles/peso.html. Unidad 036, R1/R2/R6 — ya NO es siempre     #}
-  {# `True`: ahora también llega aquí quien solo puede MIRAR (cualquiera del hogar,         #}
-  {# R-23/G-43), y `entrenos/views.py:ver_entrenos` calcula `puede_editar` de verdad con    #}
-  {# `puede_editar_entrenos` (delegado en `hogares.acceso.puede_cambiar_lo_de`), para que    #}
-  {# esta plantilla nunca ofrezca un formulario o un enlace que el servidor va a rechazar.  #}
-  {# ------------------------------------------------------------------------------------ #}
-  {% partialdef entrenos_de_hoy %}
-  <div id="entrenos-de-hoy">
-    <h1 class="text-2xl font-bold text-slate-900">
-      {% if es_propio %}Tus entrenos{% else %}Entrenos de {{ persona_objetivo.nombre }}{% endif %}
-    </h1>
-    <p class="mt-1 text-sm text-slate-500">
-      {% if es_propio %}
-        Apunta lo que has entrenado y cuenta en las calorías que te tocan hoy.
-      {% elif puede_editar %}
-        Apunta lo que entrenó {{ persona_objetivo.nombre }} y cuenta en las calorías que le
-        tocan hoy.
-      {% else %}
-        Solo lectura: el resto del hogar ve los entrenos de {{ persona_objetivo.nombre }}, pero
-        solo {{ persona_objetivo.nombre }} (o su responsable) puede apuntarlos, corregirlos o
-        borrarlos.
-      {% endif %}
+{# ------------------------------------------------------------------------------------ #}
+{# {% partialdef %} define la pantalla entera (calorías de hoy + formulario + histórico)  #}
+{# como un trozo con nombre, para que HTMX pueda pedirlo suelto al apuntar un entreno      #}
+{# (Q-51) y sustituir SOLO esto, sin recargar nada más — mismo mecanismo que               #}
+{# perfiles/templates/perfiles/peso.html (unidad 006/010).                                 #}
+{#                                                                                        #}
+{# Unidad 025, R2/R5/G-43 — `es_propio` decide el TEXTO ("tus"/"sus"); `puede_editar`     #}
+{# decide si se enseña el formulario y los botones de corregir/borrar — misma separación  #}
+{# que perfiles/templates/perfiles/peso.html. Unidad 036, R1/R2/R6 — ya NO es siempre     #}
+{# `True`: ahora también llega aquí quien solo puede MIRAR (cualquiera del hogar,         #}
+{# R-23/G-43), y `entrenos/views.py:ver_entrenos` calcula `puede_editar` de verdad con    #}
+{# `puede_editar_entrenos` (delegado en `hogares.acceso.puede_cambiar_lo_de`), para que    #}
+{# esta plantilla nunca ofrezca un formulario o un enlace que el servidor va a rechazar.  #}
+{# ------------------------------------------------------------------------------------ #}
+{% partialdef entrenos_de_hoy %}
+<div id="entrenos-de-hoy">
+  <p class="text-[13px] text-tinta-suave">
+    {% if es_propio %}
+      Apunta lo que has entrenado y cuenta en las calorías que te tocan hoy.
+    {% elif puede_editar %}
+      Apunta lo que entrenó {{ persona_objetivo.nombre }} y cuenta en las calorías que le
+      tocan hoy.
+    {% else %}
+      Solo lectura: el resto del hogar ve los entrenos de {{ persona_objetivo.nombre }}, pero
+      solo {{ persona_objetivo.nombre }} (o su responsable) puede apuntarlos, corregirlos o
+      borrarlos.
+    {% endif %}
+  </p>
+
+  {# R1/§8 del plano — cuánto llevas quemado hoy, lo primero que se ve al entrar. #}
+  {# NOTA (R3/R6): "N kcal" tiene que quedar como un solo nodo de texto contiguo —          #}
+  {# `entrenos/tests.py` (R12) exige el literal "0 kcal" tal cual, así que aquí se aplica    #}
+  {# `.cifra` directamente en vez de la pieza `numero_grande` (que separaría el valor de la  #}
+  {# unidad en dos nodos y rompería ese literal). #}
+  {% include "_ui.html#tarjeta_abre" with clase="mt-4" %}
+    <h2 class="text-[13px] font-semibold uppercase tracking-wide text-tinta-media">Quemadas hoy</h2>
+    <p id="calorias-quemadas-hoy" class="cifra mt-1 text-[28px] font-bold text-tinta">
+      {{ calorias_hoy }} kcal
     </p>
-
-    {# R1/§8 del plano — cuánto llevas quemado hoy, lo primero que se ve al entrar. #}
-    <section class="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-      <h2 class="text-xs font-medium uppercase tracking-wide text-slate-500">Quemadas hoy</h2>
-      <p id="calorias-quemadas-hoy" class="mt-1 text-2xl font-bold text-emerald-700">
-        {{ calorias_hoy }} kcal
+    {% if objetivo %}
+      <p class="mt-1 text-[13px] text-tinta-suave">
+        {% if es_propio %}Tu objetivo{% else %}Su objetivo{% endif %} de hoy ya las incluye:
+        <strong class="cifra">{{ objetivo.calorias }} kcal</strong> en total.
       </p>
-      {% if objetivo %}
-        <p class="mt-1 text-xs text-slate-500">
-          {% if es_propio %}Tu objetivo{% else %}Su objetivo{% endif %} de hoy ya las incluye:
-          <strong>{{ objetivo.calorias }} kcal</strong> en total.
-        </p>
-      {% endif %}
-    </section>
+    {% endif %}
+  {% include "_ui.html#tarjeta_cierra" %}
 
-    {% if puede_editar %}
-      <form
-        hx-post="{% url 'entrenos:apuntar' persona_objetivo.id %}"
-        hx-target="#entrenos-de-hoy"
-        hx-swap="outerHTML"
-        method="post"
-        class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
-      >
+  {% if puede_editar %}
+    <form
+      id="formulario-entreno"
+      hx-post="{% url 'entrenos:apuntar' persona_objetivo.id %}"
+      hx-target="#entrenos-de-hoy"
+      hx-swap="outerHTML"
+      method="post"
+      class="mt-6"
+    >
+      {% include "_ui.html#tarjeta_abre" %}
         {% csrf_token %}
         {% if form.non_field_errors %}
-          <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
-            {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
-          </div>
+          {% for error in form.non_field_errors %}
+            {% include "_ui.html#aviso" with tipo="error" texto=error %}
+          {% endfor %}
         {% endif %}
-        {% for field in form.visible_fields %}
-          <div>
-            <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
-              {{ field.label }}
-            </label>
-            {{ field }}
-            {% if field.help_text %}
-              <p class="mt-1 text-xs text-slate-500">{{ field.help_text }}</p>
-            {% endif %}
-            {% if field.errors %}
-              <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
-            {% endif %}
-          </div>
-        {% endfor %}
-        <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
-          Apuntar entreno
-        </button>
-      </form>
-    {% endif %}
+        <div class="space-y-4">
+          {% for field in form.visible_fields %}
+            <div>
+              <label for="{{ field.id_for_label }}" class="mb-1.5 block text-[13px] font-semibold text-tinta-media">
+                {{ field.label }}
+              </label>
+              {{ field }}
+              {% if field.help_text %}
+                <p class="mt-1 text-[12px] text-tinta-suave">{{ field.help_text }}</p>
+              {% endif %}
+              {% if field.errors %}
+                <p class="mt-1 text-[13px] text-racha">{{ field.errors.0 }}</p>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="mt-4">
+          {% include "_ui.html#boton" with tipo="submit" texto="Apuntar entreno" %}
+        </div>
+      {% include "_ui.html#tarjeta_cierra" %}
+    </form>
+  {% endif %}
 
-    <section class="mt-6">
-      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
-        {% if es_propio %}Tu histórico{% else %}Histórico de {{ persona_objetivo.nombre }}{% endif %}
-      </h2>
-      {% if entrenos %}
-        <ul class="mt-3 space-y-2">
+  <div class="mt-6">
+    {% if es_propio %}
+      {% include "_ui.html#titulo_seccion" with texto="Tu histórico" %}
+    {% else %}
+      {% include "_ui.html#titulo_seccion" with texto="Histórico de "|add:persona_objetivo.nombre %}
+    {% endif %}
+    {% if entrenos %}
+      {% include "_ui.html#tarjeta_abre" with clase="p-0" %}
+        <ul class="divide-y divide-linea">
           {% for entreno in entrenos %}
-            <li id="entreno-{{ entreno.id }}" class="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-sm">
-              <span>
+            <li id="entreno-{{ entreno.id }}" class="flex items-center justify-between gap-3 px-4 py-3.5">
+              <span class="text-[14px] text-tinta">
                 <strong>{{ entreno.fecha }}</strong> —
                 {{ entreno.get_deporte_display }} ({{ entreno.get_intensidad_display }}) —
-                {{ entreno.minutos }} min — {{ entreno.calorias }} kcal
+                <span class="cifra">{{ entreno.minutos }} min</span> — <span class="cifra">{{ entreno.calorias }} kcal</span>
               </span>
               {% if puede_editar %}
                 <span class="flex shrink-0 items-center gap-3">
                   <a
                     href="{% url 'entrenos:corregir' persona_objetivo.id entreno.id %}"
-                    class="font-medium text-emerald-700 hover:underline"
+                    class="text-[13px] font-semibold text-acento active:opacity-60"
                   >
                     Corregir
                   </a>
@@ -117,7 +139,7 @@
                     method="post"
                   >
                     {% csrf_token %}
-                    <button type="submit" class="font-medium text-red-700 hover:underline">
+                    <button type="submit" class="text-[13px] font-semibold text-racha active:opacity-60">
                       Borrar
                     </button>
                   </form>
@@ -126,10 +148,12 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}
-        {# R12, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
-        {# naturalidad, como el resto de pantallas "sin datos" de la app (peso, progreso). #}
-        <p id="sin-entrenos" class="mt-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+      {% include "_ui.html#tarjeta_cierra" %}
+    {% else %}
+      {# R12, caso límite: nadie ha apuntado nada todavía. No es un error: se dice con #}
+      {# naturalidad, como el resto de pantallas "sin datos" de la app (peso, progreso). #}
+      {% include "_ui.html#tarjeta_abre" %}
+        <p id="sin-entrenos" class="text-[14px] text-tinta-suave">
           {% if es_propio %}
             Todavía no has apuntado ningún entreno. En cuanto apuntes el primero, aparecerá aquí
             y sus calorías se sumarán a lo que te toca comer hoy.
@@ -140,12 +164,12 @@
             {{ persona_objetivo.nombre }} todavía no tiene ningún entreno apuntado.
           {% endif %}
         </p>
-      {% endif %}
-    </section>
+      {% include "_ui.html#tarjeta_cierra" %}
+    {% endif %}
   </div>
-  {% endpartialdef %}
-
-  {% partial entrenos_de_hoy %}
-
 </div>
+{% endpartialdef %}
+
+{% partial entrenos_de_hoy %}
+
 {% endblock %}

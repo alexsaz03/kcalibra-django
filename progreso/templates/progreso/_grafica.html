@@ -14,12 +14,15 @@
 {# (un `cx="300,0"` no es un número válido para el navegador). El resumen de texto        #}
 {# ({{ grafica.primero }}) sí quiere esa coma —es para que lo lea una persona—, así que    #}
 {# `unlocalize` se aplica SOLO a las coordenadas del dibujo, no a él.                     #}
+{#                                                                                        #}
+{# Unidad 053 — `color` llega ya como `var(--color-x)` (un token, R4), no un hex suelto:   #}
+{# lo deciden las pantallas que incluyen esta plantilla (`progreso/ver.html`).            #}
 {# ------------------------------------------------------------------------------------ #}
 {% load l10n %}
-<section class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+{% include "_ui.html#tarjeta_abre" with clase="mt-4" %}
   <div class="flex items-baseline justify-between gap-2">
-    <h3 class="text-sm font-medium uppercase tracking-wide text-slate-500">{{ titulo }}</h3>
-    <p class="text-xs text-slate-500">
+    <h3 class="text-[13px] font-semibold uppercase tracking-wide text-tinta-media">{{ titulo }}</h3>
+    <p class="cifra text-[12px] text-tinta-suave">
       {{ grafica.primero_fecha }} · {{ grafica.primero }}{{ unidad }}
       → {{ grafica.ultimo_fecha }} · {{ grafica.ultimo }}{{ unidad }}
     </p>
@@ -37,4 +40,4 @@
       <circle cx="{{ x|unlocalize }}" cy="{{ y|unlocalize }}" r="3" fill="{{ color }}" />
     {% endfor %}
   </svg>
-</section>
+{% include "_ui.html#tarjeta_cierra" %}
