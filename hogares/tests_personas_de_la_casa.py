@@ -675,8 +675,8 @@ class R7_LaMigracionDejaNombresProvisionalesTests(PruebaConRegistroAbierto):
         )
         from django.apps import apps as apps_reales
 
-        self.registrar_y_verificar("preteleuri@gmail.com", sexo="mujer")
-        Persona.objects.filter(usuario__email="preteleuri@gmail.com").update(nombre="")
+        self.registrar_y_verificar("pretel@example.com", sexo="mujer")
+        Persona.objects.filter(usuario__email="pretel@example.com").update(nombre="")
 
         modulo.rellenar_nombres_provisionales(apps_reales, None)
 
