@@ -53,6 +53,7 @@ from kcalibra.ayuda_de_alcanzabilidad import atributos, elementos_con_texto
 from kcalibra.tests_nada_escondido import _rutas_enlazadas
 from kcalibra.tests_pantallas import (
     _CLASE_CON_ETIQUETA_RE,
+    _CLASES_DEL_BOTON_REDONDO,
     _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE,
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
@@ -455,6 +456,28 @@ class R4_NingunaPiezaCopiadaAManoTests(SimpleTestCase):
             return
         self.fail("el regex no encontró ningún class= en la copia de prueba")
 
+    def test_mutacion_pegar_a_mano_solo_el_a_de_boton_redondo_dispara_la_firma(self):
+        """H6 (vuelta de revisión 2) — «la puerta más ancha»: la firma vieja de `boton_redondo`
+        sólo miraba las clases del `<div>` ENVOLTORIO que posiciona el botón, así que pegar a
+        mano SÓLO el `<a>` clicable (lo único que hace falta para tener el botón) no disparaba
+        ninguna de las quince firmas. Se pega el `<a>` REAL de `_ui.html#boton_redondo`, SIN su
+        `<div>` envoltorio y SIN `aria-label` — el caso completo que medió el revisor."""
+        copia_real_del_a_suelto = (
+            '<a href="#destino-que-no-existe" class="pointer-events-auto flex h-14 w-14 '
+            'items-center justify-center rounded-pastilla bg-tinta text-white shadow-lg '
+            'active:scale-95">+</a>'
+        )
+        for coincidencia in _CLASE_CON_ETIQUETA_RE.finditer(copia_real_del_a_suelto):
+            etiqueta = coincidencia.group("etiqueta").lower()
+            clases = set(coincidencia.group("clases").split())
+            self.assertTrue(
+                _copia_el_marcado_de_la_pieza(etiqueta, clases, _FIRMAS_DE_CLASE_POR_PIEZA["boton_redondo"]),
+                "la firma de «boton_redondo» no se disparó sobre una copia REAL de su `<a>` "
+                "clicable, pegado a mano sin su `<div>` envoltorio",
+            )
+            return
+        self.fail("el regex no encontró ningún class= en la copia de prueba")
+
 
 # ------------------------------------------------------------------------------------------ #
 # Fixture de integración (R5, R6): una casa completa, con datos en despensa, receta, plan,
@@ -823,8 +846,12 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
 # porque la alcanzabilidad de verdad seguía viviendo en dos listas de rutas escritas a mano.
 #
 # El botón/menú redondo se identifica por la FIRMA de clases que las dos piezas comparten en su
-# propio `<a>`/`<button>` clicable (`_ui.html#boton_redondo`/`#boton_redondo_menu`) MÁS un
-# `aria-label` no vacío — nunca por una lista de etiquetas ni de rutas. `_boton_redondo_es_alcanzable`
+# propio `<a>`/`<button>` clicable (`_ui.html#boton_redondo`/`#boton_redondo_menu`,
+# `_CLASES_DEL_BOTON_REDONDO`) — NUNCA por `aria-label` como puerta de entrada (H6, vuelta de
+# revisión 2: `etiqueta` es un parámetro opcional del `{% include %}` sin valor por defecto, así
+# que filtrar por `aria-label` no vacío borraba del barrido entero justo al control que más falta
+# hace cazar). Que el `aria-label` no esté vacío se exige como ASSERT dentro del propio test
+# (R11), lo contrario de un filtro de entrada. `_boton_redondo_es_alcanzable`
 # (importada de `kcalibra.tests_pantallas`, nunca copiada — la 27ª cara) comprueba que el control
 # en sí se puede usar; el DESTINO sale del propio HTML renderizado, no de una lista: el `href`
 # del elemento con `aria-label`, y si es un ancla interna (`#id`), el `id` al que apunta tiene
@@ -833,22 +860,20 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
 # ancla suelta como `#destino-que-no-existe` es precisamente el hueco que ese barrido no mira).
 # ------------------------------------------------------------------------------------------ #
 
-_CLASES_DEL_BOTON_REDONDO = {
-    "pointer-events-auto", "h-14", "w-14", "rounded-pastilla", "bg-tinta", "text-white",
-    "shadow-lg", "active:scale-95",
-}
-
-
 def _es_boton_o_menu_redondo(etiqueta, attrs):
     """Un `<a>`/`<button>` con la FORMA del control clicable de `boton_redondo`/
     `boton_redondo_menu` (`_ui.html`): las dos piezas comparten esta firma de clases en el
-    elemento que de verdad se toca (no en el `<div>` envoltorio, que sólo posiciona), más un
-    `aria-label` no vacío — Django/Alpine no exigen ninguno de los dos por separado, pero
-    `_ui.html` siempre los pone juntos, así que la combinación no colisiona con ningún otro
-    control de las quince pantallas reales (verificado con el barrido de abajo, en verde)."""
+    elemento que de verdad se toca (no en el `<div>` envoltorio, que sólo posiciona) —
+    `_CLASES_DEL_BOTON_REDONDO`, IMPORTADA de `kcalibra.tests_pantallas` (la misma que ya usa la
+    firma de copia de R4), nunca copiada. Nunca exige `aria-label` como PUERTA DE ENTRADA (H6,
+    vuelta de revisión 2): `etiqueta` es un parámetro opcional del `{% include %}` sin valor por
+    defecto, y `aria-label` es exactamente lo que un copiador/olvido suelta al pegar — filtrar
+    por él aquí borraba el control del barrido entero de R7 en vez de nombrarlo roto (la 27ª
+    cara, otra vez, dentro del código escrito para impedirla). Las ocho clases solas ya no
+    colisionan con ningún otro control de las quince pantallas reales (verificado con el barrido
+    de abajo, en verde); que el `aria-label` esté vacío se comprueba como ASSERT del propio test,
+    nunca como filtro."""
     if etiqueta not in ("a", "button"):
-        return False
-    if not (attrs.get("aria-label") or "").strip():
         return False
     clases = set((attrs.get("class") or "").split())
     return _CLASES_DEL_BOTON_REDONDO <= clases
@@ -884,10 +909,11 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
         )
         total_controles = 0
         rotos = []
+        sin_nombre_accesible = []
         for ruta, contenido in paginas:
             for attrs, _texto_visible in elementos_con_texto(contenido, _es_boton_o_menu_redondo):
                 total_controles += 1
-                etiqueta_aria = attrs.get("aria-label")
+                etiqueta_aria = attrs.get("aria-label") or ""
                 coincide = lambda e, a, al=etiqueta_aria: _es_boton_o_menu_redondo(e, a) and (
                     a.get("aria-label") or ""
                 ) == al
@@ -901,11 +927,25 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
                         f"{ruta}: «{etiqueta_aria}» apunta a #{id_roto}, y no hay ningún "
                         f"elemento con ese id en la página — no lleva a ningún sitio"
                     )
+                # R11 (H6, vuelta de revisión 2) — `aria-label` no vacío como ASSERT del propio
+                # test, lo CONTRARIO de usarlo como filtro de entrada de `_es_boton_o_menu_redondo`:
+                # `etiqueta` es un parámetro opcional del `{% include %}` sin valor por defecto, y
+                # un control de sólo icono sin nombre accesible tiene que caer en ROJO nombrando
+                # la ruta, no desaparecer del barrido.
+                if not etiqueta_aria.strip():
+                    sin_nombre_accesible.append(
+                        f"{ruta}: un botón/menú redondo sin aria-label (o vacío) — un lector de "
+                        f"pantalla no puede nombrar ese control de sólo icono"
+                    )
         self.assertGreater(
             total_controles, 0,
             "el recorrido no encontró ningún botón/menú redondo: este test no probaría nada",
         )
         self.assertEqual(rotos, [], f"controles redondos que no llevan a ningún sitio: {rotos}")
+        self.assertEqual(
+            sin_nombre_accesible, [],
+            f"controles redondos sin nombre accesible: {sin_nombre_accesible}",
+        )
 
     def test_mutacion_un_boton_redondo_que_apunta_a_un_ancla_inexistente_se_pone_rojo(self):
         """R9 en código, permanente — el Hueco H1 de la revisión, reproducido EXACTAMENTE: el
@@ -938,6 +978,36 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
         ) + '<div id="formulario-de-verdad"></div>'
         attrs_sano, _ = elementos_con_texto(html_con_boton_sano, _es_boton_o_menu_redondo)[0]
         self.assertEqual(_destino_de_ancla_interna_no_existe(html_con_boton_sano, attrs_sano), "")
+
+    def test_mutacion_un_boton_redondo_sin_aria_label_sigue_dentro_del_barrido(self):
+        """H6 (vuelta de revisión 2) — `aria-label` no puede ser una PUERTA DE ENTRADA: es
+        justo el atributo que `etiqueta`, un parámetro opcional del `{% include %}` SIN valor
+        por defecto, deja vacío si se olvida. `_es_boton_o_menu_redondo` tiene que seguir
+        reconociendo el control aunque `aria-label` esté vacío o ausente — quien lo tapa o lo
+        deja sin destino se sigue cazando por R7, en vez de desaparecer del barrido entero."""
+        html_con_aria_label_vacio = (
+            '<a href="#destino-que-no-existe" aria-label="" class="pointer-events-auto flex '
+            'h-14 w-14 items-center justify-center rounded-pastilla bg-tinta text-white '
+            'shadow-lg active:scale-95">x</a>'
+        )
+        encontrados = elementos_con_texto(html_con_aria_label_vacio, _es_boton_o_menu_redondo)
+        self.assertEqual(
+            len(encontrados), 1,
+            "un `aria-label` vacío no debía borrar el control del barrido de R7",
+        )
+        html_sin_aria_label_del_todo = (
+            '<a href="#destino-que-no-existe" class="pointer-events-auto flex h-14 w-14 '
+            'items-center justify-center rounded-pastilla bg-tinta text-white shadow-lg '
+            'active:scale-95">x</a>'
+        )
+        encontrados_sin_atributo = elementos_con_texto(
+            html_sin_aria_label_del_todo, _es_boton_o_menu_redondo
+        )
+        self.assertEqual(
+            len(encontrados_sin_atributo), 1,
+            "un control SIN el atributo aria-label (nunca lo llegó a pintar) tampoco debía "
+            "desaparecer del barrido de R7",
+        )
 
 
 # ------------------------------------------------------------------------------------------ #

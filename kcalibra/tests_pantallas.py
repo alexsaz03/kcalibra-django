@@ -940,6 +940,18 @@ _CLASE_CON_ETIQUETA_RE = re.compile(
     r'''<(?P<etiqueta>[a-zA-Z][\w-]*)[^<>]*?\sclass=(["'])(?P<clases>.*?)\2''', re.S
 )
 
+# Unidad 059, vuelta de revisión 2 (H6) — las ocho clases del `<a>` clicable que comparten
+# `boton_redondo`/`boton_redondo_menu` en `_ui.html`, usadas TANTO por la firma de copia de R4
+# (más abajo, candidata de `boton_redondo`) COMO por `_es_boton_o_menu_redondo` de
+# `kcalibra.tests_pantallas_del_proyecto` (R7) — se define aquí, una sola vez, y las dos redes la
+# IMPORTAN: hasta esta vuelta sólo la usaba R7, y la firma de copia de R4 seguía mirando las
+# clases del `<div>` ENVOLTORIO (`pointer-events-none fixed inset-x-0 z-40`), así que pegar a
+# mano sólo el `<a>` clicable no disparaba ninguna de las quince firmas.
+_CLASES_DEL_BOTON_REDONDO = {
+    "pointer-events-auto", "h-14", "w-14", "rounded-pastilla", "bg-tinta", "text-white",
+    "shadow-lg", "active:scale-95",
+}
+
 
 class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
     databases = set()
@@ -1134,7 +1146,18 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # `rounded-pastilla`+`px-2.5`+`py-1` ya no digan sobre la forma de la pieza —
         # verificado que este trío tampoco colisiona con nada de las nueve plantillas.
         "distintivo": [{"fija": {"rounded-pastilla", "px-2.5", "py-1"}}],
-        "boton_redondo": [{"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}}],
+        # Dos candidatas independientes, por la FORMA de la pieza: (a) el `<div>` ENVOLTORIO
+        # que posiciona el botón — sigue cazando la copia completa de siempre; (b) el `<a>`
+        # clicable en sí, con `_CLASES_DEL_BOTON_REDONDO` (arriba) y `etiquetas={"a"}` para no
+        # colisionar con el `<button>` disparador de `boton_redondo_menu` (mismas ocho clases,
+        # etiqueta distinta). Sin (b), quien pega a mano SÓLO el `<a>` — lo único que hace
+        # falta para tener el botón, sin su `<div>` envoltorio — no disparaba ninguna de las
+        # quince firmas (H6, vuelta de revisión 2, medido: `¿el <a> suelto dispara …? -> NO`
+        # en las cuatro firmas candidatas).
+        "boton_redondo": [
+            {"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}},
+            {"fija": _CLASES_DEL_BOTON_REDONDO, "etiquetas": {"a"}},
+        ],
         "boton_redondo_menu": [{"fija": {"bottom-16", "right-0", "w-56"}}],
         # Unidad 057, R1/R7 — `segmentado` (Planificador/Recetas), incluida por
         # `planes/apuntar.html`, una de las nueve plantillas de esta unidad (053): esta pieza
