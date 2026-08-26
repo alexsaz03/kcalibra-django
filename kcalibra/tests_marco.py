@@ -385,13 +385,17 @@ def _es_el_enlace_de_la_contrasena(etiqueta, attrs):
     return etiqueta == "a" and attrs.get("href") == "/cuentas/password/change/"
 
 
-# Los SEIS destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una marca
-# propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también en el
-# cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca, cada
-# destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión: solo se
-# comprobaban tres de los ocho elementos que hay que poder pulsar).
+# Los CUATRO destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una
+# marca propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también
+# en el cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca,
+# cada destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión:
+# solo se comprobaban tres de los ocho elementos que hay que poder pulsar).
+#
+# Unidad 057, R3 — "tu-peso" y "recetas" salen de aquí (la rueda adelgaza a lo que es: los
+# ajustes de la cuenta). Los dos siguen alcanzables desde donde toca (Progreso y el segmentado
+# de Plan) — lo prueba `kcalibra/tests_nada_escondido.py` (R4), no esta lista.
 DESTINOS_DE_LA_RUEDA = (
-    ("tus-datos", "Tus datos"), ("tu-peso", "Tu peso"), ("recetas", "Recetas"),
+    ("tus-datos", "Tus datos"),
     ("el-hogar", "El hogar"), ("cambiar-contrasena", "Cambiar tu contraseña"), ("salir", "Salir"),
 )
 
@@ -530,14 +534,16 @@ class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
 
 
 class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
-    """R3 — el enlace nuevo SE SUMA: los cinco destinos de siempre siguen donde estaban."""
+    """R3 — el enlace nuevo SE SUMA: los destinos de siempre siguen donde estaban.
 
-    def test_los_cuatro_enlaces_de_siempre_siguen_con_su_texto(self):
+    Unidad 057, R3 — "Tu peso" y "Recetas" dejaron de ser dos de esos destinos: la lista
+    completa de la rueda de hoy, con el motivo, vive en `R3_LaRuedaAdelgazaACuatroTests` (más
+    abajo, sección de la 057) — aquí solo quedan los DOS que nunca se movieron."""
+
+    def test_los_dos_enlaces_de_siempre_siguen_con_su_texto(self):
         destinos = _destinos_de_ajustes(self.client.get("/").content.decode())
         for esperado in (
             ("Tus datos", "/perfiles/"),
-            ("Tu peso", "/perfiles/peso/"),
-            ("Recetas", "/recetas/"),
             ("El hogar", "/hogares/mi-hogar/"),
         ):
             with self.subTest(destino=esperado):

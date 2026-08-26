@@ -163,9 +163,13 @@ EXCEPCIONES = {
     "cuentas:reenviar_verificacion": "GET no pinta nada: si el método no es POST, redirige — no es una pantalla.",
     "cuentas:corregir_correo": "GET no pinta nada: si el método no es POST, redirige — no es una pantalla.",
     "account_inactive": "a donde allauth redirige una cuenta marcada inactiva; ninguna cuenta de la app llega a ese estado hoy, y nada la enlaza.",
-    # `perfiles:peso_mio` ("Tu peso" en la rueda) se suma aquí cuando R3 de esta misma unidad
-    # la retire de la rueda de ajustes, su único enlace hoy — hasta entonces sigue alcanzable
-    # y este barrido, contra la app de HOY, tiene que probarlo así (Plan de trabajo, paso 1).
+    # --- R3 de esta unidad la retira del único sitio que la enlazaba. ---
+    "perfiles:peso_mio": (
+        "R3 de esta unidad quita «Tu peso» de la rueda de ajustes, su único enlace; se llega "
+        "desde Progreso con el id de la persona (`perfiles:peso`). Sigue respondiendo 200 a "
+        "quien la tenga guardada como acceso directo (R5) — eso lo prueba `tests_marco.py`, "
+        "no esta red de navegación."
+    ),
 }
 
 

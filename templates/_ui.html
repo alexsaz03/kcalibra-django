@@ -160,6 +160,30 @@
 </div>
 {% endpartialdef %}
 
+{# --- Segmentado Planificador/Recetas (unidad 057, R1): dos enlaces de verdad, cada uno con  #}
+{# su propia dirección — nunca un estado de JavaScript, para que el botón "atrás" del móvil    #}
+{# funcione y se pueda entrar directo a cualquiera de las dos (mismo motivo que dejó escrito   #}
+{# el proyecto anterior en `PestanasPlan.jsx`). `activo` vale "planificador" o "recetas"; lo   #}
+{# decide quien incluye la pieza a partir de `request.resolver_match.namespace`, igual que ya #}
+{# hace la barra de abajo en `base.html`. `persona_id` hace falta porque `planes:apuntar`      #}
+{# exige un id en la URL — la pantalla de Recetas no tiene uno propio del que sacarlo. #}
+{% partialdef segmentado %}
+<nav aria-label="Plan o Recetas" class="mb-4 flex gap-1 rounded-pastilla bg-lienzo p-1">
+  <a
+    href="{% url 'planes:apuntar' persona_id %}"
+    data-segmento="planificador"
+    {% if activo == 'planificador' %}aria-current="page"{% endif %}
+    class="flex-1 rounded-pastilla px-3 py-2 text-center text-[14px] font-semibold {% if activo == 'planificador' %}bg-superficie text-tinta shadow-sm{% else %}text-tinta-media{% endif %}"
+  >Planificador</a>
+  <a
+    href="{% url 'recetas:lista' %}"
+    data-segmento="recetas"
+    {% if activo == 'recetas' %}aria-current="page"{% endif %}
+    class="flex-1 rounded-pastilla px-3 py-2 text-center text-[14px] font-semibold {% if activo == 'recetas' %}bg-superficie text-tinta shadow-sm{% else %}text-tinta-media{% endif %}"
+  >Recetas</a>
+</nav>
+{% endpartialdef %}
+
 {# --- Botón redondo de acción rápida CON MENÚ: ver nota de adaptación arriba (R8) --- #}
 {% partialdef boton_redondo_menu %}
 <div class="pointer-events-none fixed inset-x-0 z-40" style="bottom: max(6rem, calc(5rem + env(safe-area-inset-bottom)))" x-data="{ abierto: false }">
