@@ -49,7 +49,7 @@ from recetas.models import Receta
 
 import kcalibra.tests_pantallas as _tests_pantallas
 import kcalibra.tests_pantallas_de_la_casa as _tests_pantallas_de_la_casa
-from kcalibra.ayuda_de_alcanzabilidad import atributos
+from kcalibra.ayuda_de_alcanzabilidad import atributos, elementos_con_texto
 from kcalibra.tests_nada_escondido import _rutas_enlazadas
 from kcalibra.tests_pantallas import (
     _CLASE_CON_ETIQUETA_RE,
@@ -58,6 +58,7 @@ from kcalibra.tests_pantallas import (
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
     _algun_elemento_de_la_cadena_lleva_cifra,
+    _boton_redondo_es_alcanzable,
     _con_procedencia_marcada,
     _texto,
 )
@@ -244,16 +245,25 @@ def _incumple_algo_estatico(ruta):
 class R1_LaListaDePantallasSaleDelArbolTests(SimpleTestCase):
     databases = set()
 
-    def test_hoy_hay_veinticinco_pantallas_y_las_diez_excepciones_siguen_siendolo(self):
+    def test_hoy_hay_al_menos_veinticinco_pantallas_y_las_diez_excepciones_siguen_siendolo(self):
         """Número de control (evidencia de que el barrido corre, no una lista que sustituya al
         árbol) — y la mitad que de verdad importa para R8: cada excepción declarada tiene que
         SER una pantalla real hoy. Si una dejara de existir (o de extender `base.html`), la
         excepción sería papel muerto y R8 no podría ni comprobarla: sácala de la lista, no la
-        dejes envejecer."""
+        dejes envejecer.
+
+        `assertGreaterEqual`, no `assertEqual` (O1 de la revisión): un `assertEqual(…, 25)`
+        pondría en rojo cualquier pantalla NUEVA y LEGÍTIMA que añada la 055/058 — la 055 y la
+        058 tendrían que volver a tocar esta red permanente sólo para subir un número, que es
+        exactamente lo que esta unidad existe para evitar. Bajar de 25 sigue siendo ROJO (una
+        pantalla que desaparece del barrido sin querer), y R1 ya prueba, con su propia mutación
+        en código, que subir SÍ se detecta y se nombra."""
         pantallas = pantallas_vigiladas()
         nombres = {str(p.relative_to(BASE_DIR)) for p in pantallas}
         self.assertEqual(len(pantallas), len(nombres), "hay una plantilla contada dos veces")
-        self.assertEqual(len(pantallas), 25, f"se esperaban 25 pantallas hoy, salieron: {sorted(nombres)}")
+        self.assertGreaterEqual(
+            len(pantallas), 25, f"se esperaban al menos 25 pantallas hoy, salieron: {sorted(nombres)}"
+        )
         for excepcion in EXCEPCIONES:
             self.assertIn(excepcion, nombres, f"la excepción «{excepcion}» ya no es una pantalla real: sácala de EXCEPCIONES")
 
@@ -554,8 +564,14 @@ def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
     """BFS con el cliente de test desde `arranque` (mismo mecanismo que `_recorrer_la_app` de
     `kcalibra.tests_nada_escondido`, adaptado para devolver el HTML de cada página que renderiza
     alguna pantalla REAL — `_rutas_enlazadas`, importada de allí, sigue cada `href`/`hx-get`, no
-    una lista de rutas escrita a mano)."""
+    una lista de rutas escrita a mano). Devuelve `(encontradas, alcanzadas)`: la lista de
+    `(ruta, contenido)` de siempre, MÁS el conjunto de nombres de pantalla que de verdad se
+    vieron — O3 de la revisión: la guarda de rojo mudo de R5/R6 sólo contaba RUTAS, así que una
+    pantalla que el recorrido dejara de alcanzar (un estado que la fixture no crea) se quedaba
+    sin ninguna de las dos redes y nadie avisaba; comparar `alcanzadas` contra
+    `_nombres_de_pantallas_reales_hoy()` cierra esa familia sin nombrar ni una pantalla."""
     encontradas = []
+    alcanzadas = set()
     por_visitar = [arranque]
     visitadas = set()
     while por_visitar:
@@ -568,12 +584,14 @@ def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
             continue
         usadas = {plantilla.name for plantilla in (respuesta.templates or []) if plantilla.name}
         contenido = respuesta.content.decode()
-        if usadas & nombres_de_pantallas:
+        coincidentes = usadas & nombres_de_pantallas
+        if coincidentes:
             encontradas.append((ruta, contenido))
+            alcanzadas |= coincidentes
         for destino in _rutas_enlazadas(contenido):
             if destino not in visitadas:
                 por_visitar.append(destino)
-    return encontradas
+    return encontradas, alcanzadas
 
 
 def _nombres_de_pantallas_reales_hoy():
@@ -630,17 +648,28 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
         `mi_hogar.html`; Carlos, pendiente, ve `esperando_aceptacion.html`), así que volver a
         pedirla con el cliente equivocado repintaría la pantalla equivocada."""
         nombres = _nombres_de_pantallas_reales_hoy()
-        objetivos = [
-            (self.client, ruta) for ruta, _ in _paginas_de_pantallas_reales(self.client, nombres, "/")
-        ] + [
-            (self.client_carlos, ruta)
-            for ruta, _ in _paginas_de_pantallas_reales(self.client_carlos, nombres, "/hogares/mi-hogar/")
-        ]
+        paginas_alejandro, alcanzadas_alejandro = _paginas_de_pantallas_reales(self.client, nombres, "/")
+        paginas_carlos, alcanzadas_carlos = _paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        objetivos = (
+            [(self.client, ruta) for ruta, _ in paginas_alejandro]
+            + [(self.client_carlos, ruta) for ruta, _ in paginas_carlos]
+        )
         # Guarda de rojo mudo (misma familia que `kcalibra.tests_nada_escondido`): si el
         # recorrido se rompiera y no alcanzara nada, el barrido de abajo compararía una lista
         # vacía contra sí misma y colaría en verde sin haber mirado ni una pantalla.
         self.assertGreaterEqual(
             len(objetivos), 10, f"el recorrido apenas alcanzó pantallas reales: {objetivos}"
+        )
+        # O3 de la revisión: la guarda de arriba cuenta RUTAS, no PANTALLAS — una pantalla real
+        # que el recorrido dejara de alcanzar (por hacer falta un estado que la fixture no crea)
+        # podía quedarse sin R5 sin que nada lo dijera. Comparar el conjunto de nombres
+        # alcanzados contra las quince reales de hoy cierra esa familia.
+        alcanzadas = alcanzadas_alejandro | alcanzadas_carlos
+        self.assertEqual(
+            alcanzadas, nombres,
+            f"pantallas reales que el recorrido no alcanzó, y R5 no las miró: {sorted(nombres - alcanzadas)}",
         )
         sin_cifra = []
         with _con_procedencia_marcada(), self._vocabulario_ancho():
@@ -742,9 +771,18 @@ def _es_el_hueco_r6_fuera_de_ficheros(ruta):
 class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
     def test_todo_aria_describedby_apunta_a_un_id_que_existe(self):
         nombres = _nombres_de_pantallas_reales_hoy()
-        paginas = _paginas_de_pantallas_reales(self.client, nombres, "/")
-        paginas += _paginas_de_pantallas_reales(self.client_carlos, nombres, "/hogares/mi-hogar/")
+        paginas_alejandro, alcanzadas_alejandro = _paginas_de_pantallas_reales(self.client, nombres, "/")
+        paginas_carlos, alcanzadas_carlos = _paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        paginas = paginas_alejandro + paginas_carlos
         self.assertGreaterEqual(len(paginas), 10, "el recorrido apenas alcanzó pantallas reales")
+        # O3 de la revisión: ver el comentario gemelo en R5 — comparar PANTALLAS, no rutas.
+        alcanzadas = alcanzadas_alejandro | alcanzadas_carlos
+        self.assertEqual(
+            alcanzadas, nombres,
+            f"pantallas reales que el recorrido no alcanzó, y R6 no las miró: {sorted(nombres - alcanzadas)}",
+        )
         huerfanos = []
         total_referencias = 0
         for ruta, contenido in paginas:
@@ -777,10 +815,137 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
 
 
 # ------------------------------------------------------------------------------------------ #
-# R7 — los controles que abren algo se comprueban importando `kcalibra.ayuda_de_alcanzabilidad`,
-# nunca copiándola. Guarda ESTRUCTURAL: ningún fichero de tests redefine las piezas del módulo
-# compartido — si alguien las copiara a mano (el error que abrió siete agujeros en la 053), este
-# barrido lo cazaría por la FORMA del fichero, no leyendo el diff.
+# R7 (la mitad real, Hueco H1 de la revisión) — los controles que abren algo son alcanzables DE
+# VERDAD, sobre las QUINCE pantallas reales, no sólo sobre las siete que ya vigilaban a mano
+# `kcalibra/tests_pantallas.py`/`tests_pantallas_de_la_casa.py`. Antes de esto, la red permanente
+# sólo cubría la mitad ESTRUCTURAL de R7 (más abajo: nadie redefine las ocho piezas) — una
+# pantalla nueva con un botón redondo que no lleva a ningún sitio pasaba con las 887 en verde,
+# porque la alcanzabilidad de verdad seguía viviendo en dos listas de rutas escritas a mano.
+#
+# El botón/menú redondo se identifica por la FIRMA de clases que las dos piezas comparten en su
+# propio `<a>`/`<button>` clicable (`_ui.html#boton_redondo`/`#boton_redondo_menu`) MÁS un
+# `aria-label` no vacío — nunca por una lista de etiquetas ni de rutas. `_boton_redondo_es_alcanzable`
+# (importada de `kcalibra.tests_pantallas`, nunca copiada — la 27ª cara) comprueba que el control
+# en sí se puede usar; el DESTINO sale del propio HTML renderizado, no de una lista: el `href`
+# del elemento con `aria-label`, y si es un ancla interna (`#id`), el `id` al que apunta tiene
+# que EXISTIR en la misma página (los `href` a una ruta absoluta ya los sigue y comprueba
+# `kcalibra.tests_nada_escondido`, que sólo seguía `href`/`hx-get` que empiezan por "/" — un
+# ancla suelta como `#destino-que-no-existe` es precisamente el hueco que ese barrido no mira).
+# ------------------------------------------------------------------------------------------ #
+
+_CLASES_DEL_BOTON_REDONDO = {
+    "pointer-events-auto", "h-14", "w-14", "rounded-pastilla", "bg-tinta", "text-white",
+    "shadow-lg", "active:scale-95",
+}
+
+
+def _es_boton_o_menu_redondo(etiqueta, attrs):
+    """Un `<a>`/`<button>` con la FORMA del control clicable de `boton_redondo`/
+    `boton_redondo_menu` (`_ui.html`): las dos piezas comparten esta firma de clases en el
+    elemento que de verdad se toca (no en el `<div>` envoltorio, que sólo posiciona), más un
+    `aria-label` no vacío — Django/Alpine no exigen ninguno de los dos por separado, pero
+    `_ui.html` siempre los pone juntos, así que la combinación no colisiona con ningún otro
+    control de las quince pantallas reales (verificado con el barrido de abajo, en verde)."""
+    if etiqueta not in ("a", "button"):
+        return False
+    if not (attrs.get("aria-label") or "").strip():
+        return False
+    clases = set((attrs.get("class") or "").split())
+    return _CLASES_DEL_BOTON_REDONDO <= clases
+
+
+def _destino_de_ancla_interna_no_existe(contenido, attrs):
+    """`None` si el botón no es una ancla interna (nada que comprobar aquí: una ruta absoluta
+    ya la sigue `kcalibra.tests_nada_escondido`); si no, el `id` al que apunta si NO existe en
+    la misma página, o `""` si existe — nunca se decide leyendo el fichero fuente, siempre sobre
+    el HTML YA renderizado."""
+    href = (attrs.get("href") or "").strip()
+    if not href.startswith("#") or len(href) < 2:
+        return None
+    id_destino = href[1:]
+    existe = bool(elementos_con_texto(contenido, lambda e, a, i=id_destino: a.get("id") == i))
+    return "" if existe else id_destino
+
+
+class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
+    def test_ningun_boton_o_menu_redondo_real_es_inalcanzable_o_lleva_a_ningun_sitio(self):
+        nombres = _nombres_de_pantallas_reales_hoy()
+        paginas_alejandro, alcanzadas_alejandro = _paginas_de_pantallas_reales(self.client, nombres, "/")
+        paginas_carlos, alcanzadas_carlos = _paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        paginas = paginas_alejandro + paginas_carlos
+        self.assertGreaterEqual(len(paginas), 10, "el recorrido apenas alcanzó pantallas reales")
+        # O3 de la revisión: ver el comentario gemelo en R5/R6 — comparar PANTALLAS, no rutas.
+        alcanzadas = alcanzadas_alejandro | alcanzadas_carlos
+        self.assertEqual(
+            alcanzadas, nombres,
+            f"pantallas reales que el recorrido no alcanzó, y R7 no las miró: {sorted(nombres - alcanzadas)}",
+        )
+        total_controles = 0
+        rotos = []
+        for ruta, contenido in paginas:
+            for attrs, _texto_visible in elementos_con_texto(contenido, _es_boton_o_menu_redondo):
+                total_controles += 1
+                etiqueta_aria = attrs.get("aria-label")
+                coincide = lambda e, a, al=etiqueta_aria: _es_boton_o_menu_redondo(e, a) and (
+                    a.get("aria-label") or ""
+                ) == al
+                with self.subTest(ruta=ruta, control=etiqueta_aria):
+                    _boton_redondo_es_alcanzable(
+                        self, contenido, coincide, f"el botón/menú redondo «{etiqueta_aria}» de {ruta}"
+                    )
+                id_roto = _destino_de_ancla_interna_no_existe(contenido, attrs)
+                if id_roto:
+                    rotos.append(
+                        f"{ruta}: «{etiqueta_aria}» apunta a #{id_roto}, y no hay ningún "
+                        f"elemento con ese id en la página — no lleva a ningún sitio"
+                    )
+        self.assertGreater(
+            total_controles, 0,
+            "el recorrido no encontró ningún botón/menú redondo: este test no probaría nada",
+        )
+        self.assertEqual(rotos, [], f"controles redondos que no llevan a ningún sitio: {rotos}")
+
+    def test_mutacion_un_boton_redondo_que_apunta_a_un_ancla_inexistente_se_pone_rojo(self):
+        """R9 en código, permanente — el Hueco H1 de la revisión, reproducido EXACTAMENTE: el
+        marcado real de `_ui.html#boton_redondo` (mismas ocho clases, mismo `aria-label`) con
+        el `href` apuntando a un ancla que la página nunca declara. `_es_boton_o_menu_redondo`
+        tiene que reconocerlo como el control que es, y `_destino_de_ancla_interna_no_existe`
+        tiene que decir que el destino NO existe — nunca leyendo el fichero fuente de una
+        pantalla nueva, siempre sobre el HTML ya renderizado."""
+        html_con_boton_muerto = (
+            '<div class="pointer-events-none fixed inset-x-0 z-40"><div class="mx-auto w-full '
+            'max-w-movil px-4"><div class="flex justify-end"><a href="#destino-que-no-existe" '
+            'aria-label="Botón que no lleva a ningún sitio" class="pointer-events-auto flex '
+            'h-14 w-14 items-center justify-center rounded-pastilla bg-tinta text-white '
+            'shadow-lg active:scale-95">x</a></div></div></div>'
+        )
+        encontrados = elementos_con_texto(html_con_boton_muerto, _es_boton_o_menu_redondo)
+        self.assertEqual(
+            len(encontrados), 1,
+            "la firma no reconoció el marcado REAL de boton_redondo: el mutante no probaría nada",
+        )
+        attrs, _texto_visible = encontrados[0]
+        self.assertEqual(
+            _destino_de_ancla_interna_no_existe(html_con_boton_muerto, attrs),
+            "destino-que-no-existe",
+            "un botón redondo que apunta a un ancla que no existe debía detectarse como roto",
+        )
+        # Y el control: la MISMA pieza, con un destino que SÍ existe, no debe reportar nada.
+        html_con_boton_sano = html_con_boton_muerto.replace(
+            "#destino-que-no-existe", "#formulario-de-verdad"
+        ) + '<div id="formulario-de-verdad"></div>'
+        attrs_sano, _ = elementos_con_texto(html_con_boton_sano, _es_boton_o_menu_redondo)[0]
+        self.assertEqual(_destino_de_ancla_interna_no_existe(html_con_boton_sano, attrs_sano), "")
+
+
+# ------------------------------------------------------------------------------------------ #
+# R7 (la mitad ESTRUCTURAL) — los controles que abren algo se comprueban importando
+# `kcalibra.ayuda_de_alcanzabilidad`, nunca copiándola. Guarda ESTRUCTURAL: ningún fichero de
+# tests redefine las piezas del módulo compartido — si alguien las copiara a mano (el error que
+# abrió siete agujeros en la 053), este barrido lo cazaría por la FORMA del fichero, no leyendo
+# el diff.
 # ------------------------------------------------------------------------------------------ #
 
 _NOMBRES_DE_LAS_OCHO_PIEZAS = (
@@ -789,41 +954,66 @@ _NOMBRES_DE_LAS_OCHO_PIEZAS = (
 )
 
 
+def _ficheros_de_test_que_redefinen_piezas(raiz, modulo_compartido):
+    """El barrido recorre TODO fichero `test*.py` del árbol — `rglob`, no `glob`: cubre
+    `tests_x.py` Y `test_x.py` (el patrón `test*.py` casa con los dos) en CUALQUIER
+    subdirectorio, las mismas dos formas que `manage.py test` descubre y ejecuta por defecto.
+    (Hueco medido en la revisión, H4: `BASE_DIR.glob("*/tests*.py")` no bajaba de un nivel ni
+    casaba `test_*.py` — `paginas/test_copia.py` y `paginas/pruebas/tests_copia.py` colaban en
+    verde con una redefinición dentro.) Salvo el propio módulo compartido: se busca una
+    definición PROPIA (`def nombre(` / `class nombre` / `nombre =`) de cualquiera de las ocho
+    piezas — no una lista de ficheros de test escrita a mano: un fichero de test nuevo que
+    copiara el patrón entraría solo en este barrido."""
+    raiz = Path(raiz)
+    con_copia = {}
+    for ruta in sorted(raiz.rglob("test*.py")):
+        if ruta.resolve() == Path(modulo_compartido).resolve():
+            continue
+        if ".venv" in ruta.parts:
+            continue
+        texto = _texto(ruta)
+        redefinidas = [
+            nombre for nombre in _NOMBRES_DE_LAS_OCHO_PIEZAS
+            if re.search(rf"^(def|class)\s+{nombre}\b|^{nombre}\s*=", texto, re.M)
+        ]
+        if redefinidas:
+            con_copia[str(ruta.relative_to(raiz))] = redefinidas
+    return con_copia
+
+
 class R7_LaAlcanzabilidadSeImportaNuncaSeCopiaTests(SimpleTestCase):
     databases = set()
 
     def test_ningun_fichero_de_tests_redefine_las_piezas_de_alcanzabilidad(self):
-        """El barrido recorre TODO fichero `tests*.py`/`test_*.py` del árbol (salvo el propio
-        módulo compartido) buscando una definición PROPIA (`def nombre(` / `class nombre` /
-        `nombre =`) de cualquiera de las ocho piezas — no una lista de ficheros de test escrita
-        a mano: un fichero de test nuevo que copiara el patrón entraría solo en este barrido."""
-        modulo_compartido = BASE_DIR / "kcalibra" / "ayuda_de_alcanzabilidad.py"
-        con_copia = {}
-        for ruta in sorted(BASE_DIR.glob("*/tests*.py")):
-            if ruta.resolve() == modulo_compartido.resolve():
-                continue
-            if ".venv" in ruta.parts:
-                continue
-            texto = _texto(ruta)
-            redefinidas = [
-                nombre for nombre in _NOMBRES_DE_LAS_OCHO_PIEZAS
-                if re.search(rf"^(def|class)\s+{nombre}\b|^{nombre}\s*=", texto, re.M)
-            ]
-            if redefinidas:
-                con_copia[str(ruta.relative_to(BASE_DIR))] = redefinidas
+        con_copia = _ficheros_de_test_que_redefinen_piezas(
+            BASE_DIR, BASE_DIR / "kcalibra" / "ayuda_de_alcanzabilidad.py"
+        )
         self.assertEqual(
             con_copia, {},
             f"estos ficheros REDEFINEN piezas de ayuda_de_alcanzabilidad en vez de importarlas: {con_copia}",
         )
 
-    def test_mutacion_una_redefinicion_se_detecta(self):
+    def test_mutacion_una_redefinicion_se_detecta_en_test_guion_bajo_y_en_subdirectorios(self):
+        """R9 en código, y el propio Hueco H4 de la revisión: la misma redefinición, pegada dos
+        veces, cambiando sólo DÓNDE y CÓMO se llama el fichero — `test_x.py` (guion bajo, no
+        `tests_x.py`) y un fichero DOS niveles bajo la raíz — para probar el `rglob`, no sólo
+        el regex de la pieza (eso ya lo prueba, indirectamente, el test de arriba)."""
         with TemporaryDirectory() as tmp:
-            ruta = Path(tmp) / "app" / "tests_copia.py"
-            ruta.parent.mkdir(parents=True)
-            ruta.write_text("def nada_lo_tapa(caso, contenido, coincide, nombre):\n    pass\n")
-            texto = _texto(ruta)
-            redefinidas = [
-                nombre for nombre in _NOMBRES_DE_LAS_OCHO_PIEZAS
-                if re.search(rf"^(def|class)\s+{nombre}\b|^{nombre}\s*=", texto, re.M)
-            ]
-            self.assertEqual(redefinidas, ["nada_lo_tapa"])
+            definicion = "def nada_lo_tapa(caso, contenido, coincide, nombre):\n    pass\n"
+            con_guion_bajo = Path(tmp) / "paginas" / "test_copia_de_revision.py"
+            con_guion_bajo.parent.mkdir(parents=True)
+            con_guion_bajo.write_text(definicion)
+            en_subdirectorio = Path(tmp) / "paginas" / "pruebas" / "tests_copia.py"
+            en_subdirectorio.parent.mkdir(parents=True)
+            en_subdirectorio.write_text(definicion)
+
+            con_copia = _ficheros_de_test_que_redefinen_piezas(
+                tmp, Path(tmp) / "kcalibra" / "ayuda_de_alcanzabilidad.py"
+            )
+            self.assertEqual(
+                con_copia,
+                {
+                    "paginas/test_copia_de_revision.py": ["nada_lo_tapa"],
+                    "paginas/pruebas/tests_copia.py": ["nada_lo_tapa"],
+                },
+            )

@@ -1083,19 +1083,26 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
                 "minimo": 4,
             },
         ],
-        # Unidad 059 — ensanchado tras medir un falso ROJO real (no de esta unidad: se veía al
-        # barrer las QUINCE pantallas reales del proyecto entero, algo que ningún sweep de la
-        # 053 podía ver porque solo mira sus siete). Con solo `rounded-pastilla`+`px-3`+`py-1.5`,
-        # la firma también disparaba sobre botones de "Guardar"/"Quitar" corrientes
-        # (`rounded-pastilla … px-3 py-1.5 text-[13px] font-semibold`, el mismo tamaño de
-        # pastilla pequeña) en `despensa/ver.html`, `hogares/mi_hogar.html` y
-        # `recetas/detalle.html` — código correcto, sin ninguna copia. Los tres tokens que sí
-        # distinguen a `_pildora_macro_interna` de un botón (verificado: ninguno de los tres
-        # aparece en esos botones) son los de layout en línea (`inline-flex`, `items-center`,
-        # `gap-1.5`), no los de tamaño — apretar añadiendo tokens, nunca aflojar quitando la
-        # etiqueta abierta a cualquier elemento.
+        # Unidad 059 — el falso ROJO que lo motivó era real (se veía al barrer las QUINCE
+        # pantallas reales del proyecto entero, algo que ningún sweep de la 053 podía ver
+        # porque solo mira sus siete): con solo `rounded-pastilla`+`px-3`+`py-1.5`, la firma
+        # también disparaba sobre botones de "Guardar"/"Quitar" corrientes (`rounded-pastilla
+        # … px-3 py-1.5 text-[13px] font-semibold`, el mismo tamaño de pastilla pequeña) en
+        # `despensa/ver.html`, `hogares/mi_hogar.html` y `recetas/detalle.html` — código
+        # correcto, sin ninguna copia.
+        #
+        # La 1ª vuelta de esta unidad lo cerró AÑADIENDO tres tokens (`inline-flex`,
+        # `items-center`, `gap-1.5`) a `fija` — y eso es AFLOJAR, no apretar: exigir MÁS
+        # tokens para dar por copiada una pieza es detectar MENOS copias (soltar cualquiera de
+        # los tres deja escapar una copia real, medido por la revisión). El arreglo que sí
+        # aprieta es el idiom que este mismo diccionario ya usa para `aviso`: `_pildora_macro_interna`
+        # es un `<span>`; los botones de "Guardar"/"Quitar" que la motivaron son `<button>`/`<a>` —
+        # lo que la distingue de ellos no es más forma, es la ETIQUETA.
         "pildora_macro": [
-            {"fija": {"rounded-pastilla", "px-3", "py-1.5", "inline-flex", "items-center", "gap-1.5"}}
+            {
+                "fija": {"rounded-pastilla", "px-3", "py-1.5"},
+                "etiquetas_prohibidas": {"button", "a"},
+            }
         ],
         "barra_macro": [{"fija": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}}],
         "anillo_abre": [{"fija": {"shrink-0", "rounded-full", "relative"}}],
@@ -1147,16 +1154,18 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # discriminante no puede ser uno que el defecto real (copiar el aspecto de `boton` sobre
         # un `<a>`, que no entiende `:disabled`) se lleve por delante. `disabled:opacity-40` de
         # la firma de `boton` YA no sirve aquí a propósito: es justo el token que un `<a>` no
-        # necesita, así que la firma de `boton_enlace` no depende de él — usa los tokens que SÍ
-        # sobreviven a una copia sobre un `<a>` (forma pastilla + tamaño), y `etiquetas={"a"}`
-        # para no colisionar con el propio `<button>` de `boton` (que comparte casi los mismos
-        # tokens de espaciado, pero nunca es un `<a>`).
+        # necesita, así que la firma de `boton_enlace` no depende de él.
+        #
+        # La 1ª vuelta de esta unidad añadió `text-[15px]`/`font-semibold` a la firma que la 054
+        # ya había endurecido en tres vueltas — y esos dos son justo TAMAÑO y GROSOR de letra,
+        # lo primero que se ajusta al adaptar un botón pegado a mano: la revisión midió que una
+        # copia real sin `font-semibold` escapaba con esos seis tokens y ya no con estos cuatro.
+        # Se reutiliza, letra por letra, la firma que la 054 dejó — no se re-deriva — y
+        # `etiquetas={"a"}` sigue evitando colisionar con el propio `<button>` de `boton` (que
+        # comparte casi los mismos tokens de espaciado, pero nunca es un `<a>`).
         "boton_enlace": [
             {
-                "fija": {
-                    "rounded-pastilla", "px-6", "py-3.5", "text-[15px]", "font-semibold",
-                    "active:opacity-80",
-                },
+                "fija": {"rounded-pastilla", "px-6", "py-3.5", "active:opacity-80"},
                 "etiquetas": {"a"},
             }
         ],
