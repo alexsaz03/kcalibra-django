@@ -5,87 +5,112 @@
   {% if es_propio %}Cerrar un día{% elif puede_editar %}Cerrar un día de {{ persona_objetivo.nombre }}{% else %}Ver los días cerrados de {{ persona_objetivo.nombre }}{% endif %}
 {% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">
+  {% if es_propio %}Cerrar un día{% elif puede_editar %}Cerrar un día de {{ persona_objetivo.nombre }}{% else %}Ver los días cerrados de {{ persona_objetivo.nombre }}{% endif %}
+</h1>
+{% endblock %}
+
+{# R2 — la acción principal: cerrar el día. Solo si esta pantalla enseña el formulario   #}
+{# (`puede_editar`, quien solo mira nunca ve un botón que el servidor le rechazaría). #}
+{% block accion_rapida %}
+{% if puede_editar %}
+{% include "_ui.html#boton_redondo" with href="#formulario-cierre" etiqueta="Cerrar un día" %}
+{% endif %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
 
-  {# -------------------------------------------------------------------------------------- #}
-  {# R10/§8 del plano ("El cierre a mano desde Progreso"): cierra cualquier día, también     #}
-  {# pasados, y cambia uno ya cerrado (R3: volver a cerrar el mismo día lo sustituye). Mismo #}
-  {# patrón que entrenos/templates/entrenos/ver.html y perfiles/templates/perfiles/peso.html #}
-  {#                                                                                        #}
-  {# Unidad 025, R3/R5/G-43 — `es_propio` decide el TEXTO ("tus últimos cierres" / "últimos #}
-  {# cierres de Marta"); `puede_editar` decide si se enseña el formulario. Unidad 036,      #}
-  {# R4/R5/R6 — ya NO es siempre `True`: ahora también llega aquí quien solo puede MIRAR    #}
-  {# (cualquiera del hogar, R-23/G-43), y `cierres/views.py:cerrar` calcula `puede_editar`  #}
-  {# de verdad con `puede_editar_cierres` (delegado en `hogares.acceso.puede_cambiar_lo_de`)#}
-  {# — la MISMA fuente que guarda el POST, para que esta plantilla nunca ofrezca un         #}
-  {# formulario o un enlace que el servidor vaya a rechazar.                                #}
-  {# -------------------------------------------------------------------------------------- #}
-  {% partialdef historico_de_cierres %}
-  <div id="historico-de-cierres">
-    <h1 class="text-2xl font-bold text-slate-900">
-      {% if es_propio %}Cerrar un día{% elif puede_editar %}Cerrar un día de {{ persona_objetivo.nombre }}{% else %}Ver los días cerrados de {{ persona_objetivo.nombre }}{% endif %}
-    </h1>
-    <p class="mt-1 text-sm text-slate-500">
-      {% if es_propio %}
-        Di si seguiste el plan de un día, también uno pasado. Si ya lo habías cerrado, esto lo
-        sustituye.
-      {% elif puede_editar %}
-        Di si {{ persona_objetivo.nombre }} siguió el plan de un día, también uno pasado. Si
-        ya lo habías cerrado, esto lo sustituye.
-      {% else %}
-        Solo lectura: el resto del hogar ve los días cerrados de {{ persona_objetivo.nombre }},
-        pero solo {{ persona_objetivo.nombre }} (o su responsable) puede cerrarlos.
-      {% endif %}
-    </p>
+{# -------------------------------------------------------------------------------------- #}
+{# R10/§8 del plano ("El cierre a mano desde Progreso"): cierra cualquier día, también     #}
+{# pasados, y cambia uno ya cerrado (R3: volver a cerrar el mismo día lo sustituye). Mismo #}
+{# patrón que entrenos/templates/entrenos/ver.html y perfiles/templates/perfiles/peso.html #}
+{#                                                                                        #}
+{# Unidad 025, R3/R5/G-43 — `es_propio` decide el TEXTO ("tus últimos cierres" / "últimos #}
+{# cierres de Marta"); `puede_editar` decide si se enseña el formulario. Unidad 036,      #}
+{# R4/R5/R6 — ya NO es siempre `True`: ahora también llega aquí quien solo puede MIRAR    #}
+{# (cualquiera del hogar, R-23/G-43), y `cierres/views.py:cerrar` calcula `puede_editar`  #}
+{# de verdad con `puede_editar_cierres` (delegado en `hogares.acceso.puede_cambiar_lo_de`)#}
+{# — la MISMA fuente que guarda el POST, para que esta plantilla nunca ofrezca un         #}
+{# formulario o un enlace que el servidor vaya a rechazar.                                #}
+{# -------------------------------------------------------------------------------------- #}
+{% partialdef historico_de_cierres %}
+<div id="historico-de-cierres">
+  <p class="text-[13px] text-tinta-suave">
+    {% if es_propio %}
+      Di si seguiste el plan de un día, también uno pasado. Si ya lo habías cerrado, esto lo
+      sustituye.
+    {% elif puede_editar %}
+      Di si {{ persona_objetivo.nombre }} siguió el plan de un día, también uno pasado. Si
+      ya lo habías cerrado, esto lo sustituye.
+    {% else %}
+      Solo lectura: el resto del hogar ve los días cerrados de {{ persona_objetivo.nombre }},
+      pero solo {{ persona_objetivo.nombre }} (o su responsable) puede cerrarlos.
+    {% endif %}
+  </p>
 
-    {% if puede_editar %}
-      <form
-        hx-post="{% url 'cierres:cerrar' persona_objetivo.id %}"
-        hx-target="#historico-de-cierres"
-        hx-swap="outerHTML"
-        method="post"
-        class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
-      >
+  {% if puede_editar %}
+    <form
+      id="formulario-cierre"
+      hx-post="{% url 'cierres:cerrar' persona_objetivo.id %}"
+      hx-target="#historico-de-cierres"
+      hx-swap="outerHTML"
+      method="post"
+      class="mt-6"
+    >
+      {% include "_ui.html#tarjeta_abre" %}
         {% csrf_token %}
         {% if form.non_field_errors %}
-          <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
-            {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
-          </div>
+          {% for error in form.non_field_errors %}
+            {% include "_ui.html#aviso" with tipo="error" texto=error %}
+          {% endfor %}
         {% endif %}
-        {% for field in form.visible_fields %}
-          <div>
-            <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
-              {{ field.label }}
-            </label>
-            {{ field }}
-            {% if field.errors %}
-              <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
-            {% endif %}
-          </div>
-        {% endfor %}
-        <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
-          Guardar
-        </button>
-      </form>
-    {% endif %}
+        <div class="space-y-4">
+          {% for field in form.visible_fields %}
+            <div>
+              <label for="{{ field.id_for_label }}" class="mb-1.5 block text-[13px] font-semibold text-tinta-media">
+                {{ field.label }}
+              </label>
+              {{ field }}
+              {% if field.errors %}
+                <p class="mt-1 text-[13px] text-racha">{{ field.errors.0 }}</p>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="mt-4">
+          {% include "_ui.html#boton" with tipo="submit" texto="Guardar" %}
+        </div>
+      {% include "_ui.html#tarjeta_cierra" %}
+    </form>
+  {% endif %}
 
-    <section class="mt-6">
-      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
-        {% if es_propio %}Tus últimos cierres{% else %}Últimos cierres de {{ persona_objetivo.nombre }}{% endif %}
-      </h2>
-      {% if cierres %}
-        <ul class="mt-3 space-y-2">
+  <div class="mt-6">
+    {% if es_propio %}
+      {% include "_ui.html#titulo_seccion" with texto="Tus últimos cierres" %}
+    {% else %}
+      {% include "_ui.html#titulo_seccion" with texto="Últimos cierres de "|add:persona_objetivo.nombre %}
+    {% endif %}
+    {% if cierres %}
+      {% include "_ui.html#tarjeta_abre" with clase="p-0" %}
+        <ul class="divide-y divide-linea">
           {% for cierre in cierres %}
-            <li id="cierre-{{ cierre.id }}" class="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-sm">
-              <span>
-                <strong>{{ cierre.fecha }}</strong> — {{ cierre.get_respuesta_display }}
-                {% if cierre.calorias_comidas %} — {{ cierre.calorias_comidas }} kcal{% endif %}
+            <li id="cierre-{{ cierre.id }}" class="flex items-center justify-between gap-3 px-4 py-3.5">
+              <span class="flex flex-wrap items-center gap-2 text-[14px] text-tinta">
+                <strong>{{ cierre.fecha }}</strong>
+                {% if cierre.respuesta == 'lo_segui' %}
+                  {% include "_ui.html#distintivo" with texto=cierre.get_respuesta_display tono="acento" %}
+                {% elif cierre.respuesta == 'a_medias' %}
+                  {% include "_ui.html#distintivo" with texto=cierre.get_respuesta_display tono="neutro" %}
+                {% else %}
+                  {% include "_ui.html#distintivo" with texto=cierre.get_respuesta_display tono="racha" %}
+                {% endif %}
+                {% if cierre.calorias_comidas %}<span class="cifra">{{ cierre.calorias_comidas }} kcal</span>{% endif %}
               </span>
               {% if puede_editar %}
                 <a
                   href="{% url 'cierres:cerrar' persona_objetivo.id %}?fecha={{ cierre.fecha|date:'Y-m-d' }}"
-                  class="font-medium text-emerald-700 hover:underline"
+                  class="text-[13px] font-semibold text-acento active:opacity-60"
                 >
                   Cambiar
                 </a>
@@ -93,22 +118,24 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}
-        {# R13, caso límite: nadie ha cerrado nada todavía. No es un error: se dice con #}
-        {# naturalidad, como el resto de pantallas "sin datos" de la app. #}
-        <p id="sin-cierres" class="mt-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+      {% include "_ui.html#tarjeta_cierra" %}
+    {% else %}
+      {# R13, caso límite: nadie ha cerrado nada todavía. No es un error: se dice con #}
+      {# naturalidad, como el resto de pantallas "sin datos" de la app. #}
+      {% include "_ui.html#tarjeta_abre" %}
+        <p id="sin-cierres" class="text-[14px] text-tinta-suave">
           {% if es_propio %}
             Todavía no has cerrado ningún día. En cuanto cierres el primero, aparecerá aquí.
           {% else %}
             {{ persona_objetivo.nombre }} todavía no tiene ningún día cerrado.
           {% endif %}
         </p>
-      {% endif %}
-    </section>
+      {% include "_ui.html#tarjeta_cierra" %}
+    {% endif %}
   </div>
-  {% endpartialdef %}
-
-  {% partial historico_de_cierres %}
-
 </div>
+{% endpartialdef %}
+
+{% partial historico_de_cierres %}
+
 {% endblock %}

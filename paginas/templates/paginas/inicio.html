@@ -3,18 +3,22 @@
 
 {% block titulo %}Inicio{% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">Hola, {{ user.persona.nombre }}</h1>
+{% endblock %}
+
 {% block content %}
 {% if not user.is_authenticated %}
 <div class="mx-auto mt-16 max-w-2xl px-6 text-center">
-  <h1 class="text-4xl font-bold text-emerald-700">KCalibra está viva</h1>
+  <h1 class="text-4xl font-bold text-tinta">KCalibra está viva</h1>
 
-  <p class="mt-4 text-lg text-slate-600">
-    <a href="{% url 'account_signup' %}" class="font-medium text-emerald-700 hover:underline">Crea tu cuenta</a>
-    o <a href="{% url 'account_login' %}" class="font-medium text-emerald-700 hover:underline">entra</a>
+  <p class="mt-4 text-lg text-tinta-media">
+    <a href="{% url 'account_signup' %}" class="font-medium text-acento hover:underline">Crea tu cuenta</a>
+    o <a href="{% url 'account_login' %}" class="font-medium text-acento hover:underline">entra</a>
     si ya la tienes.
   </p>
 
-  <p class="mt-4 text-lg text-slate-600">
+  <p class="mt-4 text-lg text-tinta-media">
     Esto es el esqueleto de la unidad 002 (Django, PostgreSQL, Tailwind, plantillas parciales,
     HTMX y Alpine), con las cuentas y los hogares de la unidad 003 y el objetivo del día de la
     unidad 004. Entra o crea tu cuenta para ver tu plan de hoy.
@@ -26,7 +30,7 @@
   {# "hora_servidor" lo devuelve solo (ver paginas/views.py). Es la pieza que demuestra R4. #}
   {# ---------------------------------------------------------------------------------- #}
   {% partialdef hora_servidor %}
-  <p id="hora-servidor" class="mt-8 font-mono text-lg text-slate-800">
+  <p id="hora-servidor" class="mt-8 font-mono text-lg text-tinta">
     Hora del servidor: {{ hora|default:"aún no comprobada" }}
   </p>
   {% endpartialdef %}
@@ -43,7 +47,7 @@
     hx-get="{% url 'paginas:hora_servidor' %}"
     hx-target="#hora-servidor"
     hx-swap="outerHTML"
-    class="mt-6 rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white transition hover:bg-emerald-700"
+    class="mt-6 rounded-control bg-acento px-4 py-2 font-medium text-white transition hover:opacity-90"
   >
     Comprobar hora del servidor
   </button>
@@ -54,8 +58,13 @@
 {# SIEMPRE la primera (R4/G-152, ver paginas/views.py) — todas con el MISMO formato: el   #}
 {# número grande, los macros, el anillo de cuánto cubre el plan de hoy y, debajo, las     #}
 {# comidas de hoy o el botón para apuntarlas si no hay ninguna (R5).                      #}
+{#                                                                                        #}
+{# Unidad 053 — cada tarjeta usa las piezas de `_ui.html` (R7): `tarjeta`, `numero_grande` #}
+{# para el objetivo, `pildora_macro` para la fila de macros (R5: el nombre va siempre      #}
+{# escrito, no solo el color) y `anillo` para el % cubierto (mismo dato que antes,         #}
+{# `tarjeta.resumen.porcentaje_visual`/`.pasado`/`.tiene_comidas`, solo cambia el dibujo). #}
 {# ------------------------------------------------------------------------------------ #}
-<div class="mx-auto mt-10 max-w-2xl space-y-6 px-6 pb-16">
+<div class="pb-6">
   {# ------------------------------------------------------------------------------------ #}
   {# R6-R9 (unidad 012, decir-si-cumpliste.md): "lo primero que ve es la pregunta de si    #}
   {# cumplió ayer" — antes que cualquier tarjeta. Solo aparece si hay un día pendiente      #}
@@ -64,97 +73,103 @@
   {# ------------------------------------------------------------------------------------ #}
   {% include "cierres/_pregunta_pendiente.html" %}
 
-  {% for tarjeta in tarjetas %}
-    {# id único por tarjeta (H1 de la revisión): el email de quien mira YA sale en la barra  #}
-    {# de arriba (`templates/base.html`), así que buscar el email a pelo en toda la página   #}
-    {# no sirve para comprobar el ORDEN de las tarjetas — este id es lo que usan los tests    #}
-    {# de R4 (`planes/tests.py`) para saber dónde empieza cada una. #}
-    <section id="tarjeta-{{ tarjeta.persona.id }}" class="rounded-xl border border-slate-200 bg-white p-6">
-      <div class="flex items-start justify-between gap-4">
-        <h2 class="text-lg font-bold text-slate-900">
-          {% if tarjeta.es_propio %}Tú ({{ tarjeta.persona.nombre }}){% else %}{{ tarjeta.persona.nombre }}{% endif %}
-        </h2>
-        {% if tarjeta.objetivo %}
-          <p class="shrink-0 text-2xl font-bold text-emerald-700">{{ tarjeta.objetivo.calorias }} kcal</p>
-        {% endif %}
-      </div>
-
-      {% if tarjeta.objetivo %}
-        <p class="mt-1 text-sm text-slate-600">
-          Proteína: <strong>{{ tarjeta.objetivo.proteina_g }} g</strong> ·
-          Grasa: <strong>{{ tarjeta.objetivo.grasa_g }} g</strong> ·
-          Carbohidratos: <strong>{{ tarjeta.objetivo.carbos_g }} g</strong>
-        </p>
-      {% else %}
-        <p class="mt-1 text-sm text-slate-500">
-          Aún no hay datos suficientes para calcular las calorías del día.
-        </p>
-      {% endif %}
-
-      <div class="mt-4 flex items-center gap-4">
-        {# --------------------------------------------------------------------------- #}
-        {# El anillo (R2/R3/R9): CSS puro con "conic-gradient", sin ninguna librería de #}
-        {# gráficos (bias.md / "Cómo" de la especificación). El % que se PINTA es       #}
-        {# "porcentaje_visual" (ya capado a 100 en servicios/planes.py, R9: "sin...     #}
-        {# anillos desbordados"); el número que se LEE es el % real, que sí puede pasar #}
-        {# de 100 ("pasado", R9) — los dos salen ya calculados de servicios/planes.py,  #}
-        {# esta plantilla no hace ninguna cuenta (R8).                                  #}
-        {# --------------------------------------------------------------------------- #}
-        <div
-          class="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full"
-          style="background: conic-gradient(
-            {% if tarjeta.resumen.tiene_comidas %}
-              {% if tarjeta.resumen.pasado %}#dc2626{% else %}#059669{% endif %} {{ tarjeta.resumen.porcentaje_visual }}%,
-              #e2e8f0 0
-            {% else %}
-              #e2e8f0 0
+  <div class="mt-4 space-y-4">
+    {% for tarjeta in tarjetas %}
+      {# id único por tarjeta (H1 de la revisión): el email de quien mira YA sale en la barra  #}
+      {# de arriba (`templates/base.html`), así que buscar el email a pelo en toda la página   #}
+      {# no sirve para comprobar el ORDEN de las tarjetas — este id es lo que usan los tests    #}
+      {# de R4 (`planes/tests.py`) para saber dónde empieza cada una. #}
+      <div id="tarjeta-{{ tarjeta.persona.id }}">
+        {% include "_ui.html#tarjeta_abre" %}
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="text-[17px] font-bold text-tinta">
+              {% if tarjeta.es_propio %}Tú ({{ tarjeta.persona.nombre }}){% else %}{{ tarjeta.persona.nombre }}{% endif %}
+            </h2>
+            {% if tarjeta.objetivo %}
+              {# NOTA (R3/R6): "{{ N }} kcal" tiene que quedar como UN solo nodo de texto      #}
+              {# contiguo — `planes/tests.py` (R2/R9) ya exige el literal "3006 kcal"/"120%"   #}
+              {# tal cual; la pieza `numero_grande` separa el valor de la unidad en dos nodos  #}
+              {# (`{{valor}}<span>{{unidad}}</span>`) y rompería ese literal, así que aquí se  #}
+              {# aplica `.cifra` directamente en vez de la pieza (ver `_ui.html#numero_grande` #}
+              {# para el sitio donde SÍ se usa sin ese conflicto).                             #}
+              <p class="cifra shrink-0 text-[28px] font-bold text-tinta">{{ tarjeta.objetivo.calorias }} kcal</p>
             {% endif %}
-          );"
-        >
-          <div class="flex h-14 w-14 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-700">
-            {% if tarjeta.resumen.tiene_comidas %}{{ tarjeta.resumen.porcentaje }}%{% else %}—{% endif %}
           </div>
-        </div>
 
-        <div class="flex-1">
-          {% if tarjeta.resumen.tiene_comidas %}
-            <ul class="space-y-1 text-sm text-slate-700">
-              {% for comida in tarjeta.comidas %}
-                <li>{{ comida.get_momento_del_dia_display }}: {{ comida.nombre }} ({{ comida.calorias }} kcal)</li>
-              {% endfor %}
-            </ul>
-            {% if tarjeta.resumen.pasado %}
-              <p class="mt-1 text-xs font-medium text-red-700">El plan se ha pasado del objetivo de hoy.</p>
-            {% endif %}
+          {% if tarjeta.objetivo %}
+            <div class="mt-3 flex flex-wrap gap-2">
+              {% include "_ui.html#pildora_macro" with tipo="proteina" gramos=tarjeta.objetivo.proteina_g %}
+              {% include "_ui.html#pildora_macro" with tipo="grasa" gramos=tarjeta.objetivo.grasa_g %}
+              {% include "_ui.html#pildora_macro" with tipo="carbos" gramos=tarjeta.objetivo.carbos_g %}
+            </div>
           {% else %}
-            {# R5/G-153: sin plan puesto, el Inicio sigue sirviendo — nunca una pantalla #}
-            {# vacía sin salida. #}
-            <p class="text-sm text-slate-500">Sin plan puesto para hoy.</p>
-          {% endif %}
-          {% if tarjeta.hogar_pendiente %}
-            {# H2 de la revisión: mientras espera que le acepten en un hogar (R14 de la #}
-            {# unidad 003, `hogar = None`), `PlanDeDia.hogar` es obligatorio y no hay    #}
-            {# ningún hogar todavía al que colgarlo — no se puede apuntar nada de verdad #}
-            {# (planes/acceso.py da 404). Ofrecer aquí el botón sería un enlace muerto:  #}
-            {# se explica por qué, en vez de prometer una salida que no lleva a ningún   #}
-            {# sitio (R5/G-153: "una pantalla vacía que no explica nada... es una        #}
-            {# pantalla rota" — aquí la salida existía pero no llevaba a nada, que es    #}
-            {# casi peor). #}
-            <p class="mt-2 text-xs text-slate-500">
-              Cuando te acepten en el hogar podrás apuntar tu plan.
+            <p class="mt-1 text-[14px] text-tinta-suave">
+              Aún no hay datos suficientes para calcular las calorías del día.
             </p>
-          {% else %}
-            <a
-              href="{% url 'planes:apuntar' tarjeta.persona.id %}"
-              class="mt-2 inline-block text-sm font-medium text-emerald-700 hover:underline"
-            >
-              {% if tarjeta.resumen.tiene_comidas %}Añadir otra comida{% else %}Apuntar el plan{% endif %}
-            </a>
           {% endif %}
-        </div>
+
+          <div class="mt-4 flex items-center gap-4">
+            {# --------------------------------------------------------------------------- #}
+            {# El anillo (R2/R3/R9): pieza `anillo` de `_ui.html` (adaptación de `conic-      #}
+            {# gradient` documentada ahí — sin cálculo en esta plantilla, R8). El % que se    #}
+            {# PINTA sigue siendo "porcentaje_visual" (ya capado a 100 en                     #}
+            {# servicios/planes.py, R9: "sin... anillos desbordados"); el número que se LEE   #}
+            {# es el % real, que sí puede pasar de 100 ("pasado", R9) — los dos salen ya      #}
+            {# calculados de servicios/planes.py, esta plantilla no hace ninguna cuenta (R8). #}
+            {# --------------------------------------------------------------------------- #}
+            {% if tarjeta.resumen.tiene_comidas %}
+              {% if tarjeta.resumen.pasado %}
+                {% include "_ui.html#anillo_abre" with tam=80 porcentaje=tarjeta.resumen.porcentaje_visual color="var(--color-racha)" %}
+              {% else %}
+                {% include "_ui.html#anillo_abre" with tam=80 porcentaje=tarjeta.resumen.porcentaje_visual color="var(--color-acento)" %}
+              {% endif %}
+            {% else %}
+              {% include "_ui.html#anillo_abre" with tam=80 porcentaje=0 color="var(--color-lienzo)" %}
+            {% endif %}
+              <span class="cifra text-xs font-bold text-tinta-media">{% if tarjeta.resumen.tiene_comidas %}{{ tarjeta.resumen.porcentaje }}%{% else %}—{% endif %}</span>
+            {% include "_ui.html#anillo_cierra" %}
+
+            <div class="flex-1">
+              {% if tarjeta.resumen.tiene_comidas %}
+                <ul class="space-y-1 text-[14px] text-tinta">
+                  {% for comida in tarjeta.comidas %}
+                    <li>{{ comida.get_momento_del_dia_display }}: {{ comida.nombre }} (<span class="cifra">{{ comida.calorias }} kcal</span>)</li>
+                  {% endfor %}
+                </ul>
+                {% if tarjeta.resumen.pasado %}
+                  <p class="mt-1 text-xs font-medium text-racha">El plan se ha pasado del objetivo de hoy.</p>
+                {% endif %}
+              {% else %}
+                {# R5/G-153: sin plan puesto, el Inicio sigue sirviendo — nunca una pantalla #}
+                {# vacía sin salida. #}
+                <p class="text-[14px] text-tinta-suave">Sin plan puesto para hoy.</p>
+              {% endif %}
+              {% if tarjeta.hogar_pendiente %}
+                {# H2 de la revisión: mientras espera que le acepten en un hogar (R14 de la #}
+                {# unidad 003, `hogar = None`), `PlanDeDia.hogar` es obligatorio y no hay    #}
+                {# ningún hogar todavía al que colgarlo — no se puede apuntar nada de verdad #}
+                {# (planes/acceso.py da 404). Ofrecer aquí el botón sería un enlace muerto:  #}
+                {# se explica por qué, en vez de prometer una salida que no lleva a ningún   #}
+                {# sitio (R5/G-153: "una pantalla vacía que no explica nada... es una        #}
+                {# pantalla rota" — aquí la salida existía pero no llevaba a nada, que es    #}
+                {# casi peor). #}
+                <p class="mt-2 text-xs text-tinta-suave">
+                  Cuando te acepten en el hogar podrás apuntar tu plan.
+                </p>
+              {% else %}
+                <a
+                  href="{% url 'planes:apuntar' tarjeta.persona.id %}"
+                  class="mt-2 inline-block text-[14px] font-semibold text-acento active:opacity-60"
+                >
+                  {% if tarjeta.resumen.tiene_comidas %}Añadir otra comida{% else %}Apuntar el plan{% endif %}
+                </a>
+              {% endif %}
+            </div>
+          </div>
+        {% include "_ui.html#tarjeta_cierra" %}
       </div>
-    </section>
-  {% endfor %}
+    {% endfor %}
+  </div>
 </div>
 {% endif %}
 {% endblock %}

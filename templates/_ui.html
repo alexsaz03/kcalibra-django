@@ -1,0 +1,195 @@
+{% load partials %}
+{# ------------------------------------------------------------------------------------ #}
+{# Piezas del sistema de diseño (unidad 053), portadas de                                #}
+{# ~/Desktop/proyectos/kcalibra/frontend/src/components/ui.jsx — mismos nombres, mismas   #}
+{# clases donde Tailwind lo permite. Cada una es un `{% partialdef %}` para poder pedirla  #}
+{# suelta con `{% include "_ui.html#nombre" with ... %}`, igual que ya hace el proyecto    #}
+{# con `_iconos.html`.                                                                    #}
+{#                                                                                        #}
+{# Dos adaptaciones de JSX a Django, necesarias y documentadas aquí una sola vez:          #}
+{#                                                                                        #}
+{# 1. JSX pasa "children" (marcado arbitrario) a un componente; `{% include %}` de Django  #}
+{#    no tiene un mecanismo equivalente. Las piezas que ENVUELVEN contenido variable       #}
+{#    (`tarjeta`, `anillo`) se parten en un partial "_abre" y otro "_cierra": la pantalla   #}
+{#    escribe su contenido entre los dos `{% include %}`. Las piezas de contenido fijo o    #}
+{#    de puro dato (`titulo_seccion`, `numero_grande`, `pildora_macro`, `barra_macro`,      #}
+{#    `boton`, `aviso`, `distintivo`) van enteras en un único partial con parámetros.       #}
+{# 2. El `Anillo` de origen es un SVG con `stroke-dasharray` calculado en JS (2πr). Django  #}
+{#    no tiene esa aritmética en la plantilla y añadirla exigiría un template tag en un     #}
+{#    fichero de Python fuera de `ficheros:`. Se porta con el MISMO dato de entrada         #}
+{#    (un porcentaje ya calculado por la vista) pero dibujado con `conic-gradient` de CSS   #}
+{#    — la técnica que ya usaba `paginas/inicio.html` antes de esta unidad — en vez de SVG: #}
+{#    mismo resultado visual (un anillo de progreso), sin cálculo en la plantilla.          #}
+{#                                                                                        #}
+{# `pildora_macro` y `barra_macro` llevan el nombre y el color de cada macro EN LA PIEZA    #}
+{# (como en `ui.jsx`), no en cada pantalla que las use: así el nombre (R5, siempre escrito) #}
+{# no se puede olvidar al usarlas.                                                         #}
+{#                                                                                        #}
+{# `boton_redondo` no es una de las piezas nombradas en la especificación (esas viven en    #}
+{# `ui.jsx`); es el botón circular de `{% block accion_rapida %}` que definió la unidad 050 #}
+{# en `AppShell.jsx`/`base.html`. Se porta aquí, una sola vez, porque lo llenan cuatro       #}
+{# pantallas de esta unidad y copiarlo en cada una sería exactamente el "hueco" que R7      #}
+{# prohíbe.                                                                                #}
+{#                                                                                        #}
+{# `boton_redondo_menu` (R8) es la pieza HERMANA de `boton_redondo` para cuando el botón    #}
+{# redondo tiene que ofrecer DOS destinos en vez de uno (hoy, solo Progreso: apuntar una    #}
+{# pesada o cerrar un día de la persona que se está mirando). Se despliega con el MISMO      #}
+{# mecanismo que el menú de ajustes que ya vive en `base.html` (Alpine, `x-show`,           #}
+{# `@click.outside`) — ningún mecanismo nuevo, ninguna pantalla nueva.                      #}
+{# ------------------------------------------------------------------------------------ #}
+
+{# --- Tarjeta: la unidad de contenido de toda la app --- #}
+{% partialdef tarjeta_abre %}
+<section{% if id %} id="{{ id }}"{% endif %} class="rounded-tarjeta bg-superficie p-5{% if clase %} {{ clase }}{% endif %}">
+{% endpartialdef %}
+
+{% partialdef tarjeta_cierra %}
+</section>
+{% endpartialdef %}
+
+{# --- Título de sección: grande y en negrita --- #}
+{% partialdef titulo_seccion %}
+<div class="mb-3 flex items-end justify-between px-1">
+  <h2 class="text-[22px] font-bold tracking-tight">{{ texto }}</h2>
+  {% if accion_href %}
+    <a href="{{ accion_href }}" class="text-[14px] font-semibold text-acento active:opacity-60">{{ accion_texto }}</a>
+  {% endif %}
+</div>
+{% endpartialdef %}
+
+{# --- Número protagonista: el dato clave de una tarjeta (R6: siempre con `.cifra`) --- #}
+{% partialdef numero_grande %}
+<p class="cifra {{ tam|default:'text-[44px]' }} font-bold leading-none">
+  {{ valor }}{% if unidad %}<span class="ml-1.5 text-base font-semibold tracking-normal text-tinta-media">{{ unidad }}</span>{% endif %}
+</p>
+{% endpartialdef %}
+
+{# --- Píldora de macro: el nombre va SIEMPRE (R5), el color es refuerzo --- #}
+{% partialdef pildora_macro %}
+{% if tipo == "proteina" %}{% include "_ui.html#_pildora_macro_interna" with nombre_macro="Proteína" clase_fondo="bg-proteina-suave" clase_texto="text-proteina" clase_punto="bg-proteina" gramos=gramos %}
+{% elif tipo == "carbos" %}{% include "_ui.html#_pildora_macro_interna" with nombre_macro="Carbohidratos" clase_fondo="bg-carbos-suave" clase_texto="text-carbos" clase_punto="bg-carbos" gramos=gramos %}
+{% elif tipo == "grasa" %}{% include "_ui.html#_pildora_macro_interna" with nombre_macro="Grasa" clase_fondo="bg-grasa-suave" clase_texto="text-grasa" clase_punto="bg-grasa" gramos=gramos %}
+{% endif %}
+{% endpartialdef %}
+
+{% partialdef _pildora_macro_interna %}
+<span class="inline-flex items-center gap-1.5 rounded-pastilla {{ clase_fondo }} {{ clase_texto }} px-3 py-1.5 text-[13px] font-semibold">
+  <span class="inline-block h-2 w-2 rounded-full {{ clase_punto }}"></span>
+  {{ nombre_macro }}
+  <span class="cifra text-tinta">{{ gramos }} g</span>
+</span>
+{% endpartialdef %}
+
+{# --- Barra de progreso de un macro: complementa a la píldora, mismo nombre SIEMPRE (R5) --- #}
+{% partialdef barra_macro %}
+{% if tipo == "proteina" %}{% include "_ui.html#_barra_macro_interna" with nombre_macro="Proteína" clase_texto="text-proteina" clase_punto="bg-proteina" clase_barra="bg-proteina" gramos=gramos porcentaje=porcentaje %}
+{% elif tipo == "carbos" %}{% include "_ui.html#_barra_macro_interna" with nombre_macro="Carbohidratos" clase_texto="text-carbos" clase_punto="bg-carbos" clase_barra="bg-carbos" gramos=gramos porcentaje=porcentaje %}
+{% elif tipo == "grasa" %}{% include "_ui.html#_barra_macro_interna" with nombre_macro="Grasa" clase_texto="text-grasa" clase_punto="bg-grasa" clase_barra="bg-grasa" gramos=gramos porcentaje=porcentaje %}
+{% endif %}
+{% endpartialdef %}
+
+{% partialdef _barra_macro_interna %}
+<div>
+  <div class="mb-1.5 flex items-baseline justify-between">
+    <span class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-tinta">
+      <span class="inline-block h-2 w-2 rounded-full {{ clase_punto }}"></span>
+      {{ nombre_macro }}
+    </span>
+    <span class="cifra text-[13px] text-tinta-media">{{ gramos }} g · {{ porcentaje }}%</span>
+  </div>
+  <div class="h-2 overflow-hidden rounded-pastilla bg-lienzo">
+    <div class="h-full rounded-pastilla {{ clase_barra }}" style="width: {{ porcentaje }}%"></div>
+  </div>
+</div>
+{% endpartialdef %}
+
+{# --- Anillo de progreso: ver nota de adaptación (2) arriba --- #}
+{% partialdef anillo_abre %}
+<div
+  class="relative flex shrink-0 items-center justify-center rounded-full"
+  style="width: {{ tam }}px; height: {{ tam }}px; background: conic-gradient({{ color }} {{ porcentaje }}%, var(--color-lienzo) 0)"
+>
+  <div
+    class="flex flex-col items-center justify-center rounded-full bg-superficie leading-none"
+    style="width: {{ tam|add:"-18" }}px; height: {{ tam|add:"-18" }}px"
+  >
+{% endpartialdef %}
+
+{% partialdef anillo_cierra %}
+  </div>
+</div>
+{% endpartialdef %}
+
+{# --- Botón principal: negro, sólido, casi pastilla, ancho completo --- #}
+{% partialdef boton %}
+<button
+  type="{{ tipo|default:"button" }}"
+  {% if disabled %}disabled{% endif %}
+  class="{% if ancho_completo != False %}w-full {% endif %}rounded-pastilla px-6 py-3.5 text-[15px] font-semibold transition-opacity disabled:opacity-40 {% if variante == 'suave' %}bg-lienzo text-tinta active:bg-linea{% elif variante == 'contorno' %}border border-linea bg-superficie text-tinta active:bg-lienzo{% elif variante == 'acento' %}bg-acento text-white active:opacity-80{% else %}bg-tinta text-white active:opacity-80{% endif %}"
+>{{ texto }}</button>
+{% endpartialdef %}
+
+{# --- Aviso (ok / error / atención) --- #}
+{% partialdef aviso %}
+<div class="rounded-control px-4 py-3 text-[14px] font-medium {% if tipo == 'error' %}bg-racha-suave text-racha{% elif tipo == 'atencion' %}bg-carbos-suave text-carbos{% else %}bg-acento-suave text-acento{% endif %}">
+  {{ texto }}
+</div>
+{% endpartialdef %}
+
+{# --- Distintivo de racha / estado --- #}
+{% partialdef distintivo %}
+<span class="inline-flex items-center gap-1 rounded-pastilla px-2.5 py-1 text-[12px] font-semibold {% if tono == 'racha' %}bg-racha-suave text-racha{% elif tono == 'acento' %}bg-acento-suave text-acento{% else %}bg-lienzo text-tinta-media{% endif %}">{{ texto }}</span>
+{% endpartialdef %}
+
+{# --- Botón redondo de acción rápida (el hueco de `{% block accion_rapida %}`, unidad 050) --- #}
+{% partialdef boton_redondo %}
+<div class="pointer-events-none fixed inset-x-0 z-40" style="bottom: max(6rem, calc(5rem + env(safe-area-inset-bottom)))">
+  <div class="mx-auto w-full max-w-movil px-4">
+    <div class="flex justify-end">
+      <a
+        href="{{ href }}"
+        aria-label="{{ etiqueta }}"
+        class="pointer-events-auto flex h-14 w-14 items-center justify-center rounded-pastilla bg-tinta text-white shadow-lg active:scale-95"
+      >
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+{% endpartialdef %}
+
+{# --- Botón redondo de acción rápida CON MENÚ: ver nota de adaptación arriba (R8) --- #}
+{% partialdef boton_redondo_menu %}
+<div class="pointer-events-none fixed inset-x-0 z-40" style="bottom: max(6rem, calc(5rem + env(safe-area-inset-bottom)))" x-data="{ abierto: false }">
+  <div class="mx-auto w-full max-w-movil px-4">
+    <div class="relative flex justify-end">
+      <button
+        type="button"
+        @click="abierto = !abierto"
+        @click.outside="abierto = false"
+        @keydown.escape="abierto = false"
+        :aria-expanded="abierto"
+        aria-haspopup="true"
+        aria-label="{{ etiqueta }}"
+        class="pointer-events-auto flex h-14 w-14 items-center justify-center rounded-pastilla bg-tinta text-white shadow-lg active:scale-95"
+      >
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+      <div
+        x-show="abierto"
+        x-transition
+        role="menu"
+        aria-label="{{ etiqueta }}"
+        class="pointer-events-auto absolute bottom-16 right-0 w-56 rounded-control bg-superficie py-1 shadow-lg ring-1 ring-linea"
+      >
+        <a href="{{ href_1 }}" role="menuitem" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">{{ texto_1 }}</a>
+        <a href="{{ href_2 }}" role="menuitem" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">{{ texto_2 }}</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endpartialdef %}
