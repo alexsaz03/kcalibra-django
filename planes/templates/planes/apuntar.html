@@ -19,6 +19,12 @@
 
 {% block content %}
 
+{# Unidad 057, R1 — el segmentado Planificador/Recetas: FUERA del `{% partialdef plan_de_hoy %}` #}
+{# de abajo a propósito. Ese trozo es el que HTMX sustituye entero al apuntar una comida         #}
+{# (`hx-swap="outerHTML"`); el segmentado no cambia con eso, así que no tiene que ir dentro ni    #}
+{# reconstruirse en cada envío. #}
+{% include "_ui.html#segmentado" with activo="planificador" persona_id=persona_objetivo.id %}
+
 {# ------------------------------------------------------------------------------------ #}
 {# {% partialdef %} define la pantalla entera (comidas de hoy + formulario) como un      #}
 {# trozo con nombre, para que HTMX pueda pedirlo suelto al apuntar una comida (R1) y      #}

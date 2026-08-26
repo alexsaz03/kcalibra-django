@@ -4,6 +4,12 @@
 
 {% block content %}
 <div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
+  {# Unidad 057, R1 — el segmentado Planificador/Recetas: Recetas es del HOGAR, no tiene una  #}
+  {# `persona_objetivo` propia en su contexto (`recetas/views.py:lista`, fuera de `ficheros:` #}
+  {# de esta unidad), así que "Planificador" lleva al plan de quien mira — `user.persona.id`, #}
+  {# el mismo dato que ya usa `base.html` para su propia pestaña de Plan. Seguro sin guarda:   #}
+  {# `hogar_o_404` (recetas/acceso.py) ya exige `user.persona.hogar` antes de llegar aquí.     #}
+  {% include "_ui.html#segmentado" with activo="recetas" persona_id=user.persona.id %}
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold text-slate-900">Recetas</h1>
     <a

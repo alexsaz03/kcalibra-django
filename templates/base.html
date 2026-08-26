@@ -35,8 +35,12 @@
           {% block titulo_grande %}{% endblock %}
         </div>
         <div class="shrink-0 pt-1">
-          {# Botón de ajustes: los cuatro destinos de siempre que no son pestaña, más Salir   #}
-          {# (R2, "no romper nada" — ver "Cómo lo pruebas tú", fila 5 de la especificación).  #}
+          {# Botón de ajustes: la rueda es SOLO los ajustes de la cuenta (unidad 057, R3) —    #}
+          {# Tus datos, El hogar, Cambiar tu contraseña y Salir. Tu peso (se apunta desde      #}
+          {# Progreso) y Recetas (su propia pestaña dentro de Plan, R1) salían de aquí y ya    #}
+          {# no cuelgan de la rueda: la ÚNICA excepción autorizada a R6, escrita con el motivo #}
+          {# en `kcalibra/tests_marco.py:R2_NueveDestinosTests`. Los dos siguen alcanzables    #}
+          {# desde donde toca — la red completa lo prueba `kcalibra/tests_nada_escondido.py`.  #}
           <button
             type="button"
             @click="ajustesAbierto = !ajustesAbierto"
@@ -51,8 +55,6 @@
             class="absolute right-5 z-50 mt-2 w-48 rounded-control bg-superficie py-1 shadow-lg ring-1 ring-linea"
           >
             <a data-ajuste="tus-datos" href="{% url 'perfiles:ver_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tus datos</a>
-            <a data-ajuste="tu-peso" href="{% url 'perfiles:peso_mio' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Tu peso</a>
-            <a data-ajuste="recetas" href="{% url 'recetas:lista' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">Recetas</a>
             <a data-ajuste="el-hogar" href="{% url 'hogares:mi_hogar' %}" class="block px-4 py-2 text-[15px] text-tinta hover:bg-lienzo">El hogar</a>
             {# Unidad 056: hasta aquí, cambiar la contraseña estando dentro NO la enlazaba nadie —  #}
             {# la pantalla existía y funcionaba, pero solo se llegaba escribiendo la dirección.     #}
@@ -152,7 +154,12 @@
           {# Sin hogar (R7, "o con Persona sin hogar" — p. ej. esperando que le acepten en    #}
           {# uno, unidad 003) no hay `PlanDeDia` del que colgar nada: `planes/tests.py`       #}
           {# (H2) ya prueba que ese destino no se ofrece, porque sería un enlace muerto.      #}
-          <a href="{% url 'planes:apuntar' user.persona.id %}" aria-label="Plan" {% if request.resolver_match.namespace == 'planes' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'planes' %}text-white{% else %}text-white/45{% endif %}">
+          {# Unidad 057, R2 — Recetas vive DENTRO de Plan (su propio segmentado, `_ui.html`), #}
+          {# no tiene pestaña propia: el namespace "recetas" enciende ÉSTA. `R3_PestanaActiva #}
+          {# Tests` (kcalibra/tests_marco.py, unidad 050) ya comprueba que nunca se enciende  #}
+          {# más de una a la vez; esta ampliación no puede coincidir con ninguna otra porque   #}
+          {# cada `request.resolver_match.namespace` es de UNA app.                           #}
+          <a href="{% url 'planes:apuntar' user.persona.id %}" aria-label="Plan" {% if request.resolver_match.namespace == 'planes' or request.resolver_match.namespace == 'recetas' %}aria-current="page"{% endif %} class="flex flex-col items-center gap-0.5 rounded-control px-2 py-1 {% if request.resolver_match.namespace == 'planes' or request.resolver_match.namespace == 'recetas' %}text-white{% else %}text-white/45{% endif %}">
             {% include "_iconos.html#plan" %}
             <span class="text-[10px] font-medium leading-none">Plan</span>
           </a>

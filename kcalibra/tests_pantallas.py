@@ -1169,6 +1169,14 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         "distintivo": [{"fija": {"rounded-pastilla", "px-2.5", "py-1"}}],
         "boton_redondo": [{"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}}],
         "boton_redondo_menu": [{"fija": {"bottom-16", "right-0", "w-56"}}],
+        # Unidad 057, R1/R7 — `segmentado` (Planificador/Recetas), incluida por
+        # `planes/apuntar.html`, una de las nueve plantillas de esta unidad (053): esta pieza
+        # es nueva, así que `test_toda_pieza_incluida_por_esta_unidad_tiene_firma_de_clase` la
+        # detecta sola (FR-I, revisión 9ª vuelta) y exige una fila aquí. `mb-4` no aparece en
+        # ninguna de las nueve plantillas (verificado con grep) — sobra con ese único token
+        # para no colisionar, pero se deja el trío completo del contenedor para que la firma
+        # describa la FORMA de la pieza, no un accidente de una sola clase.
+        "segmentado": [{"fija": {"mb-4", "gap-1", "rounded-pastilla", "bg-lienzo"}}],
     }
 
     @staticmethod

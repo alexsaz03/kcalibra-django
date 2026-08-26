@@ -26,6 +26,7 @@ from kcalibra.ayuda_de_alcanzabilidad import (
     re_de_atributo,
 )
 from hogares.models import Persona
+from recetas.models import Receta
 
 # --- Ayudas para leer la barra inferior sin depender del orden de los atributos ---------- #
 
@@ -87,7 +88,18 @@ class R1_CincoPestanasTests(_ConAlejandroYSuHogar):
 
 class R2_NueveDestinosTests(_ConAlejandroYSuHogar):
     """R2 — el criterio de "no romper nada": los nueve destinos de la barra de hoy siguen
-    alcanzables desde el marco nuevo (cinco como pestañas, cuatro más Salir en ajustes)."""
+    alcanzables desde el marco nuevo (cinco como pestañas, cuatro más Salir en ajustes).
+
+    Unidad 057, R3 — ÚNICA excepción autorizada a R6 ("no romper nada"), escrita en el propio
+    contrato: `/perfiles/peso/` y `/recetas/` salen de la rueda de ajustes (que adelgaza a
+    cuatro: Tus datos, El hogar, Cambiar tu contraseña, Salir — ver
+    `R3_LaRuedaAdelgazaACuatroTests`, más abajo). Los NUEVE destinos siguen existiendo y
+    siguen alcanzables — nada se ha quitado — pero estos dos ya no cuelgan de la rueda de la
+    portada: `/perfiles/peso/` se alcanza desde Progreso (el botón redondo) y `/recetas/`
+    desde su propia pestaña dentro de Plan (el segmentado, R1 de la 057). Por eso este test ya
+    no los busca AQUÍ — la red que sí prueba que los nueve siguen alcanzables desde ALGUNA
+    parte de la app es `kcalibra/tests_nada_escondido.py` (R4 de la 057), que manda sobre
+    ésta."""
 
     def test_los_nueve_destinos_siguen_alcanzables(self):
         respuesta = self.client.get("/")
@@ -103,7 +115,7 @@ class R2_NueveDestinosTests(_ConAlejandroYSuHogar):
             for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "a" and "href" in a)
         }
         for ruta in ("/", "/progreso/", "/entrenos/", "/despensa/",       # las pestañas (R1)
-                     "/perfiles/", "/perfiles/peso/", "/recetas/", "/hogares/mi-hogar/"):
+                     "/perfiles/", "/hogares/mi-hogar/"):
             with self.subTest(destino=ruta):
                 self.assertIn(ruta, rutas)
 
@@ -373,13 +385,17 @@ def _es_el_enlace_de_la_contrasena(etiqueta, attrs):
     return etiqueta == "a" and attrs.get("href") == "/cuentas/password/change/"
 
 
-# Los SEIS destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una marca
-# propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también en el
-# cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca, cada
-# destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión: solo se
-# comprobaban tres de los ocho elementos que hay que poder pulsar).
+# Los CUATRO destinos de la rueda llevan `data-ajuste` en la plantilla. No es adorno: sin una
+# marca propia habría que localizarlos por su ruta, y una ruta como `/perfiles/` aparece también
+# en el cuerpo de varias pantallas — el test encontraría dos y daría un rojo falso. Con la marca,
+# cada destino es exactamente uno y se puede exigir que TODOS sean alcanzables (13ª revisión:
+# solo se comprobaban tres de los ocho elementos que hay que poder pulsar).
+#
+# Unidad 057, R3 — "tu-peso" y "recetas" salen de aquí (la rueda adelgaza a lo que es: los
+# ajustes de la cuenta). Los dos siguen alcanzables desde donde toca (Progreso y el segmentado
+# de Plan) — lo prueba `kcalibra/tests_nada_escondido.py` (R4), no esta lista.
 DESTINOS_DE_LA_RUEDA = (
-    ("tus-datos", "Tus datos"), ("tu-peso", "Tu peso"), ("recetas", "Recetas"),
+    ("tus-datos", "Tus datos"),
     ("el-hogar", "El hogar"), ("cambiar-contrasena", "Cambiar tu contraseña"), ("salir", "Salir"),
 )
 
@@ -518,14 +534,16 @@ class R2_SinSesionNoHayNadaQueCambiarTests(_ConAlejandroYSuHogar):
 
 
 class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
-    """R3 — el enlace nuevo SE SUMA: los cinco destinos de siempre siguen donde estaban."""
+    """R3 — el enlace nuevo SE SUMA: los destinos de siempre siguen donde estaban.
 
-    def test_los_cuatro_enlaces_de_siempre_siguen_con_su_texto(self):
+    Unidad 057, R3 — "Tu peso" y "Recetas" dejaron de ser dos de esos destinos: la lista
+    completa de la rueda de hoy, con el motivo, vive en `R3_LaRuedaAdelgazaACuatroTests` (más
+    abajo, sección de la 057) — aquí solo quedan los DOS que nunca se movieron."""
+
+    def test_los_dos_enlaces_de_siempre_siguen_con_su_texto(self):
         destinos = _destinos_de_ajustes(self.client.get("/").content.decode())
         for esperado in (
             ("Tus datos", "/perfiles/"),
-            ("Tu peso", "/perfiles/peso/"),
-            ("Recetas", "/recetas/"),
             ("El hogar", "/hogares/mi-hogar/"),
         ):
             with self.subTest(destino=esperado):
@@ -546,3 +564,126 @@ class R3_LosDestinosDeSiempreSiguenTests(_ConAlejandroYSuHogar):
             "Salir no postea: un logout por GET lo dispara cualquier precarga del navegador",
         )
         self.assertIn("Salir", formularios[0][1])
+
+
+# ------------------------------------------------------------------------------------------ #
+# Unidad 057 (cada-cosa-en-su-pestana.md): R1, R2, R3, R5 de su especificación. R4 (la red
+# permanente de alcanzabilidad) vive en su propio fichero, `kcalibra/tests_nada_escondido.py`
+# — es la que manda sobre todas las demás. R6 ("no romper nada") es el resto de la suite
+# siguiendo en verde, con la única excepción escrita en `R2_NueveDestinosTests` de arriba. R7
+# (el segmentado vive una sola vez, en `_ui.html`) lo prueba `kcalibra/tests_pantallas.py`
+# (la firma de clase de la pieza en `_FIRMAS_DE_CLASE_POR_PIEZA`, unidad 053).
+# ------------------------------------------------------------------------------------------ #
+
+
+def _opcion_del_segmentado(contenido, segmento):
+    """El `<a data-segmento="...">` de esa opción del control segmentado (R1), o revienta si
+    no hay exactamente uno — mismo criterio que `cadena_unica` de `ayuda_de_alcanzabilidad`:
+    cero es "no existe", dos es "hay un señuelo sin distinguir cuál es el de verdad". Anclado
+    a `etiqueta == "a"` a propósito: un `<button>` (o cualquier otra cosa) con el mismo
+    `data-segmento` NO cuenta como esta opción — es exactamente el hueco que R1 prohíbe
+    ("convertirlo en botones sin dirección propia")."""
+    coincide = lambda e, a: e == "a" and a.get("data-segmento") == segmento
+    encontrados = elementos_con_texto(contenido, coincide)
+    assert len(encontrados) == 1, (
+        f"«{segmento}» del segmentado: {len(encontrados)} <a data-segmento=\"{segmento}\">, se esperaba 1"
+    )
+    return encontrados[0]
+
+
+class R1_SegmentadoPlanRecetasTests(_ConAlejandroYSuHogar):
+    """R1 — Recetas es una pestaña DENTRO de Plan: un control segmentado con dos opciones,
+    Planificador y Recetas, cada una un enlace de verdad con su propia dirección — nunca un
+    estado de JavaScript (así funciona el botón «atrás» del móvil, y se puede entrar directo a
+    cualquiera de las dos)."""
+
+    def test_el_segmentado_esta_en_el_planificador_con_planificador_marcado(self):
+        contenido = self.client.get(f"/planes/{self.alejandro.id}/apuntar/").content.decode()
+        attrs_plan, _ = _opcion_del_segmentado(contenido, "planificador")
+        attrs_recetas, _ = _opcion_del_segmentado(contenido, "recetas")
+
+        self.assertEqual(attrs_plan.get("href"), f"/planes/{self.alejandro.id}/apuntar/")
+        self.assertEqual(attrs_recetas.get("href"), "/recetas/")
+        self.assertEqual(attrs_plan.get("aria-current"), "page")
+        self.assertNotEqual(attrs_recetas.get("aria-current"), "page")
+
+    def test_el_segmentado_esta_en_recetas_con_recetas_marcado(self):
+        contenido = self.client.get("/recetas/").content.decode()
+        attrs_plan, _ = _opcion_del_segmentado(contenido, "planificador")
+        attrs_recetas, _ = _opcion_del_segmentado(contenido, "recetas")
+
+        self.assertEqual(attrs_plan.get("href"), f"/planes/{self.alejandro.id}/apuntar/")
+        self.assertEqual(attrs_recetas.get("href"), "/recetas/")
+        self.assertEqual(attrs_recetas.get("aria-current"), "page")
+        self.assertNotEqual(attrs_plan.get("aria-current"), "page")
+
+
+class R2_PestanaPlanEncendidaEnRecetasTests(_ConAlejandroYSuHogar):
+    """R2 — Recetas vive DENTRO de Plan (R1): la pestaña de la barra de ABAJO que se enciende
+    en `/recetas/` y en sus subpantallas es Plan — exactamente una, nunca una pestaña propia
+    de Recetas (no existe ninguna)."""
+
+    def _solo_plan_encendida(self, ruta):
+        respuesta = self.client.get(ruta)
+        self.assertEqual(respuesta.status_code, 200, ruta)
+        contenido = respuesta.content.decode()
+        # `_pestanas` ya acota la lectura a la zona de la barra inferior (`_zona_de_la_barra_
+        # inferior`, arriba de este fichero): el `aria-current="page"` del segmentado de R1
+        # vive dentro de `<main>`, ANTES de esa zona, así que no se cuela aquí por accidente.
+        activas = [etiqueta for etiqueta, _, activa in _pestanas(contenido) if activa]
+        self.assertEqual(activas, ["Plan"], f"{ruta}: pestañas encendidas = {activas}")
+
+    def test_en_la_lista_de_recetas(self):
+        self._solo_plan_encendida("/recetas/")
+
+    def test_en_las_subpantallas_de_recetas(self):
+        receta = Receta.objects.create(hogar=self.alejandro.hogar, nombre="Tortilla", raciones=2)
+        for ruta in ("/recetas/nueva/", f"/recetas/{receta.id}/", f"/recetas/{receta.id}/editar/"):
+            with self.subTest(ruta=ruta):
+                self._solo_plan_encendida(ruta)
+
+
+class R3_LaRuedaAdelgazaACuatroTests(_ConAlejandroYSuHogar):
+    """R3 — la rueda de ajustes pasa a tener EXACTAMENTE cuatro destinos, en este orden: Tus
+    datos, El hogar, Cambiar tu contraseña, Salir. Tu peso y Recetas salen de ahí — siguen
+    alcanzables (Tu peso desde Progreso, Recetas desde su pestaña dentro de Plan, R1), y
+    `kcalibra/tests_nada_escondido.py` (R4) es la red que lo prueba recorriendo la app
+    entera, no ésta."""
+
+    def test_la_rueda_tiene_exactamente_estos_tres_enlaces_en_este_orden_mas_salir(self):
+        contenido = self.client.get("/").content.decode()
+        # `_destinos_de_ajustes` (unidad 056, arriba) ya lee solo los `<a data-ajuste>` — Salir
+        # es un `<button>`, así que no aparece aquí y se comprueba aparte, abajo.
+        self.assertEqual(
+            _destinos_de_ajustes(contenido),
+            [
+                ("Tus datos", "/perfiles/"),
+                ("El hogar", "/hogares/mi-hogar/"),
+                ("Cambiar tu contraseña", "/cuentas/password/change/"),
+            ],
+        )
+
+        acciones = {
+            attrs.get("action")
+            for attrs, _ in elementos_con_texto(contenido, lambda e, a: e == "form")
+        }
+        self.assertIn("/cuentas/logout/", acciones)
+
+    def test_tu_peso_y_recetas_ya_no_estan_en_la_rueda(self):
+        """Mutación al revés de la que prueba R6: si alguien los deja, esto lo caza (y si
+        alguien quita, de más, otro de los cuatro que sí tocan, lo caza el test de arriba)."""
+        contenido = self.client.get("/").content.decode()
+        destinos = _destinos_de_ajustes(contenido)
+        self.assertNotIn(("Tu peso", "/perfiles/peso/"), destinos)
+        self.assertNotIn(("Recetas", "/recetas/"), destinos)
+
+
+class R5_LosAccesosDirectosDeSiempreSiguenRespondiendoTests(_ConAlejandroYSuHogar):
+    """R5 — cambiar DÓNDE se enlaza algo no puede romper un enlace guardado en el móvil de
+    nadie: `/recetas/` y `/perfiles/peso/` (ya fuera de la rueda, R3) siguen respondiendo 200 a
+    quien las tenga guardadas como acceso directo."""
+
+    def test_recetas_y_peso_mio_siguen_respondiendo_200(self):
+        for ruta in ("/recetas/", "/perfiles/peso/"):
+            with self.subTest(ruta=ruta):
+                self.assertEqual(self.client.get(ruta).status_code, 200)
