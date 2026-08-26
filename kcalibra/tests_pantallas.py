@@ -148,6 +148,15 @@ PIEZAS_QUE_ESTA_UNIDAD_USA = frozenset({
 # ocurrencia, no de qué dice el fichero.)
 _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE = re.compile(r"\{%.*?%\}|\{#.*?#\}", re.S)
 _VARIABLE_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}", re.S)
+# Vuelta 13 — I3 (falso verde MEDIDO, dejado como DEUDA): un `{% … %}` dentro de un `class="…"`
+# también puede suplir un token de la firma de una pieza (`{% firstof %}`, `{% cycle %}`, un tag
+# propio…), igual que un `{{ … }}`, y al borrarlo a secas esa copia escapa. El padre intentó
+# cerrarlo contando cada `{% … %}` como comodín y MIDIÓ que no vale: las pantallas reales usan
+# `{% if %}` dentro de sus `class`, así que la suite base se ponía en ROJO (`failures=1`) y con
+# ella todas las mediciones que debían salir verdes. Cerrarlo de verdad exige distinguir qué
+# `{% … %}` IMPRIME, y eso es otra lista de literales — justo lo que esta unidad lleva doce
+# vueltas quitando. La 11ª revisión lo dejó explícitamente fuera de lo que hace falta para
+# firmar. Se pasa por escrito a la 054/055.
 
 
 def _rutas_de_las_siete_pantallas(persona, entreno):
@@ -572,7 +581,7 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # `.cifra`); (b) `%` se ancla con `(?!\\w)` en vez de `\\b`, igual que el resto de unidades
 # (`(?!\\w)` y `\\b` coinciden para las que terminan en letra, y sólo `(?!\\w)` funciona
 # también para `%`, que no es un carácter de palabra).
-_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)")
+_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
 
 # Vuelta 12 — la 10ª revisión (BLOQUEANTE) midió que la procedencia "por construcción" de la
 # vuelta 11 sólo cubría UNO de los caminos: parcheaba `render_value_in_context`
@@ -606,11 +615,33 @@ _NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)")
 # `template_partials/templatetags/partials.py`). Envolver TAMBIÉN su salida marcaría entero
 # como "de variable" cualquier prosa fija que viva dentro de un `{% if %}`/`{% for %}` — el
 # defecto contrario: falsos ROJOS masivos sobre marcado normal, que habrían roto las 41
-# mediciones de la vuelta 11. Se distinguen con una segunda marca: `NodeList.render` (el único
-# punto por el que un nodo CONTENEDOR delega en sus hijos) se parchea para anotar, en la
-# llamada activa, que ese nodo DELEGÓ — y sólo se envuelve la salida de un nodo cuando NO
-# delegó en ningún `NodeList` durante su propio `render()` (una hoja de verdad: el texto lo
-# construyó él mismo, no sus hijos).
+# mediciones de la vuelta 11.
+#
+# La vuelta 12 distinguía esto con una segunda marca en `NodeList.render`, preguntando "¿este
+# nodo DELEGÓ en una NodeList durante su render()?". Esa pregunta es falsa por los dos lados
+# (11ª revisión, BLOQUEANTE, medido contra el fuente instalado de Django 5.2.17): `ForNode` NO
+# pasa por `NodeList.render` — itera `self.nodelist_loop` llamando a `node.render_annotated` a
+# mano (`django/template/defaulttags.py`) —, así que "delegó" salía `False` para cualquier
+# `{% for %}` y su salida entera se envolvía como "de dato": falso ROJO sobre prosa fija
+# corriente dentro de un bucle. Y un nodo que SÍ delega en una `NodeList` y ADEMÁS construye su
+# propia salida a partir de eso (`SimpleBlockNode.get_resolved_arguments` llama a
+# `self.nodelist.render(context)` para armar un argumento y LUEGO la función del usuario
+# devuelve otra cosa; `FilterNode.render` hace `output = self.nodelist.render(context)` y
+# LUEGO `self.filter_expr.resolve(context)`) marcaba "delegó" en `True` y quedaba SIN envolver:
+# falso VERDE, y bloqueante — la página pinta el número sin `.cifra` y el barrido lo exime como
+# prosa fija. "¿Delegó?" mide un hecho que no implica lo que se le hacía decir.
+#
+# El arreglo deja de preguntar eso y pregunta "¿la salida de este nodo ES la de sus hijos?".
+# Cada nodo acumula, durante su propio `render()`, lo que devolvieron sus hijos — y "hijos" es
+# CUALQUIER llamada a `render_annotated` que ocurra mientras ese `render()` está en marcha, la
+# reciba `NodeList.render` o, como `ForNode`, un bucle a mano: todas pasan por el mismo parche
+# de abajo, incluida la de `TextNode` (con un segundo parche que sólo ACUMULA su valor en el
+# padre, nunca lo envuelve — sigue siendo la hoja de verdad). Al terminar, un nodo envuelve su
+# propia salida SI Y SÓLO SI esa salida no es EXACTAMENTE la concatenación de lo acumulado. Un
+# contenedor que se limita a devolver lo que sus hijos produjeron nunca se envuelve —
+# `{% for %}` incluido, sin necesidad de nombrarlo — y un nodo que delega y LUEGO transforma o
+# añade a lo delegado sí se envuelve, exista hoy el tag que lo hace o lo escriba una pantalla
+# futura: la regla mira el ÁRBOL, no una lista de tags.
 #
 # `\x01`/`\x02` no son caracteres que HTML o esta app usen nunca en texto real (ni en un
 # `{{ … }}` ya escapado): sobreviven intactos a `conditional_escape` y no rompen el parser de
@@ -622,36 +653,51 @@ _MARCA_DE_PROCEDENCIA_RE = re.compile(f"[{_INICIO_VARIABLE}{_FIN_VARIABLE}]")
 
 @contextmanager
 def _con_procedencia_marcada():
-    """Envuelve la salida de TODO nodo de plantilla que NO sea `TextNode` — hoja de verdad, ver
-    el comentario de arriba — entre `_INICIO_VARIABLE`/`_FIN_VARIABLE`, mientras dura el
-    `with`. Dos parches, un solo mecanismo: `Node.render_annotated` decide envolver o no (y
-    `TextNode` nunca pasa por el parche, por tener su propio `render_annotated`);
-    `NodeList.render` sólo anota, en la llamada activa, que su nodo delegó — para que un
-    contenedor (`{% if %}`/`{% for %}`/`{% include %}`/`{% block %}`/`{% partial … inline %}`/
-    …) no envuelva TAMBIÉN la prosa fija de sus hijos."""
+    """Envuelve la salida de un nodo de plantilla entre `_INICIO_VARIABLE`/`_FIN_VARIABLE`,
+    mientras dura el `with`, SI Y SÓLO SI esa salida no es exactamente la concatenación de lo
+    que devolvieron sus hijos durante su propio `render()` — ver el comentario de arriba. Dos
+    parches, un solo mecanismo: `Node.render_annotated` acumula, en la llamada activa que lo
+    contiene, cada resultado de sus hijos (los reciba vía `NodeList.render` o, como `ForNode`,
+    en un bucle a mano — da igual: cualquier hijo pasa por uno de los dos parches de aquí) y al
+    terminar compara; `TextNode.render_annotated` (que NUNCA pasa por el parche de `Node`, por
+    tener su propia sobrescritura — MRO) se parchea aparte, sólo para acumular su valor tal
+    cual en el padre, nunca para envolverlo: sin esto, cualquier contenedor con texto literal Y
+    un hijo dinámico (el caso normal) parecería estar "construyendo su propia salida" al faltar
+    el texto literal en lo acumulado, y se envolvería entero."""
     Node = _django_template_base.Node
-    NodeList = _django_template_base.NodeList
+    TextNode = _django_template_base.TextNode
     original_render_annotated = Node.render_annotated
-    original_nodelist_render = NodeList.render
-    pila_delega = []  # una entrada por llamada activa a render_annotated, True si delegó
+    original_text_render_annotated = TextNode.render_annotated
+    pila_hijos = []  # una lista por llamada activa: lo que devolvieron SUS hijos, en orden
 
     def _render_annotated_envuelto(self, context):
-        pila_delega.append(False)
+        pila_hijos.append([])
         try:
             resultado = original_render_annotated(self, context)
         finally:
-            delega = pila_delega.pop()
-        if delega:
-            return resultado
-        return _INICIO_VARIABLE + resultado + _FIN_VARIABLE
+            hijos = pila_hijos.pop()
+        # Un nodo puede devolver algo que no sea `str` (`{% filter length %}` devuelve un
+        # `int`); `NodeList.render` ya lo pasa por `str()`, así que aquí se hace lo mismo antes
+        # de concatenar el centinela. Sin esto, ese caso reventaba con `TypeError` en vez de
+        # medirse (lo destapó el barrido G5 de la vuelta 13).
+        if not isinstance(resultado, str):
+            resultado = str(resultado)
+        if resultado == "".join(hijos):
+            final = resultado
+        else:
+            final = _INICIO_VARIABLE + resultado + _FIN_VARIABLE
+        if pila_hijos:
+            pila_hijos[-1].append(final)
+        return final
 
-    def _nodelist_render_envuelto(self, context):
-        if pila_delega:
-            pila_delega[-1] = True
-        return original_nodelist_render(self, context)
+    def _text_render_annotated_envuelto(self, context):
+        resultado = original_text_render_annotated(self, context)
+        if pila_hijos:
+            pila_hijos[-1].append(resultado)
+        return resultado
 
     with mock.patch.object(Node, "render_annotated", _render_annotated_envuelto), \
-            mock.patch.object(NodeList, "render", _nodelist_render_envuelto):
+            mock.patch.object(TextNode, "render_annotated", _text_render_annotated_envuelto):
         yield
 
 
@@ -719,10 +765,18 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
     def _piezas_por_procedencia(self):
         """`(subtexto, cadena_de_ancestros, de_variable)` de cada sub-trozo del documento
         entero, en orden, con el contador de profundidad cruzando los `handle_data`: abre con
-        `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE` (profundidad -= 1),
-        y todo lo que cae con profundidad > 0 es "de variable". Las dos marcas se BORRAN del
-        texto (no forman parte de ningún sub-trozo), así que un número y su unidad separados
-        sólo por el centinela de cierre quedan pegados otra vez."""
+        `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE` (profundidad -= 1,
+        ACOTADA en 0), y todo lo que cae con profundidad > 0 es "de variable". Las dos marcas
+        se BORRAN del texto (no forman parte de ningún sub-trozo), así que un número y su
+        unidad separados sólo por el centinela de cierre quedan pegados otra vez.
+
+        La cota en 0 (11ª revisión, BLOQUEANTE): un `_FIN_VARIABLE` que se cuela dentro de una
+        etiqueta (fuera de `handle_data`, ver `handle_starttag`/`handle_endtag` arriba) mientras
+        su `_INICIO_VARIABLE` sí llega al texto deja el contador descompensado — SIN la cota,
+        cae a -1 y a partir de ahí un `{{ … }}` de verdad sólo lo sube a 0: `de_variable = False`
+        para TODO lo que quede de página, apagando R6 en silencio de punta a punta. Con la cota,
+        un centinela descompensado sólo hace perder profundidad de más (falso ROJO, el lado
+        seguro) en vez de apagar el resto del documento."""
         piezas = []
         profundidad = 0
         for texto, cadena in self._trozos:
@@ -730,7 +784,10 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
             for marca in _MARCA_DE_PROCEDENCIA_RE.finditer(texto):
                 if marca.start() > cursor:
                     piezas.append((texto[cursor:marca.start()], cadena, profundidad > 0))
-                profundidad += 1 if marca.group() == _INICIO_VARIABLE else -1
+                if marca.group() == _INICIO_VARIABLE:
+                    profundidad += 1
+                else:
+                    profundidad = max(0, profundidad - 1)
                 cursor = marca.end()
             if cursor < len(texto):
                 piezas.append((texto[cursor:], cadena, profundidad > 0))
