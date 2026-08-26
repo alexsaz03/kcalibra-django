@@ -702,3 +702,85 @@ class R8_SoloLecturaSinFormularioTests(_ConLaCasaMontada):
         self.assertEqual(respuesta.status_code, 200)
         self.assertNotIn("<form", contenido.split('id="tarjeta-perfil"', 1)[1].split("</div>", 1)[0])
         self.assertNotIn(">Guardar<", contenido)
+
+
+# ------------------------------------------------------------------------------------------ #
+# R11 — nace el 2026-08-26 de la excepción que aprobó el usuario sobre H1: el botón de quitar
+# un producto de la despensa cambió su rótulo visible de la palabra "Quitar" al icono "✕". El
+# icono no dice nada por sí solo; el `aria-label="Quitar {{ producto.nombre }}"` pasa a ser lo
+# ÚNICO que le dice a un lector de pantalla que ese control BORRA, y cuál producto.
+#
+# El barrido de abajo saca la lista de productos (y su nombre) del HTML que la despensa pinta
+# de VERDAD — cortando por `data-producto-id`, que ya escribe la plantilla — en vez de una lista
+# de productos escrita a mano en el test.
+# ------------------------------------------------------------------------------------------ #
+
+_INICIO_DE_FILA_DE_PRODUCTO_RE = re.compile(r'<div data-producto-id="(\d+)">')
+
+
+def _filas_de_productos_de_la_despensa(contenido):
+    """[(id, fragmento_html_de_la_fila), ...] de cada producto que la despensa pinta de verdad.
+
+    Corta por `data-producto-id` (lo escribe `despensa/ver.html` por cada producto del barrido
+    del servidor) hasta el `</li>` que cierra su fila (`_ui.html#fila_lista_cierra`): ni una fila
+    de más (el botón "Ajustes" del encabezado, el "Añadir producto" de más abajo) ni una de
+    menos. La definición de caso sale de esta estructura, no de una lista escrita a mano.
+    """
+    filas = []
+    for coincidencia in _INICIO_DE_FILA_DE_PRODUCTO_RE.finditer(contenido):
+        fin_de_fila = contenido.index("</li>", coincidencia.end())
+        filas.append((coincidencia.group(1), contenido[coincidencia.start():fin_de_fila]))
+    return filas
+
+
+class R11_BotonDeQuitarNombraSuProductoTests(_ConLaCasaMontada):
+    def setUp(self):
+        super().setUp()
+        # Un segundo producto, aparte del "Tomate" de la fixture compartida, para que el barrido
+        # de abajo tenga más de un caso real y no se quede en una comprobación de uno solo.
+        respuesta = self.client.post(
+            "/despensa/anadir/",
+            {"nombre": "Aceite de oliva", "cantidad": "1", "unidad": "l", "categoria": "aceite_grasa"},
+        )
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_cada_boton_de_quitar_nombra_su_producto(self):
+        respuesta = self.client.get("/despensa/")
+        self.assertEqual(respuesta.status_code, 200)
+        contenido = respuesta.content.decode()
+
+        filas = _filas_de_productos_de_la_despensa(contenido)
+        # Guarda de rojo mudo (mismo motivo que en R6/R8): si el recorrido no encontrara ninguna
+        # fila, el barrido de abajo compararía una lista vacía contra sí misma y colaría en
+        # verde sin haber comprobado nada.
+        self.assertGreaterEqual(
+            len(filas), 2, f"la despensa no pintó las filas de producto esperadas: {filas}"
+        )
+
+        for id_producto, fragmento in filas:
+            nombres = elementos_con_texto(fragmento, lambda e, a: e == "p")
+            self.assertEqual(
+                len(nombres), 1,
+                f"producto {id_producto}: no hay un único <p> con su nombre en la fila",
+            )
+            nombre_producto = nombres[0][1]
+
+            botones = elementos_con_texto(
+                fragmento, lambda e, a: e == "button" and "aria-label" in a
+            )
+            self.assertEqual(
+                len(botones), 1,
+                f"producto {id_producto} ({nombre_producto}): no hay un único botón con "
+                f"aria-label en su fila — ¿sigue el botón de quitar sin nombre accesible?",
+            )
+            aria_label = botones[0][0].get("aria-label") or ""
+            self.assertTrue(
+                aria_label.startswith("Quitar"),
+                f"producto {id_producto} ({nombre_producto}): su botón de quitar no nombra la "
+                f"acción — aria-label={aria_label!r}",
+            )
+            self.assertIn(
+                nombre_producto, aria_label,
+                f"producto {id_producto} ({nombre_producto}): el aria-label del botón de quitar "
+                f"no dice el nombre de SU producto — aria-label={aria_label!r}",
+            )
