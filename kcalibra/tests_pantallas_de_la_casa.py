@@ -435,12 +435,15 @@ class R5_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # Hueco H4 (revisión, hallazgos.md): `boton` escapaba a su propia firma sobre un `<a>`
         # copiado a mano porque DOS de sus cuatro tokens fijos (`transition-opacity` y sobre
         # todo `disabled:opacity-40`, que no significa nada sobre una etiqueta sin `:disabled`)
-        # son justo los que un copiador suelta al pegar sobre un enlace. La firma de
-        # `boton_enlace` no depende de ninguno de los dos que un `<a>` no necesita — está hecha
-        # de los tokens que SÍ sobreviven a esa copia, así que la caza en vez de dejarla pasar.
+        # son justo los que un copiador suelta al pegar sobre un enlace.
+        # Hueco H5 (revisión 2, hallazgos.md, M5b/M5c): la primera firma de `boton_enlace`
+        # todavía incluía `transition-opacity` en `fija` y ese token SÍ sobrevive a una copia
+        # sobre un `<a>` — medido: la copia a mano exacta que originó H4, pegada en otra de las
+        # nueve pantallas, entraba en VERDE. Sin `transition-opacity` (M8/M8b/M8c) la misma
+        # copia cae en ROJO, sin abrir ningún falso rojo nuevo en la suite entera (870, OK).
         "boton_enlace": [
             {
-                "fija": {"rounded-pastilla", "px-6", "py-3.5", "transition-opacity", "active:opacity-80"},
+                "fija": {"rounded-pastilla", "px-6", "py-3.5", "active:opacity-80"},
                 "etiquetas": {"a"},
             }
         ],
@@ -783,4 +786,14 @@ class R11_BotonDeQuitarNombraSuProductoTests(_ConLaCasaMontada):
                 nombre_producto, aria_label,
                 f"producto {id_producto} ({nombre_producto}): el aria-label del botón de quitar "
                 f"no dice el nombre de SU producto — aria-label={aria_label!r}",
+            )
+            # Cuarto modo de fallo (especificación, R11; medido en revisión 2, hallazgos.md M6):
+            # un aria-label intacto no salva a nadie si `aria-hidden="true"` saca el botón entero
+            # del árbol de accesibilidad — peor que vaciarlo, porque ni siquiera queda un botón
+            # anunciado.
+            self.assertNotEqual(
+                botones[0][0].get("aria-hidden"), "true",
+                f"producto {id_producto} ({nombre_producto}): su botón de quitar lleva "
+                f"aria-hidden=\"true\" — desaparece entero del árbol de accesibilidad aunque su "
+                f"aria-label siga diciendo qué borra",
             )
