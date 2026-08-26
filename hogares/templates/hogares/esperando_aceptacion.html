@@ -1,17 +1,24 @@
 {% extends "base.html" %}
 {% block titulo %}Esperando aceptación{% endblock %}
+
+{% block titulo_grande %}
+{% if solicitud %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">Esperando a que te acepten</h1>
+{% else %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">Todavía no tienes hogar</h1>
+{% endif %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-16 max-w-md px-6 text-center">
+<div class="mx-auto mt-8 max-w-sm text-center">
   {% if solicitud %}
-    <h1 class="text-2xl font-bold text-slate-900">Esperando a que te acepten</h1>
-    <p class="mt-4 text-slate-700">
+    <p class="text-[14px] text-tinta-media">
       Has pedido entrar en un hogar con su código. En cuanto alguien de dentro te acepte,
       pasarás a verlo todo. Si nadie contesta en una hora, tendrás tu propio hogar y podrás
       volver a pedirlo más adelante.
     </p>
   {% else %}
-    <h1 class="text-2xl font-bold text-slate-900">Todavía no tienes hogar</h1>
-    <p class="mt-4 text-slate-700">
+    <p class="text-[14px] text-tinta-media">
       Esto no debería tardar: vuelve a cargar la página en un momento.
     </p>
   {% endif %}

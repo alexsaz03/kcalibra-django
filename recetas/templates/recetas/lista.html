@@ -2,57 +2,54 @@
 
 {% block titulo %}Recetas{% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">Recetas</h1>
+{% endblock %}
+
+{% block accion_rapida %}
+{% url 'recetas:nueva' as href_nueva_receta %}
+{% include "_ui.html#boton_redondo" with href=href_nueva_receta etiqueta="Nueva receta" %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
   {# Unidad 057, R1 — el segmentado Planificador/Recetas: Recetas es del HOGAR, no tiene una  #}
   {# `persona_objetivo` propia en su contexto (`recetas/views.py:lista`, fuera de `ficheros:` #}
   {# de esta unidad), así que "Planificador" lleva al plan de quien mira — `user.persona.id`, #}
   {# el mismo dato que ya usa `base.html` para su propia pestaña de Plan. Seguro sin guarda:   #}
   {# `hogar_o_404` (recetas/acceso.py) ya exige `user.persona.hogar` antes de llegar aquí.     #}
   {% include "_ui.html#segmentado" with activo="recetas" persona_id=user.persona.id %}
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold text-slate-900">Recetas</h1>
-    <a
-      href="{% url 'recetas:nueva' %}"
-      class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700"
-    >
-      Añadir receta
-    </a>
-  </div>
+
   {# G-43/R-70: del hogar entero, y sin dueño — igual que la despensa. #}
-  <p class="mt-1 text-sm text-slate-500">
+  <p class="text-[13px] text-tinta-suave">
     Los platos que ya sabe hacer la casa: cualquiera puede apuntar, ver, corregir o borrar, sin
     pedir permiso a nadie.
   </p>
 
   {% if recetas %}
-    <ul class="mt-6 space-y-2">
+    <div class="space-y-3">
       {% for receta in recetas %}
-        <li class="rounded-lg border border-slate-200 bg-white p-4">
-          <a href="{% url 'recetas:detalle' receta.id %}" class="font-semibold text-slate-900 hover:underline">
-            {{ receta.nombre }}
+        {% include "_ui.html#tarjeta_abre" %}
+          <a href="{% url 'recetas:detalle' receta.id %}" class="block">
+            <p class="text-[17px] font-bold leading-snug">{{ receta.nombre }}</p>
+            <p class="mt-0.5 text-[13px] text-tinta-media">
+              {# El plural de "ración" pierde la tilde ("raciones", no "raciónes"). #}
+              <span class="cifra">{{ receta.raciones }}</span> {% if receta.raciones == 1 %}ración{% else %}raciones{% endif %} · {{ receta.comidas_texto }}
+            </p>
           </a>
-          <p class="mt-1 text-sm text-slate-500">
-            {# El plural de "ración" pierde la tilde ("raciones", no "raciónes"). #}
-            {{ receta.raciones }} {% if receta.raciones == 1 %}ración{% else %}raciones{% endif %} · {{ receta.comidas_texto }}
-          </p>
-        </li>
+        {% include "_ui.html#tarjeta_cierra" %}
       {% endfor %}
-    </ul>
+    </div>
   {% else %}
     {# R7 — sin ninguna receta todavía, se dice con naturalidad y se ofrece apuntar la primera. #}
-    <div id="recetas-vacio" class="mt-6 rounded-xl border border-slate-200 bg-white p-6 text-center">
-      <p class="text-sm text-slate-500">
-        Todavía no hay ninguna receta apuntada. Cuando apuntes un plato que ya sabes hacer, lo
-        verás aquí.
-      </p>
-      <a
-        href="{% url 'recetas:nueva' %}"
-        class="mt-4 inline-block rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
-      >
-        Apuntar la primera receta
-      </a>
-    </div>
+    {% include "_ui.html#tarjeta_abre" %}
+      <div id="recetas-vacio" class="text-center">
+        <p class="text-[14px] text-tinta-suave">
+          Todavía no hay ninguna receta apuntada. Cuando apuntes un plato que ya sabes hacer, lo
+          verás aquí.
+        </p>
+        {% url 'recetas:nueva' as href_apuntar_primera_receta %}
+        {% include "_ui.html#boton_enlace" with href=href_apuntar_primera_receta texto="Apuntar la primera receta" clase="mt-4" %}
+      </div>
+    {% include "_ui.html#tarjeta_cierra" %}
   {% endif %}
-</div>
 {% endblock %}
