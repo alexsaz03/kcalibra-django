@@ -47,12 +47,8 @@
           Todavía no hay ninguna receta apuntada. Cuando apuntes un plato que ya sabes hacer, lo
           verás aquí.
         </p>
-        <a
-          href="{% url 'recetas:nueva' %}"
-          class="mt-4 inline-block w-full rounded-pastilla bg-tinta px-6 py-3.5 text-[15px] font-semibold text-white active:opacity-80"
-        >
-          Apuntar la primera receta
-        </a>
+        {% url 'recetas:nueva' as href_apuntar_primera_receta %}
+        {% include "_ui.html#boton_enlace" with href=href_apuntar_primera_receta texto="Apuntar la primera receta" clase="mt-4" %}
       </div>
     {% include "_ui.html#tarjeta_cierra" %}
   {% endif %}

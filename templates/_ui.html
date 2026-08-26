@@ -129,6 +129,20 @@
 >{{ texto }}</button>
 {% endpartialdef %}
 
+{# --- Botón principal, pero de enlace: `boton` no sabe pintar un `<a>` (no hay `:disabled`   #}
+{# de verdad sobre una etiqueta que no es un control de formulario), y esa era la excusa que   #}
+{# unidad 054 usó para copiar su marcado a mano en `recetas/lista.html` en vez de incluirla     #}
+{# (hallazgos.md, hueco H4 de su revisión). Misma forma visual que `boton`, mismos parámetros   #}
+{# (`variante`, `ancho_completo`) más `clase` (extra, como ya hace `tarjeta_abre`), pero la     #}
+{# firma de esta pieza NO se apoya en ningún token que solo tenga sentido sobre un `<button>` — #}
+{# nada que un copiador pierda al pegar sobre un `<a>`. #}
+{% partialdef boton_enlace %}
+<a
+  href="{{ href }}"
+  class="{% if ancho_completo != False %}w-full {% endif %}inline-block text-center rounded-pastilla px-6 py-3.5 text-[15px] font-semibold transition-opacity active:opacity-80 {% if variante == 'suave' %}bg-lienzo text-tinta active:bg-linea{% elif variante == 'contorno' %}border border-linea bg-superficie text-tinta active:bg-lienzo{% elif variante == 'acento' %}bg-acento text-white{% else %}bg-tinta text-white{% endif %}{% if clase %} {{ clase }}{% endif %}"
+>{{ texto }}</a>
+{% endpartialdef %}
+
 {# --- Aviso (ok / error / atención) --- #}
 {% partialdef aviso %}
 <div class="rounded-control px-4 py-3 text-[14px] font-medium {% if tipo == 'error' %}bg-racha-suave text-racha{% elif tipo == 'atencion' %}bg-carbos-suave text-carbos{% else %}bg-acento-suave text-acento{% endif %}">

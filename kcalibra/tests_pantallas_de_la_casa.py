@@ -18,13 +18,18 @@ la especificación de esta unidad).
 """
 
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 from django.conf import settings
 from django.test import SimpleTestCase
 
+import kcalibra.tests_pantallas as _tests_pantallas
 from cuentas.ayuda_pruebas import CLAVE_VALIDA, PruebaConRegistroAbierto
+from despensa.logica import _PALABRA_DE_UNIDAD, _PLURAL_SI_NO_ES_UNA
+from despensa.models import UNIDADES
 from kcalibra.ayuda_de_alcanzabilidad import elementos_con_texto, nada_lo_tapa
+from kcalibra.tests_nada_escondido import _rutas_enlazadas
 from kcalibra.tests_pantallas import (
     _CLASE_CON_ETIQUETA_RE,
     _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE,
@@ -213,6 +218,89 @@ class R1_TituloGrandeTests(_ConLaCasaMontada):
         self._titulo_esta_en_la_cabecera(f"/perfiles/{self.berta.id}/", "Datos de Berta")
 
 
+# Hueco H3 (revisión, hallazgos.md): `R1_TituloGrandeTests` es "un método de test por
+# pantalla", escrito a mano — y se le escapó una rama entera: `hogares/esperando_aceptacion.html`
+# solo tiene UN método (`test_esperando_a_que_te_acepten`) que ejerce su `{% if solicitud %}`;
+# nadie visita nunca su `{% else %}` ("Todavía no tienes hogar"), así que mudar SU `<h1>` a un
+# `<div>` no lo veía ningún test. Este barrido no depende de qué rama se ejecuta en runtime: lee
+# el FICHERO fuente de cada una de las nueve `PLANTILLAS` (la lista blanca del alcance, la misma
+# que ya usan R4/R5 — el árbol, no una lista de métodos) y exige un `<h1` dentro de su propio
+# `{% block titulo_grande %}`, exista o no una ruta hoy que renderice esa rama concreta.
+#
+# `_fila_ingrediente.html` es una de las nueve `PLANTILLAS` pero no es una PANTALLA — es un
+# parcial sin `{% extends "base.html" %}` ni ruta propia (unidad 021: se incluye desde
+# `formulario.html` y se clona por JS, ver R7). No tiene `{% block titulo_grande %}` que llenar
+# y nunca lo tuvo. La propia declaración del fichero (`{% extends "base.html" %}` o no) es lo
+# que decide si es una pantalla — sale del árbol igual que el resto del barrido, no una
+# excepción por nombre escrita a mano.
+_BLOQUE_TITULO_GRANDE_RE = re.compile(
+    r"\{%\s*block\s+titulo_grande\s*%\}(?P<cuerpo>.*?)\{%\s*endblock\s*%\}", re.S
+)
+_ETIQUETA_DE_CONDICIONAL_RE = re.compile(r"\{%\s*(if\b[^%]*|elif\b[^%]*|else|endif)\s*%\}")
+
+
+def _todo_lo_que_titulo_grande_puede_pintar_lleva_un_h1(cuerpo):
+    """No basta con que `<h1` aparezca EN ALGUNA PARTE del cuerpo del bloque — eso es lo que
+    dejó pasar el hueco H3: `hogares/esperando_aceptacion.html` envuelve DOS `<h1>` completos,
+    uno por rama, en un `{% if solicitud %}…{% else %}…{% endif %}` que cubre el bloque entero, y
+    mudar solo el de la rama `{% else %}` a un `<div>` deja el otro `<h1` intacto en el mismo
+    texto fuente — una búsqueda de subcadena sobre el bloque entero no lo habría visto nunca.
+
+    Divide el cuerpo en el texto INCONDICIONAL (fuera de cualquier `{% if %}` de nivel superior)
+    y las RAMAS de nivel superior (cada `{% elif %}`/`{% else %}` que cuelga directamente del
+    primer `{% if %}` que lo envuelve, no de uno anidado más adentro). Si el texto incondicional
+    ya trae un `<h1` (el caso normal, SIN condicional — y el de `perfiles/ver.html`/
+    `recetas/formulario.html`, donde el `{% if %}` solo elige el TEXTO de un `<h1` que ya se
+    abrió antes, fuera de cualquier rama), sobra mirar las ramas: ese `<h1` se pinta siempre.
+    Si no, CADA rama de nivel superior tiene que traer su propio `<h1` — el caso que se le
+    escapaba a R1."""
+    segmentos = []
+    profundidad = 0
+    inicio_de_tramo = 0
+    for coincidencia in _ETIQUETA_DE_CONDICIONAL_RE.finditer(cuerpo):
+        etiqueta = coincidencia.group(1)
+        if etiqueta.startswith("if"):  # "if …" (nunca "elif …": ésa no empieza por "if")
+            if profundidad == 0:
+                segmentos.append(("incondicional", cuerpo[inicio_de_tramo:coincidencia.start()]))
+                inicio_de_tramo = coincidencia.end()
+            profundidad += 1
+        elif etiqueta == "endif":
+            profundidad -= 1
+            if profundidad == 0:
+                segmentos.append(("rama", cuerpo[inicio_de_tramo:coincidencia.start()]))
+                inicio_de_tramo = coincidencia.end()
+        elif profundidad == 1:  # elif/else colgando directamente del if exterior
+            segmentos.append(("rama", cuerpo[inicio_de_tramo:coincidencia.start()]))
+            inicio_de_tramo = coincidencia.end()
+    segmentos.append(("incondicional", cuerpo[inicio_de_tramo:]))
+
+    incondicional = "".join(texto for tipo, texto in segmentos if tipo == "incondicional")
+    if "<h1" in incondicional:
+        return True
+    ramas = [texto for tipo, texto in segmentos if tipo == "rama"]
+    return bool(ramas) and all("<h1" in rama for rama in ramas)
+
+
+class R1_BarridoDeFicheroSobreTituloGrandeTests(SimpleTestCase):
+    databases = set()
+
+    def test_toda_pantalla_llena_titulo_grande_con_un_h1_de_verdad_en_cualquier_rama(self):
+        sin_h1 = []
+        for ruta in PLANTILLAS:
+            texto = _texto(ruta)
+            if '{% extends "base.html" %}' not in texto:
+                continue
+            coincidencia = _BLOQUE_TITULO_GRANDE_RE.search(texto)
+            if coincidencia is None or not _todo_lo_que_titulo_grande_puede_pintar_lleva_un_h1(
+                coincidencia.group("cuerpo")
+            ):
+                sin_h1.append(str(ruta.relative_to(BASE_DIR)))
+        self.assertEqual(
+            sin_h1, [],
+            f"plantillas con alguna rama de {{% block titulo_grande %}} sin su propio <h1>: {sin_h1}",
+        )
+
+
 # ------------------------------------------------------------------------------------------ #
 # R2/R9 — el botón redondo lleva al formulario que ya vive en esa pantalla, y se puede USAR de
 # verdad (alcanzabilidad importada, no copiada — ver la nota de la especificación).
@@ -307,8 +395,8 @@ PIEZAS_PORTADAS = _piezas_portadas_de_ui_html()
 # `PIEZAS_QUE_ESTA_UNIDAD_USA` de la 053, FR-I: una pieza que _ui.html porte para la 055 y que
 # esta unidad no conozca no debe ponerla en rojo).
 PIEZAS_QUE_ESTA_UNIDAD_USA = frozenset({
-    "tarjeta_abre", "tarjeta_cierra", "titulo_seccion", "boton", "aviso", "distintivo",
-    "boton_redondo", "fila_lista_abre", "fila_lista_cierra", "chip", "segmentado",
+    "tarjeta_abre", "tarjeta_cierra", "titulo_seccion", "boton", "boton_enlace", "aviso",
+    "distintivo", "boton_redondo", "fila_lista_abre", "fila_lista_cierra", "chip", "segmentado",
 })
 
 
@@ -344,6 +432,18 @@ class R5_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         "tarjeta_abre": [{"fija": {"rounded-tarjeta", "bg-superficie"}}],
         "titulo_seccion": [{"fija": {"mb-3", "items-end", "justify-between"}}],
         "boton": [{"fija": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}}],
+        # Hueco H4 (revisión, hallazgos.md): `boton` escapaba a su propia firma sobre un `<a>`
+        # copiado a mano porque DOS de sus cuatro tokens fijos (`transition-opacity` y sobre
+        # todo `disabled:opacity-40`, que no significa nada sobre una etiqueta sin `:disabled`)
+        # son justo los que un copiador suelta al pegar sobre un enlace. La firma de
+        # `boton_enlace` no depende de ninguno de los dos que un `<a>` no necesita — está hecha
+        # de los tokens que SÍ sobreviven a esa copia, así que la caza en vez de dejarla pasar.
+        "boton_enlace": [
+            {
+                "fija": {"rounded-pastilla", "px-6", "py-3.5", "transition-opacity", "active:opacity-80"},
+                "etiquetas": {"a"},
+            }
+        ],
         "aviso": [
             {
                 "fija": {"rounded-control", "px-4", "py-3", "font-medium"},
@@ -415,17 +515,89 @@ class R5_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
 # ------------------------------------------------------------------------------------------ #
 
 
-def _rutas_de_las_pantallas_con_datos(persona_otra, receta):
-    """Las rutas de verdad que tienen algo que mostrar con la fixture de esta unidad — mismo
-    papel que `_rutas_de_las_siete_pantallas` de `kcalibra/tests_pantallas.py`."""
-    return [
-        "/despensa/",
-        "/recetas/",
-        f"/recetas/{receta.id}/",
-        f"/recetas/{receta.id}/editar/",
-        "/hogares/mi-hogar/",
-        f"/perfiles/{persona_otra.id}/",
-    ]
+# Hueco H2 (revisión, hallazgos.md): el barrido de números de dato importaba
+# `_NUMERO_CON_UNIDAD_RE` de la 053 (`kcal|kg|g|min|%`) tal cual — un vocabulario que no conoce
+# NINGUNA palabra propia de esta unidad — y su lista de rutas eran seis escritas a mano que se
+# dejaban fuera el propio perfil (editable). Medido: se podía borrar TODA `.cifra` de la ficha
+# de receta y la suite seguía verde. Las dos mitades del arreglo, cada una sacada de una
+# ESTRUCTURA QUE YA EXISTE, no de una lista escrita a mano:
+#
+# (a) VOCABULARIO — `despensa.models.UNIDADES` (que `recetas.models` REUSA tal cual, ver su
+#     propio comentario) es la fuente de lo que `get_unidad_display` imprime ("Gramos",
+#     "Mililitros"...), y `despensa.logica._PALABRA_DE_UNIDAD`/`_PLURAL_SI_NO_ES_UNA` son la
+#     fuente de lo que `cantidad_mostrada` imprime ("lata"/"latas"). Ninguna de las dos se
+#     copia a mano aquí: se recorren. `cm` (altura) y `ración`/`raciones` no salen de ninguna
+#     `choices` — no son la unidad de un campo con opciones, son la palabra fija que la propia
+#     plantilla pone junto al número — así que son las dos únicas piezas de este vocabulario que
+#     SÍ se escriben literalmente, con su motivo. El vocabulario original de la 053
+#     (`kcal|kg|g|min|%`) se conserva: esto APRIETA la red, no la afloja.
+def _vocabulario_de_unidades_de_despensa_y_recetas():
+    palabras = set()
+    for _codigo, etiqueta in UNIDADES:  # "Gramos", "Kilos"... — lo que get_unidad_display imprime
+        palabras.add(etiqueta)
+    for codigo, palabra in _PALABRA_DE_UNIDAD.items():  # "g", "kg"... y "lata", "bote"...
+        palabras.add(palabra)
+        if codigo in _PLURAL_SI_NO_ES_UNA:  # lo que cantidad_mostrada imprime en plural
+            palabras.add(palabra + "s")
+    return palabras
+
+
+_PALABRAS_SIN_CHOICES_QUE_R6_NOMBRA = {"ración", "raciones", "cm"}
+_VOCABULARIO_DE_ESTA_UNIDAD = sorted(
+    {re.escape(p) for p in _vocabulario_de_unidades_de_despensa_y_recetas()}
+    | {re.escape(p) for p in _PALABRAS_SIN_CHOICES_QUE_R6_NOMBRA}
+    | {"kcal", "kg", "g", "min", "%"}  # el vocabulario heredado de la 053 — no se afloja
+)
+_NUMERO_CON_UNIDAD_DE_ESTA_UNIDAD_RE = re.compile(
+    r"\d[\d.,]*\s*(?:" + "|".join(_VOCABULARIO_DE_ESTA_UNIDAD) + r")(?!\w)", re.I
+)
+
+
+@contextmanager
+def _con_vocabulario_ampliado():
+    """`_NumerosDeDatoEnElTexto.hallazgos` (importada, no copiada) consulta
+    `kcalibra.tests_pantallas._NUMERO_CON_UNIDAD_RE` como global de SU MÓDULO en el momento de
+    ejecutarse — el mismo mecanismo de sustitución que ya usa `_con_procedencia_marcada` (parcheo
+    de un atributo de módulo/clase durante un `with`, deshecho al salir) aplicado aquí para
+    ensanchar el vocabulario SOLO durante este test, sin tocar `kcalibra/tests_pantallas.py`
+    (fuera de `ficheros:` de esta unidad) ni debilitar lo que la 053 comprueba con el suyo."""
+    original = _tests_pantallas._NUMERO_CON_UNIDAD_RE
+    _tests_pantallas._NUMERO_CON_UNIDAD_RE = _NUMERO_CON_UNIDAD_DE_ESTA_UNIDAD_RE
+    try:
+        yield
+    finally:
+        _tests_pantallas._NUMERO_CON_UNIDAD_RE = original
+
+
+def _rutas_que_pintan_las_nueve_pantallas(cliente, arranque="/"):
+    """(b) LISTA DE RUTAS — recorrido real (BFS) con el cliente de test, mismo mecanismo que
+    `kcalibra.tests_nada_escondido._recorrer_la_app` (R4 de la 057): importa su
+    `_rutas_enlazadas` (sigue cada `href`/`hx-get`, no se copia el parser) en vez de escribir
+    rutas a mano. De cada página que responde 200, mira qué plantillas usó Django DE VERDAD para
+    pintarla — `response.templates`, que el cliente de test de Django ya anota en cada respuesta,
+    sin nada que activar aparte — y, si alguna es una de las nueve `PLANTILLAS` de esta unidad,
+    su RUTA entra en el barrido de R6. Decide el árbol de navegación real, no una lista fijada de
+    antemano: una ruta nueva que sirva una de las nueve pantallas (o un estado nuevo de una que
+    ya se sirve, como el propio perfil editable que el hueco H2 dejó fuera) se suma sola."""
+    nombres_de_las_nueve = {str(ruta).split("templates/", 1)[1] for ruta in PLANTILLAS}
+    por_visitar = [arranque]
+    visitadas = set()
+    rutas = set()
+    while por_visitar:
+        ruta = por_visitar.pop(0)
+        if ruta in visitadas:
+            continue
+        visitadas.add(ruta)
+        respuesta = cliente.get(ruta)
+        if respuesta.status_code != 200:
+            continue
+        usadas = {plantilla.name for plantilla in (respuesta.templates or []) if plantilla.name}
+        if usadas & nombres_de_las_nueve:
+            rutas.add(ruta)
+        for destino in _rutas_enlazadas(respuesta.content.decode()):
+            if destino not in visitadas:
+                por_visitar.append(destino)
+    return rutas
 
 
 class R6_CifraEnLosNumerosDeDatoTests(_ConLaCasaMontada):
@@ -473,10 +645,23 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConLaCasaMontada):
         """Barrido de verdad sobre HTML renderizado, no una muestra escrita a mano — mismo
         patrón (y la misma máquina, importada) que `test_ningun_numero_de_dato_escrito_en_
         linea_se_queda_sin_cifra` de `kcalibra/tests_pantallas.py` (vuelta 12 de la 053: la
-        exención sale de si el sub-trozo viene de una variable, no de comparar valores)."""
+        exención sale de si el sub-trozo viene de una variable, no de comparar valores).
+
+        Hueco H2 (revisión, hallazgos.md): las RUTAS y el VOCABULARIO salen los dos de una
+        estructura que ya existe (`_rutas_que_pintan_las_nueve_pantallas`/
+        `_con_vocabulario_ampliado`, arriba) — no de una lista de seis rutas ni de un vocabulario
+        heredado que no conoce ni "raciones" ni "cm"."""
+        rutas = _rutas_que_pintan_las_nueve_pantallas(self.client)
+        # Guarda de rojo mudo (mismo motivo que `test_el_recorrido_no_prueba_nada_vacio` de
+        # `kcalibra/tests_nada_escondido.py`): si el recorrido se rompiera y no alcanzara nada,
+        # el barrido de abajo compararía una lista vacía contra sí misma y colaría en verde sin
+        # haber mirado ni una pantalla.
+        self.assertGreater(
+            len(rutas), 5, f"el recorrido apenas alcanzó pantallas con datos de esta unidad: {rutas}"
+        )
         sin_cifra = []
-        with _con_procedencia_marcada():
-            for ruta in _rutas_de_las_pantallas_con_datos(self.berta, self.receta):
+        with _con_procedencia_marcada(), _con_vocabulario_ampliado():
+            for ruta in sorted(rutas):
                 respuesta = self.client.get(ruta)
                 self.assertEqual(respuesta.status_code, 200, ruta)
                 lector = _NumerosDeDatoEnElTexto()
