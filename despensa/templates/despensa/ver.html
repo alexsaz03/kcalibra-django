@@ -4,8 +4,15 @@
 
 {% block titulo %}La despensa{% endblock %}
 
+{% block titulo_grande %}
+<h1 class="text-[26px] font-bold leading-tight tracking-tight">La despensa</h1>
+{% endblock %}
+
+{% block accion_rapida %}
+{% include "_ui.html#boton_redondo" with href="#formulario-despensa" etiqueta="Añadir producto" %}
+{% endblock %}
+
 {% block content %}
-<div class="mx-auto mt-12 max-w-2xl px-6 pb-16">
 
   {# ------------------------------------------------------------------------------------ #}
   {# {% partialdef %} define la pantalla entera (lo que hay + el formulario de añadir) como #}
@@ -15,17 +22,16 @@
   {# ------------------------------------------------------------------------------------ #}
   {% partialdef despensa_del_hogar %}
   <div id="despensa-del-hogar">
-    <h1 class="text-2xl font-bold text-slate-900">La despensa</h1>
     {# G-43/R9: lo que se pinta aquí deja claro que esto es del HOGAR entero — aunque la #}
     {# comprobación de verdad (R9/R10) vive en el servidor, no en este texto. #}
-    <p class="mt-1 text-sm text-slate-500">
+    <p class="text-[13px] text-tinta-suave">
       Lo que hay en casa, de todo el hogar: cualquiera puede añadir, corregir o quitar, sin
       pedir permiso a nadie.
     </p>
 
     {% if error_correccion %}
-      <div class="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
-        {{ error_correccion }}
+      <div class="mt-4">
+        {% include "_ui.html#aviso" with tipo="error" texto=error_correccion %}
       </div>
     {% endif %}
 
@@ -33,135 +39,146 @@
       <div class="mt-6 space-y-6">
         {% for clave, etiqueta, productos in categorias_productos %}
           <section>
-            <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">{{ etiqueta }}</h2>
-            <ul class="mt-2 space-y-2">
-              {% for producto in productos %}
-                <li class="rounded-lg border border-slate-200 bg-white p-3 text-sm" data-producto-id="{{ producto.id }}">
-                  <div class="flex items-center justify-between gap-2">
-                    <div>
-                      <strong>{{ producto.nombre }}</strong>
-                      {# Unidad 017 (corregido tras la revisión, hueco H1) — TEXTO de lectura  #}
-                      {# humana, G-194: "1,383 kg", con coma, la que lee una persona. Nunca en #}
-                      {# el `<input>` de abajo, que sigue en la unidad CANÓNICA (ver el porqué #}
-                      {# en despensa/logica.py:productos_por_categoria) — cada canal con su    #}
-                      {# formato, la lección de la 014 bien aplicada: máquina con punto en el  #}
-                      {# atributo que lee el navegador, persona con coma en lo que lee ella.   #}
-                      <span
-                        id="cantidad-legible-{{ producto.id }}"
-                        class="ml-1 text-slate-500"
-                      >{{ producto.cantidad_mostrada }} {{ producto.etiqueta_mostrada }}</span>
-                    </div>
-                    <form
-                      hx-post="{% url 'despensa:quitar' producto.id %}"
-                      hx-target="#despensa-del-hogar"
-                      hx-swap="outerHTML"
-                      hx-confirm="¿Quitar {{ producto.nombre }} de la despensa?"
-                      method="post"
-                    >
-                      {% csrf_token %}
-                      <button type="submit" class="font-medium text-red-700 hover:underline">Quitar</button>
-                    </form>
-                  </div>
+            <h2 class="mb-1.5 px-1 text-[13px] font-semibold uppercase tracking-wide text-tinta-media">{{ etiqueta }}</h2>
+            {% include "_ui.html#tarjeta_abre" with clase="!p-0 overflow-hidden" %}
+              <ul>
+                {% for producto in productos %}
+                  {% include "_ui.html#fila_lista_abre" with primera=forloop.first %}
+                    <div data-producto-id="{{ producto.id }}">
+                      <div class="flex items-center gap-3">
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate text-[15px]">{{ producto.nombre }}</p>
+                          {# Unidad 017 (corregido tras la revisión, hueco H1) — TEXTO de lectura  #}
+                          {# humana, G-194: "1,383 kg", con coma, la que lee una persona. Nunca en #}
+                          {# el `<input>` de abajo, que sigue en la unidad CANÓNICA (ver el porqué #}
+                          {# en despensa/logica.py:productos_por_categoria) — cada canal con su    #}
+                          {# formato, la lección de la 014 bien aplicada: máquina con punto en el  #}
+                          {# atributo que lee el navegador, persona con coma en lo que lee ella.   #}
+                          <span
+                            id="cantidad-legible-{{ producto.id }}"
+                            class="cifra text-[13px] text-tinta-media"
+                          >{{ producto.cantidad_mostrada }} {{ producto.etiqueta_mostrada }}</span>
+                        </div>
+                        <form
+                          hx-post="{% url 'despensa:quitar' producto.id %}"
+                          hx-target="#despensa-del-hogar"
+                          hx-swap="outerHTML"
+                          hx-confirm="¿Quitar {{ producto.nombre }} de la despensa?"
+                          method="post"
+                        >
+                          {% csrf_token %}
+                          <button
+                            type="submit"
+                            aria-label="Quitar {{ producto.nombre }}"
+                            class="shrink-0 px-1 text-[18px] leading-none text-tinta-suave active:text-racha"
+                          >✕</button>
+                        </form>
+                      </div>
 
-                  {# R5/§8: "corregir una cantidad tiene que ser cosa de un toque" — la línea #}
-                  {# trae su propio formulario, siempre a la vista, sin ninguna otra pantalla. #}
-                  <form
-                    hx-post="{% url 'despensa:corregir' producto.id %}"
-                    hx-target="#despensa-del-hogar"
-                    hx-swap="outerHTML"
-                    method="post"
-                    class="mt-2 flex flex-wrap items-end gap-2"
-                  >
-                    {% csrf_token %}
-                    <div>
-                      <label class="block text-xs text-slate-500" for="cantidad-{{ producto.id }}">Cantidad</label>
-                      {# Novena/séptima cara de conocimiento/tests-que-no-fallan-cuando-deben.md: #}
-                      {# `producto.cantidad` es un Decimal; con LANGUAGE_CODE="es" Django lo     #}
-                      {# localiza con COMA ("4,00"), que un <input type="number"> no sabe leer   #}
-                      {# y descarta EN SILENCIO (sin error visible). `|unlocalize` fuerza el     #}
-                      {# formato de máquina (punto) en este atributo, que lee el navegador, no   #}
-                      {# una persona. Unidad 017 (corregido tras la revisión, hueco H1): este    #}
-                      {# `value` es `producto.cantidad` TAL CUAL — el dato guardado, ya en su    #}
-                      {# unidad canónica — NUNCA `cantidad_mostrada` (que puede llevar más       #}
-                      {# decimales tras dividir por 1.000 de los que el formulario acepta,       #}
-                      {# `decimal_places=2`): pintar aquí lo convertido a kg/l fue el bug que    #}
-                      {# cazó el "viaje de vuelta" — guardar una línea de 1,383 kg reventaba      #}
-                      {# con "no haya más de 2 dígitos decimales" en cuanto alguien pulsaba      #}
-                      {# Guardar sin cambiar nada. Aquí SIEMPRE cabe: nunca se dividió para      #}
-                      {# llegar hasta este atributo.                                             #}
-                      <input
-                        id="cantidad-{{ producto.id }}"
-                        type="number" step="0.01" min="0.01" name="cantidad"
-                        value="{{ producto.cantidad|unlocalize }}"
-                        class="w-24 rounded border border-slate-300 px-2 py-1"
+                      {# R5/§8: "corregir una cantidad tiene que ser cosa de un toque" — la línea #}
+                      {# trae su propio formulario, siempre a la vista, sin ninguna otra pantalla. #}
+                      <form
+                        hx-post="{% url 'despensa:corregir' producto.id %}"
+                        hx-target="#despensa-del-hogar"
+                        hx-swap="outerHTML"
+                        method="post"
+                        class="mt-2 flex flex-wrap items-end gap-2"
                       >
+                        {% csrf_token %}
+                        <div>
+                          <label class="block text-[12px] text-tinta-media" for="cantidad-{{ producto.id }}">Cantidad</label>
+                          {# Novena/séptima cara de conocimiento/tests-que-no-fallan-cuando-deben.md: #}
+                          {# `producto.cantidad` es un Decimal; con LANGUAGE_CODE="es" Django lo     #}
+                          {# localiza con COMA ("4,00"), que un <input type="number"> no sabe leer   #}
+                          {# y descarta EN SILENCIO (sin error visible). `|unlocalize` fuerza el     #}
+                          {# formato de máquina (punto) en este atributo, que lee el navegador, no   #}
+                          {# una persona. Unidad 017 (corregido tras la revisión, hueco H1): este    #}
+                          {# `value` es `producto.cantidad` TAL CUAL — el dato guardado, ya en su    #}
+                          {# unidad canónica — NUNCA `cantidad_mostrada` (que puede llevar más       #}
+                          {# decimales tras dividir por 1.000 de los que el formulario acepta,       #}
+                          {# `decimal_places=2`): pintar aquí lo convertido a kg/l fue el bug que    #}
+                          {# cazó el "viaje de vuelta" — guardar una línea de 1,383 kg reventaba      #}
+                          {# con "no haya más de 2 dígitos decimales" en cuanto alguien pulsaba      #}
+                          {# Guardar sin cambiar nada. Aquí SIEMPRE cabe: nunca se dividió para      #}
+                          {# llegar hasta este atributo.                                             #}
+                          <input
+                            id="cantidad-{{ producto.id }}"
+                            type="number" step="0.01" min="0.01" name="cantidad"
+                            value="{{ producto.cantidad|unlocalize }}"
+                            class="cifra w-24"
+                          >
+                        </div>
+                        <div>
+                          <label class="block text-[12px] text-tinta-media" for="unidad-{{ producto.id }}">Unidad</label>
+                          <select id="unidad-{{ producto.id }}" name="unidad">
+                            {% for valor, texto in unidades %}
+                              <option value="{{ valor }}" {% if valor == producto.unidad %}selected{% endif %}>{{ texto }}</option>
+                            {% endfor %}
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-[12px] text-tinta-media" for="categoria-{{ producto.id }}">Categoría</label>
+                          <select id="categoria-{{ producto.id }}" name="categoria">
+                            {% for valor, texto in categorias %}
+                              <option value="{{ valor }}" {% if valor == producto.categoria %}selected{% endif %}>{{ texto }}</option>
+                            {% endfor %}
+                          </select>
+                        </div>
+                        <button type="submit" class="rounded-pastilla bg-tinta px-3 py-1.5 text-[13px] font-semibold text-white active:opacity-80">
+                          Guardar
+                        </button>
+                      </form>
                     </div>
-                    <div>
-                      <label class="block text-xs text-slate-500" for="unidad-{{ producto.id }}">Unidad</label>
-                      <select id="unidad-{{ producto.id }}" name="unidad" class="rounded border border-slate-300 px-2 py-1">
-                        {% for valor, texto in unidades %}
-                          <option value="{{ valor }}" {% if valor == producto.unidad %}selected{% endif %}>{{ texto }}</option>
-                        {% endfor %}
-                      </select>
-                    </div>
-                    <div>
-                      <label class="block text-xs text-slate-500" for="categoria-{{ producto.id }}">Categoría</label>
-                      <select id="categoria-{{ producto.id }}" name="categoria" class="rounded border border-slate-300 px-2 py-1">
-                        {% for valor, texto in categorias %}
-                          <option value="{{ valor }}" {% if valor == producto.categoria %}selected{% endif %}>{{ texto }}</option>
-                        {% endfor %}
-                      </select>
-                    </div>
-                    <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700">
-                      Guardar
-                    </button>
-                  </form>
-                </li>
-              {% endfor %}
-            </ul>
+                  {% include "_ui.html#fila_lista_cierra" %}
+                {% endfor %}
+              </ul>
+            {% include "_ui.html#tarjeta_cierra" %}
           </section>
         {% endfor %}
       </div>
     {% else %}
       {# R12 — sin ningún producto todavía, se dice con naturalidad: no parece rota ni da error. #}
-      <p id="despensa-vacia" class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-        Todavía no hay nada apuntado en la despensa. Añade el primer producto aquí abajo.
-      </p>
+      {% include "_ui.html#tarjeta_abre" with clase="mt-6" %}
+        <p id="despensa-vacia" class="text-[14px] text-tinta-suave">
+          Todavía no hay nada apuntado en la despensa. Añade el primer producto aquí abajo.
+        </p>
+      {% include "_ui.html#tarjeta_cierra" %}
     {% endif %}
 
-    <form
-      hx-post="{% url 'despensa:anadir' %}"
-      hx-target="#despensa-del-hogar"
-      hx-swap="outerHTML"
-      method="post"
-      class="mt-6 space-y-4 rounded-xl border border-slate-200 bg-white p-6"
-    >
-      {% csrf_token %}
-      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Añadir un producto</h2>
-      {% if form.non_field_errors %}
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800">
-          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
-        </div>
-      {% endif %}
-      {% for field in form.visible_fields %}
-        <div>
-          <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-slate-700">
-            {{ field.label }}
-          </label>
-          {{ field }}
-          {% if field.errors %}
-            <p class="mt-1 text-sm text-red-700">{{ field.errors.0 }}</p>
+    <div id="formulario-despensa" class="mt-6">
+      {% include "_ui.html#tarjeta_abre" %}
+        <form
+          hx-post="{% url 'despensa:anadir' %}"
+          hx-target="#despensa-del-hogar"
+          hx-swap="outerHTML"
+          method="post"
+          class="space-y-4"
+        >
+          {% csrf_token %}
+          {% include "_ui.html#titulo_seccion" with texto="Añadir un producto" %}
+          {% if form.non_field_errors %}
+            {% for error in form.non_field_errors %}
+              {% include "_ui.html#aviso" with tipo="error" texto=error %}
+            {% endfor %}
           {% endif %}
-        </div>
-      {% endfor %}
-      <button type="submit" class="w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">
-        Añadir producto
-      </button>
-    </form>
+          {% for field in form.visible_fields %}
+            <div>
+              <label for="{{ field.id_for_label }}" class="mb-1.5 block text-[13px] font-semibold text-tinta-media">
+                {{ field.label }}
+              </label>
+              {{ field }}
+              {% if field.errors %}
+                <p class="mt-1 text-[13px] text-racha">{{ field.errors.0 }}</p>
+              {% endif %}
+            </div>
+          {% endfor %}
+          {% include "_ui.html#boton" with texto="Añadir producto" tipo="submit" %}
+        </form>
+      {% include "_ui.html#tarjeta_cierra" %}
+    </div>
   </div>
   {% endpartialdef %}
 
   {% partial despensa_del_hogar %}
 
-</div>
 {% endblock %}

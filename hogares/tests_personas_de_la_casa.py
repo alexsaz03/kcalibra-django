@@ -243,8 +243,8 @@ class R1_SinCorreoEnNingunaPantallaTests(_ConAlejandroYEuridiceACargo):
             (f"/progreso/{self.alejandro.id}/", "Tu progreso", "progreso/templates/progreso/ver.html", "Tu progreso"),
             (f"/perfiles/{self.alejandro.id}/peso/", "Tu peso", "perfiles/templates/perfiles/peso.html", "Tu peso"),
             (f"/planes/{self.alejandro.id}/apuntar/", "Apuntar tu plan", "planes/templates/planes/apuntar.html", "Apuntar tu plan de hoy"),
-            (f"/perfiles/{self.alejandro.id}/", "Tus datos", "perfiles/templates/perfiles/ver.html", None),
-            ("/hogares/mi-hogar/", "Alejandro", "hogares/templates/hogares/mi_hogar.html", None),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
+            (f"/perfiles/{self.alejandro.id}/", "Tus datos", "perfiles/templates/perfiles/ver.html", "Tus datos"),
+            ("/hogares/mi-hogar/", "Alejandro", "hogares/templates/hogares/mi_hogar.html", "Las personas de la casa"),  # su nombre en algún sitio del cuerpo (ver nota de arriba)
         ]
         for ruta, fragmento_de_identidad, ruta_de_plantilla, fragmento_del_h1 in rutas_y_fragmento_de_identidad:
             with self.subTest(ruta=ruta):

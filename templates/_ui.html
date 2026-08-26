@@ -185,6 +185,35 @@
 {% endpartialdef %}
 
 {# --- Botón redondo de acción rápida CON MENÚ: ver nota de adaptación arriba (R8) --- #}
+{# --- Fila de lista: la unidad de una lista de filas dentro de una tarjeta (unidad 054) --- #}
+{# No vive en `ui.jsx` (el prototipo de origen no la nombra como componente aparte: Compra.jsx #}
+{# la escribía suelta, fila a fila) — nace aquí porque la despensa y el hogar la necesitan las   #}
+{# dos, con el mismo borde separador entre filas y el mismo hueco. Es un `<li>`: la lista que    #}
+{# envuelve (`<ul>`, en cada pantalla que la usa) es la que da el semántico de lista; `primera`  #}
+{# decide el borde superior (la primera fila de la tarjeta no lleva separador). Deliberadamente  #}
+{# NO impone `flex` — cada pantalla mete su propia fila (una línea, o una línea más un          #}
+{# formulario debajo) entre `_abre`/`_cierra`, como ya hace `tarjeta`.                           #}
+{% partialdef fila_lista_abre %}
+<li class="px-4 py-3{% if not primera %} border-t border-linea{% endif %}">
+{% endpartialdef %}
+
+{% partialdef fila_lista_cierra %}
+</li>
+{% endpartialdef %}
+
+{# --- Chip: selección de una opción de un grupo, con la casilla real por debajo (unidad 054) --- #}
+{# `ui.jsx` la dibuja como un `<button aria-pressed>` con estado en JavaScript; aquí el control   #}
+{# real es la casilla que ya genera `CheckboxSelectMultiple` (`recetas/forms.py`, fuera de        #}
+{# `ficheros:` de esta unidad, así que no se le puede añadir una clase desde el formulario) — se  #}
+{# envuelve en la MISMA etiqueta `<label>` que ya la asocia con su casilla, y el aspecto de chip   #}
+{# sale de `has-[:checked]`, sin JavaScript nuevo y sin tocar el widget. `casilla` es el           #}
+{# `BoundWidget` que ya itera `{% for casilla in form.comidas %}`. #}
+{% partialdef chip %}
+<label class="inline-flex cursor-pointer items-center gap-1.5 rounded-pastilla bg-lienzo px-4 py-2 text-[14px] font-semibold text-tinta-media transition-colors has-[:checked]:bg-tinta has-[:checked]:text-white">
+  {{ casilla.tag }}{{ casilla.choice_label }}
+</label>
+{% endpartialdef %}
+
 {% partialdef boton_redondo_menu %}
 <div class="pointer-events-none fixed inset-x-0 z-40" style="bottom: max(6rem, calc(5rem + env(safe-area-inset-bottom)))" x-data="{ abierto: false }">
   <div class="mx-auto w-full max-w-movil px-4">

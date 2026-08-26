@@ -5,34 +5,41 @@
 {# solo se usa para "Quitar" (ocultar + deshabilitar, `x-show`/`:disabled`), nunca para pintar #}
 {# el valor: así lo que ve el cliente de pruebas de Django (sin ejecutar JS) es exactamente lo #}
 {# que vería una persona con JS desactivado. #}
-<div x-data="{ eliminada: false }" x-show="!eliminada" class="flex flex-wrap items-end gap-2">
+{# #}
+{# R7 (unidad 054) — esta fila la clona `formulario.html` con JavaScript puro #}
+{# (`plantilla.content.firstElementChild.cloneNode(true)`): la raíz TIENE que seguir siendo un #}
+{# único elemento (este `<div>`), y `x-data`/`x-show`/`:disabled`/`@click` y los TRES `name=` #}
+{# tienen que seguir tal cual — son el contrato que lee `anadirFilaIngrediente()` en #}
+{# formulario.html y `recetas.logica.filas_de_ingredientes` en el servidor. Solo cambian las #}
+{# clases visuales. #}
+<div x-data="{ eliminada: false }" x-show="!eliminada" class="flex flex-wrap items-end gap-2 rounded-control bg-lienzo p-3">
   <div>
-    <label class="block text-xs text-slate-500">Ingrediente</label>
+    <label class="block text-[12px] text-tinta-media">Ingrediente</label>
     <input
       type="text" name="ingrediente_nombre" value="{{ fila.nombre }}" :disabled="eliminada"
-      class="rounded border border-slate-300 px-2 py-1"
+      class="bg-superficie"
     >
   </div>
   <div>
-    <label class="block text-xs text-slate-500">Cantidad</label>
+    <label class="block text-[12px] text-tinta-media">Cantidad</label>
     {# R5 — formato de MÁQUINA (punto): `fila.cantidad_texto` viene de `str(Decimal(...))`, #}
     {# que nunca usa coma (a diferencia de localizar un Decimal en la plantilla). #}
     <input
       type="number" step="0.01" min="0.01" name="ingrediente_cantidad"
       value="{{ fila.cantidad_texto }}" :disabled="eliminada"
-      class="w-24 rounded border border-slate-300 px-2 py-1"
+      class="cifra w-24 bg-superficie"
     >
   </div>
   <div>
-    <label class="block text-xs text-slate-500">Unidad</label>
-    <select name="ingrediente_unidad" :disabled="eliminada" class="rounded border border-slate-300 px-2 py-1">
+    <label class="block text-[12px] text-tinta-media">Unidad</label>
+    <select name="ingrediente_unidad" :disabled="eliminada" class="bg-superficie">
       <option value=""></option>
       {% for valor, texto in unidades %}
         <option value="{{ valor }}" {% if valor == fila.unidad %}selected{% endif %}>{{ texto }}</option>
       {% endfor %}
     </select>
   </div>
-  <button type="button" @click="eliminada = true" class="font-medium text-red-700 hover:underline">
+  <button type="button" @click="eliminada = true" class="text-[13px] font-semibold text-tinta-suave active:text-racha">
     Quitar
   </button>
 </div>
