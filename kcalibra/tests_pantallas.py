@@ -93,15 +93,21 @@ PIEZAS_PORTADAS = _piezas_portadas_de_ui_html()
 # tokens de macro/racha en la 050 ("nace con la primera pantalla que la use"): existe, una sola
 # vez, lista para cuando haga falta, pero no está en el barrido de "piezas usadas" de abajo.
 #
-# `PLANTILLAS` (arriba) y `_rutas_de_las_siete_pantallas` (abajo) SIGUEN a mano, y es a
-# propósito, no deuda (E, revisión 8ª vuelta lo preguntaba): `PLANTILLAS` es la lista blanca
-# del ALCANCE de esta unidad — coincide byte a byte con `ficheros:` de la especificación, y
-# derivarla de un glob del árbol tragaría cualquier plantilla nueva de la 054/055 sin que esta
-# unidad lo decidiera (la propia especificación, "Fuera de alcance", prohíbe tocar nada que no
-# sea esto). `_rutas_de_las_siete_pantallas` mapea cada plantilla a su URL real, información de
-# enrutado que no vive en el árbol de ficheros (Django no ofrece "plantilla → ruta" a la
-# inversa sin resolver vistas una a una) — es exactamente el tipo de dato que una fixture de
-# integración tiene que nombrar, como ya hace cualquier `self.client.get(...)` de esta suite.
+# `PLANTILLAS` (arriba) SIGUE a mano, y es a propósito, no deuda (E, revisión 8ª vuelta lo
+# preguntaba): es la lista blanca del ALCANCE de esta unidad — coincide byte a byte con
+# `ficheros:` de la especificación, y derivarla de un glob del árbol tragaría cualquier
+# plantilla nueva de la 054/055 sin que esta unidad lo decidiera (la propia especificación,
+# "Fuera de alcance", prohíbe tocar nada que no sea esto).
+#
+# Unidad 059 — `_rutas_de_las_siete_pantallas` (que vivía aquí) y el barrido de
+# `test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra` que la usaba se SACARON de
+# este fichero: la red permanente de `kcalibra/tests_pantallas_del_proyecto.py` cubre ya ese
+# mismo barrido (R6 de esta unidad, R5 de la 059) sobre las QUINCE pantallas reales de hoy, con
+# un vocabulario más ancho (derivado de las `choices` de `despensa`/`recetas`, no solo
+# `kcal|kg|g|min|%`) y rutas que salen de un recorrido real de la app, no de una lista de siete
+# escrita a mano — mantenerlo aquí también habría sido la misma duplicación que esta unidad
+# existe para cerrar. Los tres tests de `id` concretos y el de las piezas compartidas, más
+# abajo, se quedan: no barren "todo", prueban un caso puntual cada uno.
 #
 # FR-I (revisión, 9ª vuelta): `PIEZAS_USADAS_EN_LAS_PANTALLAS` derivaba de `PIEZAS_PORTADAS` —
 # TODA pieza que _ui.html porte hoy, salvo `barra_macro`. Medido: una pieza nueva añadida a
@@ -157,23 +163,6 @@ _VARIABLE_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}", re.S)
 # `{% … %}` IMPRIME, y eso es otra lista de literales — justo lo que esta unidad lleva doce
 # vueltas quitando. La 11ª revisión lo dejó explícitamente fuera de lo que hace falta para
 # firmar. Se pasa por escrito a la 054/055.
-
-
-def _rutas_de_las_siete_pantallas(persona, entreno):
-    """Las siete rutas de verdad (las nueve plantillas de esta unidad menos las dos parciales
-    sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que se renderizan igual
-    porque `progreso/ver.html` y `paginas/inicio.html` las incluyen) — factorizada para que R6
-    y R7 (vuelta 9, comparación de firma sobre HTML renderizado) barran exactamente el mismo
-    conjunto sin repetir la lista a mano dos veces."""
-    return [
-        "/",
-        f"/planes/{persona.id}/apuntar/",
-        "/entrenos/",
-        f"/entrenos/{persona.id}/{entreno.id}/corregir/",
-        "/perfiles/peso/",
-        f"/progreso/{persona.id}/",
-        f"/cierres/{persona.id}/",
-    ]
 
 
 def _indices_del_h1_de_titulo(contenido):
@@ -923,56 +912,14 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
                     tokens.update(coincidencia.group("clases").split())
                 self.assertIn("cifra", tokens, f"{pieza} perdió `.cifra`")
 
-    def test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra(self):
-        """FALSO VERDE 1, BLOQUEANTE (revisión, 6ª vuelta): un barrido de verdad, no una
-        muestra escrita a mano — los tres tests de arriba fijan tres `id` y el de las piezas
-        compartidas fija tres piezas; ninguno mira los números que cada pantalla escribe en
-        línea, que son la mayoría. Es la tercera vez que la misma lección asoma en esta
-        unidad (Hueco 2 de la revisión 3ª vuelta, ya sobre R6): *cada vez que un criterio
-        dice "TODO" o "CADA", la red lo había comprobado sobre una muestra*.
-
-        El revisor lo midió sobre HTML renderizado, imprimiendo la cadena de ancestros de
-        `(19% de tu objetivo de 2677 kcal)` en `planes/apuntar.html:65`: ningún ancestro
-        llevaba `.cifra`, y ese número vive dentro de `#plan-de-hoy` (l.29), la diana de HTMX
-        (`hx-target="#plan-de-hoy"`, `hx-swap="outerHTML"`, l.76-77) que se repinta cada vez
-        que apuntas una comida — el escenario exacto por el que R6 existe, con `kcal`
-        enumerado en su criterio con todas las letras. Antes de añadirle `.cifra` a esa `<p>`,
-        este mismo test caía en rojo con ese mensaje exacto; con el token puesto, en verde (la
-        mutación y su control están en hallazgos.md, "Vuelta 8").
-
-        Se recorren las siete pantallas de verdad (las nueve plantillas de esta unidad menos
-        las dos parciales sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que
-        se renderizan igual porque `progreso/ver.html` y `paginas/inicio.html` las incluyen)
-        con datos reales — la fixture de esta clase ya trae un plan, un entreno y dos
-        pesadas, así que todos los números de dato de las nueve plantillas tienen algo que
-        mostrar.
-
-        Vuelta 11 — la exención ya no compara VALORES (ver `_con_procedencia_marcada`, arriba):
-        se renderiza con el motor parcheado y cada coincidencia se exime sólo si NINGÚN
-        sub-trozo que la compone viene de una variable — prosa fija de verdad, esté donde esté
-        escrita, en lugar de un valor que coincida con lo que sea que escriban a mano los diez
-        ficheros.
-
-        Vuelta 12 — el parche deja de perseguir `render_value_in_context` (que otros dos
-        módulos de Django importan por nombre y que `{% now %}`/`{% widthratio %}`/todo
-        `{% simple_tag %}` nunca llaman) y pasa a envolver por NODO lo que no es `TextNode`:
-        el punto de enganche cambia, la letra de este test no."""
-        sin_cifra = []
-        with _con_procedencia_marcada():
-            for ruta in _rutas_de_las_siete_pantallas(self.alejandro, self.entreno):
-                respuesta = self.client.get(ruta)
-                self.assertEqual(respuesta.status_code, 200, ruta)
-                lector = _NumerosDeDatoEnElTexto()
-                lector.feed(respuesta.content.decode())
-                for numero, cadena, de_variable in lector.hallazgos:
-                    if not de_variable:
-                        continue  # prosa fija de verdad: no puede "bailar", R6 no la exige
-                    if _algun_elemento_de_la_cadena_lleva_cifra(cadena):
-                        continue
-                    sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
-        self.assertEqual(
-            sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
-        )
+    # Unidad 059 — `test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra` (el barrido
+    # sobre HTML renderizado que vivía aquí, FALSO VERDE 1 BLOQUEANTE de la revisión 6ª vuelta)
+    # se SACÓ de este fichero: `kcalibra/tests_pantallas_del_proyecto.py` corre ya el mismo
+    # barrido — mismo mecanismo (`_con_procedencia_marcada`/`_NumerosDeDatoEnElTexto`,
+    # importados de aquí, no copiados) — sobre las QUINCE pantallas reales de hoy (no solo las
+    # siete de esta unidad) y con un vocabulario más ancho, derivado de las `choices` de
+    # `despensa`/`recetas` en vez de fijo a `kcal|kg|g|min|%`. Mantenerlo aquí también habría
+    # sido exactamente la duplicación que la 059 existe para cerrar.
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -1136,7 +1083,20 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
                 "minimo": 4,
             },
         ],
-        "pildora_macro": [{"fija": {"rounded-pastilla", "px-3", "py-1.5"}}],
+        # Unidad 059 — ensanchado tras medir un falso ROJO real (no de esta unidad: se veía al
+        # barrer las QUINCE pantallas reales del proyecto entero, algo que ningún sweep de la
+        # 053 podía ver porque solo mira sus siete). Con solo `rounded-pastilla`+`px-3`+`py-1.5`,
+        # la firma también disparaba sobre botones de "Guardar"/"Quitar" corrientes
+        # (`rounded-pastilla … px-3 py-1.5 text-[13px] font-semibold`, el mismo tamaño de
+        # pastilla pequeña) en `despensa/ver.html`, `hogares/mi_hogar.html` y
+        # `recetas/detalle.html` — código correcto, sin ninguna copia. Los tres tokens que sí
+        # distinguen a `_pildora_macro_interna` de un botón (verificado: ninguno de los tres
+        # aparece en esos botones) son los de layout en línea (`inline-flex`, `items-center`,
+        # `gap-1.5`), no los de tamaño — apretar añadiendo tokens, nunca aflojar quitando la
+        # etiqueta abierta a cualquier elemento.
+        "pildora_macro": [
+            {"fija": {"rounded-pastilla", "px-3", "py-1.5", "inline-flex", "items-center", "gap-1.5"}}
+        ],
         "barra_macro": [{"fija": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}}],
         "anillo_abre": [{"fija": {"shrink-0", "rounded-full", "relative"}}],
         "boton": [{"fija": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}}],
@@ -1177,6 +1137,44 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # para no colisionar, pero se deja el trío completo del contenedor para que la firma
         # describa la FORMA de la pieza, no un accidente de una sola clase.
         "segmentado": [{"fija": {"mb-4", "gap-1", "rounded-pastilla", "bg-lienzo"}}],
+        # Unidad 059 (R4/R10) — las tres piezas que la 054 dejó sin firma portante
+        # (hallazgos.md de la 054, revisión, sección "Lo que sí quedó demostrado"): se contaban
+        # en `PIEZAS_PORTADAS` pero nadie vigilaba si alguna pantalla las copiaba a mano en vez
+        # de incluirlas. Apretar, no aflojar (misma disciplina que ya aplicó la 057 con FR-I).
+        #
+        # `boton_enlace` (`_ui.html`) es la hermana de `boton` sobre un `<a>` — MISMA lección de
+        # la 27ª cara (docs/conocimiento/tests-que-no-fallan-cuando-deben.md): el token
+        # discriminante no puede ser uno que el defecto real (copiar el aspecto de `boton` sobre
+        # un `<a>`, que no entiende `:disabled`) se lleve por delante. `disabled:opacity-40` de
+        # la firma de `boton` YA no sirve aquí a propósito: es justo el token que un `<a>` no
+        # necesita, así que la firma de `boton_enlace` no depende de él — usa los tokens que SÍ
+        # sobreviven a una copia sobre un `<a>` (forma pastilla + tamaño), y `etiquetas={"a"}`
+        # para no colisionar con el propio `<button>` de `boton` (que comparte casi los mismos
+        # tokens de espaciado, pero nunca es un `<a>`).
+        "boton_enlace": [
+            {
+                "fija": {
+                    "rounded-pastilla", "px-6", "py-3.5", "text-[15px]", "font-semibold",
+                    "active:opacity-80",
+                },
+                "etiquetas": {"a"},
+            }
+        ],
+        # `fila_lista_abre` es sólo un `<li>` con su relleno — `etiquetas={"li"}` más los dos
+        # tokens de espaciado que la definen; ninguna de las pantallas reales de hoy tiene otro
+        # `<li>` con exactamente ese par (verificado con el barrido de esta misma unidad).
+        "fila_lista_abre": [{"fija": {"px-4", "py-3"}, "etiquetas": {"li"}}],
+        # `chip` no tiene ningún `{% if %}` en su `class`: toda su firma sobrevive a cualquier
+        # copia completa. El par `has-[:checked]:…` es lo que de verdad la distingue de
+        # cualquier otro `<label>` con `rounded-pastilla` (la forma de "casilla disfrazada de
+        # pastilla" que ningún otro control de esta app repite) — sin depender de `bg-lienzo`
+        # ni de `px-4 py-2`, que sí podrían coincidir con otro elemento por accidente.
+        "chip": [
+            {
+                "fija": {"rounded-pastilla", "has-[:checked]:bg-tinta", "has-[:checked]:text-white"},
+                "etiquetas": {"label"},
+            }
+        ],
     }
 
     @staticmethod

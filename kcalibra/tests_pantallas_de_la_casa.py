@@ -436,11 +436,13 @@ class R5_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # copiado a mano porque DOS de sus cuatro tokens fijos (`transition-opacity` y sobre
         # todo `disabled:opacity-40`, que no significa nada sobre una etiqueta sin `:disabled`)
         # son justo los que un copiador suelta al pegar sobre un enlace.
-        # Hueco H5 (revisión 2, hallazgos.md, M5b/M5c): la primera firma de `boton_enlace`
-        # todavía incluía `transition-opacity` en `fija` y ese token SÍ sobrevive a una copia
-        # sobre un `<a>` — medido: la copia a mano exacta que originó H4, pegada en otra de las
-        # nueve pantallas, entraba en VERDE. Sin `transition-opacity` (M8/M8b/M8c) la misma
-        # copia cae en ROJO, sin abrir ningún falso rojo nuevo en la suite entera (870, OK).
+        # Hueco H5 (revisión 2, hallazgos.md, M5b/M5c) — R10 de la 059 corrige aquí el porqué,
+        # que estaba invertido: la primera firma de `boton_enlace` todavía incluía
+        # `transition-opacity` en `fija`, y ese token NO sobrevive a una copia sobre un `<a>`
+        # (el copiador que originó H4 lo soltó al pegar, igual que `disabled:opacity-40`) —
+        # medido: con `transition-opacity` exigido, esa misma copia a mano entraba en VERDE
+        # (faltaba un token fijo). Sin `transition-opacity` (M8/M8b/M8c) la misma copia cae en
+        # ROJO, sin abrir ningún falso rojo nuevo en la suite entera (870, OK).
         "boton_enlace": [
             {
                 "fija": {"rounded-pastilla", "px-6", "py-3.5", "active:opacity-80"},

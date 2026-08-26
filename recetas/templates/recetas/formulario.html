@@ -50,7 +50,7 @@
             {% include "_ui.html#chip" with casilla=casilla %}
           {% endfor %}
         </div>
-        <p class="mt-1 text-[12px] text-tinta-suave">{{ form.comidas.help_text }}</p>
+        <p id="{{ form.comidas.auto_id }}_helptext" class="mt-1 text-[12px] text-tinta-suave">{{ form.comidas.help_text }}</p>
       </div>
 
       {# ------------------------------------------------------------------------------------ #}
@@ -92,7 +92,7 @@
           {{ form.preparacion.label }}
         </label>
         {{ form.preparacion }}
-        <p class="mt-1 text-[12px] text-tinta-suave">{{ form.preparacion.help_text }}</p>
+        <p id="{{ form.preparacion.auto_id }}_helptext" class="mt-1 text-[12px] text-tinta-suave">{{ form.preparacion.help_text }}</p>
       </div>
 
       {% if modo == "editar" %}
