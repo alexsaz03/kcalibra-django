@@ -738,7 +738,16 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
     def test_mutacion_vocabulario_reconoce_gramos_mililitros_y_raciones(self):
         """R9 en código: el vocabulario ancho tiene que casar justo las palabras que el
         vocabulario ESTRECHO de la 053 (`kcal|kg|g|min|%`) dejaba escapar — medido en vivo por
-        la revisión de la 054 (hueco H2): "raciones", "cm", "Gramos", "Mililitros", "2 latas"."""
+        la revisión de la 054 (hueco H2): "raciones", "cm", "Gramos", "Mililitros", "2 latas".
+
+        H10 (revisión 5 de la 059, BLOQUEANTE) — las diez cadenas de abajo empiezan TODAS por
+        el dígito, que es justo el único caso que una frontera izquierda (`(?<!\\w)`, H9) no
+        puede romper: por eso este test, con `regex.search()` sobre cadenas sueltas, no cazó
+        que el arreglo de H9 mataba también dos números de dato reales cuando quedaban pegados
+        al texto del elemento ANTERIOR (`Altura167 cm`). Ese caso lo prueba
+        `test_mutacion_un_numero_pegado_a_la_etiqueta_anterior_se_detecta_sobre_el_texto_que_construye_el_barrido`,
+        abajo, sobre el texto que el barrido CONSTRUYE de verdad, no sobre un `regex.search`
+        aislado."""
         for texto, debe_casar in [
             ("4 raciones", True), ("1 ración", True), ("167 cm", True),
             ("300,00 Gramos", True), ("100,00 Mililitros", True), ("2 latas", True),
@@ -748,6 +757,69 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             with self.subTest(texto=texto):
                 encontrado = bool(_NUMERO_CON_UNIDAD_DEL_PROYECTO_RE.search(texto))
                 self.assertEqual(encontrado, debe_casar, texto)
+
+    def test_mutacion_un_numero_pegado_a_la_etiqueta_anterior_se_detecta_sobre_el_texto_que_construye_el_barrido(self):
+        """(3a) del arreglo de H10 (revisión 5 de la 059, hallazgos.md) — el hueco que dejó
+        pasar H10: todas las cadenas de `test_mutacion_vocabulario_reconoce_gramos_...` (arriba)
+        y las cinco del comentario de `_NUMERO_CON_UNIDAD_RE` (`kcalibra/tests_pantallas.py`)
+        empiezan por el dígito, y ninguna reproduce lo que el barrido real construye: un número
+        de dato que en la FUENTE queda pegado, sin ningún espacio, al texto del elemento
+        anterior (`<dt>Altura</dt><dd>...<span>{{ v }}</span> cm</dd>`, sin espacio entre
+        `</dt>` y `<dd>` — exactamente `perfiles/ver.html:98`). Este test alimenta la tubería
+        DE VERDAD (`_con_procedencia_marcada` + `_NumerosDeDatoEnElTexto.hallazgos`, la misma
+        que usa el barrido universal), no un `regex.search` sobre una cadena inventada."""
+        plantilla = engines["django"].from_string(
+            "<dl><dt>Altura</dt><dd><span>{{ altura }}</span> cm</dd></dl>"
+        )
+        with _con_procedencia_marcada(), self._vocabulario_ancho():
+            html = plantilla.render({"altura": 167})
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(html)
+            hallazgos = lector.hallazgos
+        # El espacio añadido ENTRE `167` (la variable) y ` cm` (el literal que la sigue, ya con
+        # su propio espacio) da dos espacios seguidos en el número capturado — cosmético: `\s*`
+        # los absorbe igual al buscar, y lo único que importa aquí es que la coincidencia exista
+        # y esté marcada `de_variable`.
+        numeros_de_variable = [
+            numero for numero, _, de_variable in hallazgos
+            if de_variable and " ".join(numero.split()) == "167 cm"
+        ]
+        self.assertTrue(
+            numeros_de_variable,
+            f"«167 cm» pegado a «Altura» (sin espacio en la fuente) no se detectó: {hallazgos}",
+        )
+
+    def test_altura_de_perfiles_en_solo_lectura_lleva_cifra(self):
+        """(3b) del arreglo de H10 (revisión 5 de la 059, hallazgos.md): el plan de trabajo
+        (paso 6) nombra ESTA mutación en concreto — quitar `.cifra` del `cm` de
+        `perfiles/ver.html:98` — como una de las cuatro obligatorias en rojo, y hasta H10 sólo
+        la vigilaba el barrido genérico de arriba, que con el `(?<!\\w)` de H9 había dejado de
+        verla del todo (`Altura167 cm`, sin ningún separador entre el `</dt>` anterior y el
+        número). Test dedicado, con el fichero y la línea nombrados, para que esta mutación
+        concreta no vuelva a depender solo de que el recorrido genérico alcance esa pantalla —
+        Alejandro viendo el perfil de Berta (dos personas adultas del mismo hogar, sin relación
+        de responsable entre ellas) cae siempre en la rama "solo lectura"
+        (`puede_editar=False`) de `perfiles/ver.html`, la que lleva el `<dl>` con `Altura`/`cm`
+        pegados sin espacio en la fuente."""
+        with _con_procedencia_marcada(), self._vocabulario_ancho():
+            respuesta = self.client.get(f"/perfiles/{self.berta.id}/")
+            self.assertEqual(respuesta.status_code, 200)
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(respuesta.content.decode())
+            hallazgos = lector.hallazgos
+        numeros_de_altura = [
+            (numero, cadena) for numero, cadena, de_variable in hallazgos
+            if de_variable and numero.strip().endswith("cm")
+        ]
+        self.assertTrue(
+            numeros_de_altura,
+            f"perfiles/ver.html:98 no mostró ningún «… cm» en /perfiles/{self.berta.id}/: {hallazgos}",
+        )
+        for numero, cadena in numeros_de_altura:
+            self.assertTrue(
+                _algun_elemento_de_la_cadena_lleva_cifra(cadena),
+                f"«{numero}» sin `.cifra` en perfiles/ver.html:98: {[e for e, _ in cadena]}",
+            )
 
 
 # ------------------------------------------------------------------------------------------ #

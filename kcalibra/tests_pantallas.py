@@ -577,6 +577,16 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # con `re.I`). `(?<!\w)` exige que el dígito no venga precedido de una letra/dígito/`_`, cerrando
 # esa entrada sin tocar ningún número de dato real (medido: "4 raciones", "500 g", "2 lata",
 # "1800 kcal", "72.5 kg" siguen casando igual con la frontera puesta).
+#
+# H10 (revisión 5 de la 059, BLOQUEANTE) — el `(?<!\w)` de H9 rompía TAMBIÉN dos números de
+# dato REALES: `hallazgos` (más abajo) concatenaba los sub-trozos del documento SIN separador
+# (`"".join(piezas)`), así que `<dt>Altura</dt><dd>...<span>{{ perfil.altura_cm }}</span> cm</dd>`
+# llegaba al regex como `"Altura167 cm"` — la `a` de "Altura" quedaba PEGADA al `1`, y la
+# frontera izquierda mataba una coincidencia real (medido: `perfiles/ver.html:98` y `:101`,
+# con las 893 en VERDE). El arreglo no es del regex: es del PEGADO. Ver
+# `_SEPARADOR_ENTRE_TROZOS`/`_piezas_por_procedencia`/`hallazgos`, abajo — separan los
+# sub-trozos que vienen de `handle_data` DISTINTOS con un espacio, y sólo dejan pegados a pelo
+# los que partió el propio centinela de procedencia (arriba).
 _NUMERO_CON_UNIDAD_RE = re.compile(r"(?<!\w)\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
 
 # Vuelta 12 — la 10ª revisión (BLOQUEANTE) midió que la procedencia "por construcción" de la
@@ -645,6 +655,15 @@ _NUMERO_CON_UNIDAD_RE = re.compile(r"(?<!\w)\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w
 _INICIO_VARIABLE = "\x01"
 _FIN_VARIABLE = "\x02"
 _MARCA_DE_PROCEDENCIA_RE = re.compile(f"[{_INICIO_VARIABLE}{_FIN_VARIABLE}]")
+
+# H10 (revisión 5 de la 059) — el separador que `_NumerosDeDatoEnElTexto.hallazgos` mete ENTRE
+# sub-trozos que vienen de un `handle_data` distinto (ver `_piezas_por_procedencia`/`hallazgos`,
+# más abajo). Tiene que ser un espacio DE VERDAD, no un carácter de control como `\x00`: el
+# regex reencuentra un número con su unidad a través de `\s*`, que absorbe un espacio de más
+# sin problema, pero NO absorbe `\x00` — un separador que no fuera espacio rompería el propio
+# caso que este mecanismo existe para arreglar (`<span>{{ v }}</span> kg`, la unidad en un
+# elemento distinto del número).
+_SEPARADOR_ENTRE_TROZOS = " "
 
 
 @contextmanager
@@ -759,12 +778,13 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
                 return
 
     def _piezas_por_procedencia(self):
-        """`(subtexto, cadena_de_ancestros, de_variable)` de cada sub-trozo del documento
-        entero, en orden, con el contador de profundidad cruzando los `handle_data`: abre con
-        `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE` (profundidad -= 1,
-        ACOTADA en 0), y todo lo que cae con profundidad > 0 es "de variable". Las dos marcas
-        se BORRAN del texto (no forman parte de ningún sub-trozo), así que un número y su
-        unidad separados sólo por el centinela de cierre quedan pegados otra vez.
+        """`(subtexto, cadena_de_ancestros, de_variable, nuevo_trozo)` de cada sub-trozo del
+        documento entero, en orden, con el contador de profundidad cruzando los `handle_data`:
+        abre con `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE`
+        (profundidad -= 1, ACOTADA en 0), y todo lo que cae con profundidad > 0 es "de
+        variable". Las dos marcas se BORRAN del texto (no forman parte de ningún sub-trozo),
+        así que un número y su unidad separados sólo por el centinela de cierre quedan pegados
+        otra vez.
 
         La cota en 0 (11ª revisión, BLOQUEANTE): un `_FIN_VARIABLE` que se cuela dentro de una
         etiqueta (fuera de `handle_data`, ver `handle_starttag`/`handle_endtag` arriba) mientras
@@ -772,29 +792,60 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         cae a -1 y a partir de ahí un `{{ … }}` de verdad sólo lo sube a 0: `de_variable = False`
         para TODO lo que quede de página, apagando R6 en silencio de punta a punta. Con la cota,
         un centinela descompensado sólo hace perder profundidad de más (falso ROJO, el lado
-        seguro) en vez de apagar el resto del documento."""
+        seguro) en vez de apagar el resto del documento.
+
+        `nuevo_trozo` (H10, revisión 5 de la 059): `True` para el PRIMER sub-trozo que sale de
+        cada `handle_data` original (cada entrada de `self._trozos`, es decir, cada texto que
+        `html.parser` entregó por separado); `False` para los que salen de PARTIR ese mismo
+        `handle_data` por el centinela de procedencia. `hallazgos`, abajo, sólo separa con un
+        espacio los `True` — los `False` son el número y su unidad reencontrándose DENTRO de la
+        misma variable, y tienen que seguir pegados a pelo."""
         piezas = []
         profundidad = 0
         for texto, cadena in self._trozos:
             cursor = 0
+            primer_subtrozo = True
             for marca in _MARCA_DE_PROCEDENCIA_RE.finditer(texto):
                 if marca.start() > cursor:
-                    piezas.append((texto[cursor:marca.start()], cadena, profundidad > 0))
+                    piezas.append((texto[cursor:marca.start()], cadena, profundidad > 0, primer_subtrozo))
+                    primer_subtrozo = False
                 if marca.group() == _INICIO_VARIABLE:
                     profundidad += 1
                 else:
                     profundidad = max(0, profundidad - 1)
                 cursor = marca.end()
             if cursor < len(texto):
-                piezas.append((texto[cursor:], cadena, profundidad > 0))
+                piezas.append((texto[cursor:], cadena, profundidad > 0, primer_subtrozo))
         return piezas
 
     @property
     def hallazgos(self):
+        """H10 (revisión 5 de la 059, BLOQUEANTE) — `texto_completo` ya NO es la concatenación
+        a pelo de todos los sub-trozos (`"".join(piezas)`): eso pegaba también el texto de
+        ELEMENTOS DISTINTOS que en la fuente no llevan ni un espacio entre sí
+        (`<dt>Altura</dt><dd>...` → `"Altura167 cm"`), y la frontera izquierda de H9 (`(?<!\\w)`)
+        confundía la `a` de "Altura" con el dígito de un número de dato real y lo eximía.
+
+        El arreglo separa, con un ESPACIO (`_SEPARADOR_ENTRE_TROZOS`), los sub-trozos que
+        vienen de un `handle_data` DISTINTO (`nuevo_trozo=True`, arriba) — y deja pegados a
+        pelo, sin nada entre medias, los que sólo partió el centinela de procedencia
+        (`nuevo_trozo=False`): un número y su unidad que viven en ELEMENTOS distintos
+        (`<span>{{ v }}</span> kg`, el caso que la revisión 8ª vuelta ya arregló) siguen
+        reencontrándose igual, porque `\\s*` en `_NUMERO_CON_UNIDAD_RE` absorbe el espacio
+        añadido sin esfuerzo — y si el literal que sigue YA traía su propio espacio (`" cm"`),
+        el resultado son dos espacios seguidos, que `\\s*` también absorbe sin problema. Un
+        carácter NO-espacio (`\\x00`, por ejemplo) rompería justo ese reencuentro: `\\s*` no lo
+        traga, así que el número y la unidad dejarían de casar. Con el espacio, la única cadena
+        que cambia de comportamiento es la que NO tenía ningún separador en la fuente
+        (`"Altura167 cm"` → `"Altura 167 cm"`), que es exactamente el caso que había que
+        arreglar."""
         limites = []  # (inicio, fin, cadena_de_ancestros, de_variable) de cada sub-trozo
         piezas = []
         cursor = 0
-        for subtexto, cadena, de_variable in self._piezas_por_procedencia():
+        for subtexto, cadena, de_variable, nuevo_trozo in self._piezas_por_procedencia():
+            if piezas and nuevo_trozo:
+                piezas.append(_SEPARADOR_ENTRE_TROZOS)
+                cursor += len(_SEPARADOR_ENTRE_TROZOS)
             piezas.append(subtexto)
             limites.append((cursor, cursor + len(subtexto), cadena, de_variable))
             cursor += len(subtexto)
