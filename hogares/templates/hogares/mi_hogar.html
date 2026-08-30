@@ -8,7 +8,7 @@
 {% block content %}
   {% include "_ui.html#titulo_seccion" with texto="Código para invitar" %}
   {% include "_ui.html#tarjeta_abre" %}
-    <p class="font-mono text-[28px] tracking-widest text-acento">{{ hogar.codigo }}</p>
+    <p data-identificador-opaco="codigo-de-hogar" class="font-mono text-[28px] tracking-widest text-acento">{{ hogar.codigo }}</p>
     <p class="mt-2 text-[13px] text-tinta-media">
       Compártelo con los tuyos: al registrarse con este código, pedirán entrar en tu hogar y
       cualquiera de los que ya estáis dentro podrá aceptarlos o rechazarlos.

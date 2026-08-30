@@ -806,6 +806,22 @@ def _algun_elemento_de_la_cadena_lleva_cifra(cadena):
     return any("cifra" in (attrs.get("class") or "").split() for _, attrs in cadena)
 
 
+# O6 (revisión 3 de la 059) — el código de invitación del hogar (`hogares/mi_hogar.html`) es
+# ALFANUMÉRICO y AL AZAR (`hogares.models.generar_codigo_hogar`): una racha como «...3G» al
+# final encaja, por pura coincidencia, con el vocabulario de unidades («3 gramos», con `re.I`) —
+# medido con el generador fijado a `QWRT7XZKMN3G`, ~1 de cada 115 códigos, ~1,7 % de las corridas
+# de `full-suite` (dos sorteos independientes: la 059 y la 054 lo miran las dos). Ensanchar el
+# vocabulario no lo arregla (el vocabulario ANCHO del proyecto mide la MISMA tasa que el
+# ESTRECHO de la 054): el código no es un número de dato con una unidad que se le escapó, es un
+# IDENTIFICADOR OPACO — la app nunca hace aritmética con él ni lo compara con otro. Se marca esa
+# verdad en el propio elemento (`data-identificador-opaco`, un atributo semántico y deliberado,
+# no un token decorativo que un copiador pueda soltar sin querer al pegar la pieza) y el barrido
+# lo salta — nunca ampliando el vocabulario de unidades, que es justo la puerta por la que entró
+# el falso rojo.
+def _algun_elemento_de_la_cadena_es_identificador_opaco(cadena):
+    return any("data-identificador-opaco" in attrs for _, attrs in cadena)
+
+
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
     def setUp(self):
         super().setUp()

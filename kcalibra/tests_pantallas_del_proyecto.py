@@ -49,7 +49,7 @@ from recetas.models import Receta
 
 import kcalibra.tests_pantallas as _tests_pantallas
 import kcalibra.tests_pantallas_de_la_casa as _tests_pantallas_de_la_casa
-from kcalibra.ayuda_de_alcanzabilidad import atributos, elementos_con_texto
+from kcalibra.ayuda_de_alcanzabilidad import atributos, el_estado_es_compartido, elementos_con_texto
 from kcalibra.tests_nada_escondido import _rutas_enlazadas
 from kcalibra.tests_pantallas import (
     _CLASE_CON_ETIQUETA_RE,
@@ -58,6 +58,7 @@ from kcalibra.tests_pantallas import (
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
+    _algun_elemento_de_la_cadena_es_identificador_opaco,
     _algun_elemento_de_la_cadena_lleva_cifra,
     _boton_redondo_es_alcanzable,
     _con_procedencia_marcada,
@@ -711,6 +712,8 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
                         continue
                     if _es_la_excepcion_de_perfiles_sobre_r6(ruta, cadena):
                         continue
+                    if _algun_elemento_de_la_cadena_es_identificador_opaco(cadena):
+                        continue  # O6 de la revisión 3: un identificador, no un número de dato
                     sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
         self.assertEqual(
             sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
@@ -783,12 +786,30 @@ class _IdsYAriaDescribedby(HTMLParser):
 # cuatro nombradas, encontró esta quinta — apretar la red la hizo visible, no crearla: el
 # defecto ya estaba en `48c939d`. Se declara aparte de `EXCEPCIONES` (que es, letra a letra, la
 # lista de R8 — las diez que migra la 055) porque es un contrato distinto: no es que la 055 vaya
-# a rehacer esta pantalla, es que el fichero no lo puede tocar ESTA unidad. El día que el padre
-# aplique el cambio propuesto en hallazgos.md, esta exención deja de encontrar nada que eximir
-# y puede borrarse (no hay id fijo que nombrar: `/entrenos/<persona>/<entreno>/corregir/` lleva
-# los dos ids de la fixture, así que se reconoce por FORMA de ruta, no por valor).
-def _es_el_hueco_r6_fuera_de_ficheros(ruta):
-    return ruta.startswith("/entrenos/") and ruta.endswith("/corregir/")
+# a rehacer esta pantalla, es que el fichero no lo puede tocar ESTA unidad.
+#
+# H8 (revisión 3): la exención de arriba, tal como estaba escrita, no tenía TRINQUETE (nada
+# comprobaba que la ruta SIGUIERA teniendo su huérfano) y era GENEROSA (perdonaba CUALQUIER
+# `aria-describedby` huérfano de esa ruta, no el medido) — exactamente lo que R8 existe para
+# impedir, escrito 60 líneas más abajo de R8. Medido por el revisor: aplicada la línea propuesta
+# en hallazgos.md, `Ran 22 tests — OK` (la exención sobra y sigue ahí, en verde, para siempre); y
+# con `corregir.html` intacto pero un `id-que-no-existe-en-ninguna-parte` NUEVO pegado en la
+# misma ruta, también `OK` (un defecto R6 distinto, en una pantalla real, colando en verde).
+#
+# Se estrecha al ID EXACTO que Django genera para ESE campo (`auto_id` por defecto,
+# "id_%s" → "id_calorias_helptext" — no hay otro `help_text` en `FormularioEntreno`), lo que
+# cierra (b) solo: cualquier OTRO huérfano de esa misma ruta ya no se libra. Y se le da su
+# trinquete (a): la propia página tiene que SEGUIR pidiendo ese id exacto sin declararlo — el
+# día que el padre aplique el diff de hallazgos.md, la exención deja de encontrar nada que eximir
+# y el assert de abajo se pone ROJO pidiendo borrarla, en vez de quedarse muda para siempre.
+_ID_DEL_HUECO_R6_FUERA_DE_FICHEROS = "id_calorias_helptext"
+
+
+def _es_el_hueco_r6_fuera_de_ficheros(ruta, referenciado):
+    return (
+        ruta.startswith("/entrenos/") and ruta.endswith("/corregir/")
+        and referenciado == _ID_DEL_HUECO_R6_FUERA_DE_FICHEROS
+    )
 
 
 class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
@@ -808,13 +829,15 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
         )
         huerfanos = []
         total_referencias = 0
+        vista_la_exencion_de_entrenos_corregir = False
         for ruta, contenido in paginas:
             lector = _IdsYAriaDescribedby()
             lector.feed(contenido)
             for referenciado in lector.referencias:
                 total_referencias += 1
                 if referenciado not in lector.ids:
-                    if _es_el_hueco_r6_fuera_de_ficheros(ruta):
+                    if _es_el_hueco_r6_fuera_de_ficheros(ruta, referenciado):
+                        vista_la_exencion_de_entrenos_corregir = True
                         continue  # ver el comentario de arriba: hueco fuera de `ficheros:`
                     huerfanos.append(f"{ruta}: aria-describedby='{referenciado}' sin ningún id igual")
         self.assertGreater(
@@ -823,6 +846,17 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "ningún help_text — el test no probaría nada",
         )
         self.assertEqual(huerfanos, [], f"aria-describedby huérfanos: {huerfanos}")
+        # H8 (revisión 3), el trinquete que le faltaba a esta SEGUNDA lista de excepciones: si
+        # `entrenos/corregir.html` deja de pedir `id_calorias_helptext` sin declararlo —porque el
+        # padre aplicó el diff de hallazgos.md—, la exención ya no encuentra nada que eximir y
+        # esto se pone ROJO pidiendo borrarla, en vez de quedarse muda para siempre en verde.
+        self.assertTrue(
+            vista_la_exencion_de_entrenos_corregir,
+            "la exención de `_es_el_hueco_r6_fuera_de_ficheros` ya no encontró su huérfano "
+            f"medido ({_ID_DEL_HUECO_R6_FUERA_DE_FICHEROS} en /entrenos/.../corregir/): "
+            "probablemente el padre ya aplicó la línea propuesta en hallazgos.md — borra la "
+            "exención, el trinquete acaba de cazarla",
+        )
 
     def test_mutacion_un_id_que_no_coincide_se_pone_rojo(self):
         lector = _IdsYAriaDescribedby()
@@ -892,6 +926,27 @@ def _destino_de_ancla_interna_no_existe(contenido, attrs):
     return "" if existe else id_destino
 
 
+def _es_disparador_de_menu_redondo(etiqueta, attrs):
+    """El `<button>` que ABRE `boton_redondo_menu` — la misma firma de clases de
+    `_es_boton_o_menu_redondo`, pero sólo la mitad que es un disparador de menú (el `<a>` de
+    `boton_redondo` simple no abre nada, así que no cuenta para la pieza 7)."""
+    return etiqueta == "button" and _es_boton_o_menu_redondo(etiqueta, attrs)
+
+
+def _es_menu_redondo_abierto(etiqueta, attrs):
+    """El contenedor que `boton_redondo_menu` despliega: se reconoce por su `role="menu"` — la
+    forma que lo hace un menú, no una lista de pantallas."""
+    return (attrs.get("role") or "").strip().lower() == "menu"
+
+
+def _es_item_de_menu(etiqueta, attrs):
+    """Una OPCIÓN de `boton_redondo_menu`: se reconoce por su `role="menuitem"` — la forma que
+    la hace un destino pulsable (pieza 8 del módulo compartido: "un menú alcanzable con los
+    destinos tapados sigue siendo un menú inútil"), nunca por pertenecer a una pantalla
+    concreta de una lista escrita a mano."""
+    return (attrs.get("role") or "").strip().lower() == "menuitem"
+
+
 class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
     def test_ningun_boton_o_menu_redondo_real_es_inalcanzable_o_lleva_a_ningun_sitio(self):
         nombres = _nombres_de_pantallas_reales_hoy()
@@ -945,6 +1000,61 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
         self.assertEqual(
             sin_nombre_accesible, [],
             f"controles redondos sin nombre accesible: {sin_nombre_accesible}",
+        )
+
+        # H7 (revisión 3) — R7 sólo miraba el DISPARADOR de `boton_redondo_menu`; sus opciones
+        # (los destinos que hay que poder pulsar, pieza 8) no las miraba nadie en una pantalla
+        # nueva. Se identifican por su `role="menuitem"` — la forma que las hace un destino
+        # pulsable — nunca por una lista de rutas, y se comprueban con `_boton_redondo_es_alcanzable`
+        # (IMPORTADA, nunca copiada): usar `nada_lo_tapa` a pelo daría FALSO ROJO sobre el
+        # `pointer-events-none` legítimo del envoltorio `fixed` que también las envuelve a ellas.
+        total_items = 0
+        for ruta, contenido in paginas:
+            for attrs, texto_item in elementos_con_texto(contenido, _es_item_de_menu):
+                total_items += 1
+                href_item = (attrs.get("href") or "").strip()
+                coincide_item = lambda e, a, h=href_item: (
+                    _es_item_de_menu(e, a) and (a.get("href") or "").strip() == h
+                )
+                with self.subTest(ruta=ruta, item=texto_item):
+                    _boton_redondo_es_alcanzable(
+                        self, contenido, coincide_item, f"la opción «{texto_item}» del menú de {ruta}"
+                    )
+                id_roto_item = _destino_de_ancla_interna_no_existe(contenido, attrs)
+                if id_roto_item:
+                    rotos.append(
+                        f"{ruta}: la opción de menú «{texto_item}» apunta a #{id_roto_item}, y "
+                        f"no hay ningún elemento con ese id en la página — no lleva a ningún sitio"
+                    )
+        self.assertGreater(
+            total_items, 0,
+            "el recorrido no encontró ninguna opción de menú: esa mitad no probaría nada",
+        )
+        self.assertEqual(
+            rotos, [], f"controles/opciones redondos que no llevan a ningún sitio: {rotos}"
+        )
+
+        # Pieza 7 del módulo compartido (`el_estado_es_compartido`): el disparador y el menú
+        # tienen que colgar del MISMO `x-data` que declara `abierto` — un `x-data` renombrado o
+        # duplicado deja a los dos perfectos por separado y el menú no abre jamás. Hoy `_ui.html`
+        # pinta el `x-data` dentro del propio partial, así que una pantalla que use
+        # `{% include %}` no puede romperlo por fuera — no es la mitad bloqueante de H7 — pero es
+        # la única de las ocho piezas que seguía viviendo sólo en una lista de rutas escrita a
+        # mano (`R8_BotonRedondoDeProgresoTests`), y esta unidad existe para acabar con eso.
+        total_disparadores_de_menu = 0
+        for ruta, contenido in paginas:
+            if not elementos_con_texto(contenido, _es_disparador_de_menu_redondo):
+                continue
+            total_disparadores_de_menu += 1
+            with self.subTest(ruta=ruta, pieza="el_estado_es_compartido"):
+                el_estado_es_compartido(
+                    self, contenido, _es_disparador_de_menu_redondo, _es_menu_redondo_abierto,
+                    "abierto", f"el disparador del menú redondo de {ruta}", f"el menú redondo de {ruta}",
+                )
+        self.assertGreater(
+            total_disparadores_de_menu, 0,
+            "el recorrido no encontró ningún disparador de menú redondo: la pieza 7 no se "
+            "comprobaría",
         )
 
     def test_mutacion_un_boton_redondo_que_apunta_a_un_ancla_inexistente_se_pone_rojo(self):
@@ -1008,6 +1118,76 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
             "un control SIN el atributo aria-label (nunca lo llegó a pintar) tampoco debía "
             "desaparecer del barrido de R7",
         )
+
+    def test_mutacion_una_opcion_de_menu_que_apunta_a_un_ancla_inexistente_se_pone_rojo(self):
+        """H7 (revisión 3), reproducido EXACTAMENTE: el marcado real de
+        `_ui.html#boton_redondo_menu` (mismo envoltorio `fixed`, mismo disparador, mismas dos
+        opciones con `role="menuitem"`) con UNA opción apuntando a un ancla que la página nunca
+        declara. `_es_item_de_menu` tiene que reconocer la opción por su `role`, y
+        `_destino_de_ancla_interna_no_existe` tiene que decir que el destino NO existe — nunca
+        leyendo el fichero fuente, siempre sobre el HTML ya renderizado."""
+        html_con_menu_redondo = (
+            '<div class="pointer-events-none fixed inset-x-0 z-40" x-data="{ abierto: false }">'
+            '<div class="mx-auto w-full max-w-movil px-4"><div class="relative flex justify-end">'
+            '<button type="button" @click="abierto = !abierto" @click.outside="abierto = false" '
+            ':aria-expanded="abierto" aria-haspopup="true" aria-label="Abrir dos cosas" '
+            'class="pointer-events-auto flex h-14 w-14 items-center justify-center '
+            'rounded-pastilla bg-tinta text-white shadow-lg active:scale-95">+</button>'
+            '<div x-show="abierto" role="menu" aria-label="Abrir dos cosas" '
+            'class="pointer-events-auto absolute bottom-16 right-0 w-56 rounded-control '
+            'bg-superficie py-1 shadow-lg ring-1 ring-linea">'
+            '<a href="#destino-1-que-no-existe" role="menuitem" class="block px-4 py-2 '
+            'text-[15px] text-tinta">Uno</a>'
+            '<a href="#formulario-de-verdad" role="menuitem" class="block px-4 py-2 '
+            'text-[15px] text-tinta">Dos</a>'
+            '</div></div></div></div><div id="formulario-de-verdad"></div>'
+        )
+        items = elementos_con_texto(html_con_menu_redondo, _es_item_de_menu)
+        self.assertEqual(
+            len(items), 2,
+            "la firma no reconoció las opciones REALES de boton_redondo_menu: el mutante no "
+            "probaría nada",
+        )
+        rotas = {
+            texto: _destino_de_ancla_interna_no_existe(html_con_menu_redondo, attrs)
+            for attrs, texto in items
+        }
+        self.assertEqual(
+            rotas, {"Uno": "destino-1-que-no-existe", "Dos": ""},
+            "una opción de menú que apunta a un ancla que no existe debía detectarse como rota, "
+            "y la que sí existe no debía reportar nada",
+        )
+
+    def test_mutacion_un_menu_redondo_con_x_data_renombrado_se_pone_rojo(self):
+        """Pieza 7 del módulo compartido (`el_estado_es_compartido`): el disparador y el menú de
+        `boton_redondo_menu` tienen que colgar del MISMO `x-data` que declara `abierto` —
+        renombrar la variable (aquí, `abiertoV2`) los deja perfectos por separado y el menú no
+        abre jamás. Reproducido con el marcado REAL del disparador y del menú."""
+        html_con_x_data_renombrado = (
+            '<div class="pointer-events-none fixed inset-x-0 z-40" x-data="{ abiertoV2: false }">'
+            '<div class="relative flex justify-end">'
+            '<button type="button" @click="abierto = !abierto" @click.outside="abierto = false" '
+            ':aria-expanded="abierto" aria-haspopup="true" aria-label="Abrir dos cosas" '
+            'class="pointer-events-auto flex h-14 w-14 items-center justify-center '
+            'rounded-pastilla bg-tinta text-white shadow-lg active:scale-95">+</button>'
+            '<div x-show="abierto" role="menu" aria-label="Abrir dos cosas" '
+            'class="pointer-events-auto absolute bottom-16 right-0 w-56 rounded-control '
+            'bg-superficie py-1 shadow-lg ring-1 ring-linea">'
+            '<a href="#a" role="menuitem" class="block px-4 py-2 text-[15px] text-tinta">Uno</a>'
+            '</div></div></div>'
+        )
+        self.assertTrue(
+            elementos_con_texto(html_con_x_data_renombrado, _es_disparador_de_menu_redondo),
+            "la firma no reconoció el disparador REAL de boton_redondo_menu: el mutante no "
+            "probaría nada",
+        )
+        with self.assertRaises(
+            AssertionError, msg="un x-data renombrado debía romper el_estado_es_compartido"
+        ):
+            el_estado_es_compartido(
+                self, html_con_x_data_renombrado, _es_disparador_de_menu_redondo,
+                _es_menu_redondo_abierto, "abierto",
+            )
 
 
 # ------------------------------------------------------------------------------------------ #
