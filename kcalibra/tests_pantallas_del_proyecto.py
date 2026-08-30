@@ -821,6 +821,83 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
                 f"«{numero}» sin `.cifra` en perfiles/ver.html:98: {[e for e, _ in cadena]}",
             )
 
+    def test_un_salto_de_bloque_sin_espacio_en_la_fuente_separa_aunque_no_sea_dt_dd(self):
+        """(3c) H11 (revisión 6 de la 059) — 3a sólo mide el caso concreto de H10 (`<dt>…</dt>
+        <dd>…`). Este test mide el lado BLOQUE de la regla general: cualquier salto de elemento
+        de bloque (aquí, `<p>` a `<p>`, sin espacio en la fuente) tiene que seguir separando —
+        que un lector vería como dos frases sin nada entre medias, no como una palabra pegada —
+        y por tanto el número tiene que seguir detectándose, igual que 3a con `<dt>`/`<dd>`."""
+        plantilla = engines["django"].from_string(
+            "<p>Peso</p><p><span>{{ peso }}</span> kg</p>"
+        )
+        with _con_procedencia_marcada(), self._vocabulario_ancho():
+            html = plantilla.render({"peso": 80})
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(html)
+            hallazgos = lector.hallazgos
+        numeros_de_variable = [
+            numero for numero, _, de_variable in hallazgos
+            if de_variable and " ".join(numero.split()) == "80 kg"
+        ]
+        self.assertTrue(
+            numeros_de_variable,
+            f"«80 kg» pegado a «Peso» (salto de bloque `<p></p><p>` sin espacio en la fuente) "
+            f"no se detectó: {hallazgos}",
+        )
+
+    def test_una_etiqueta_inline_dentro_de_la_unidad_no_apaga_la_deteccion(self):
+        """(3d) H11 (revisión 6 de la 059, MEDIO) — el hueco que dejó pasar H10 en el sentido
+        contrario a 3a/3c: separar TODO límite entre `handle_data` (el arreglo de H10) despegaba
+        también las mitades de una palabra que una etiqueta INLINE parte por dentro
+        (`k<span>g</span>`, el `<wbr>` de una unidad larga en móvil…): el espacio insertado deja
+        la unidad sin casar con ningún vocabulario, y la detección desaparece ENTERA — no es que
+        el número se cuele sin `.cifra`, es que ni siquiera se reconoce como número de dato.
+        `k<span>g</span>` reproduce, con el vocabulario ancho, la forma exacta que la Revisión 6
+        midió como PÉRDIDA (`.runtime/v7/formas-separado-838f51d.txt`, fila 4)."""
+        plantilla = engines["django"].from_string(
+            "<span>{{ peso }}</span> k<span>g</span>"
+        )
+        with _con_procedencia_marcada(), self._vocabulario_ancho():
+            html = plantilla.render({"peso": 80})
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(html)
+            hallazgos = lector.hallazgos
+        numeros_de_variable = [
+            numero for numero, _, de_variable in hallazgos
+            if de_variable and " ".join(numero.split()) == "80 kg"
+        ]
+        self.assertTrue(
+            numeros_de_variable,
+            f"«80 kg» con la unidad partida por un `<span>` (`k<span>g</span>`, inline) dejó de "
+            f"detectarse: {hallazgos}",
+        )
+
+    def test_una_etiqueta_inline_dentro_de_la_palabra_de_la_unidad_no_apaga_la_deteccion_en_pantalla_real(self):
+        """(3e) H11 (revisión 6 de la 059) — la mutación EXACTA que la Revisión 6 pidió, sobre
+        `recetas/templates/recetas/detalle.html:14`: sin `.cifra` y con la palabra "raciones"
+        partida por una etiqueta `<b>` (algo que cualquiera escribiría para resaltar una letra).
+        Hasta H11 esto pasaba con las 895 en VERDE: el separador de H10 rompía "raciones" en
+        "r a ciones", que no casa con ningún vocabulario, y el número quedaba invisible para el
+        barrido — no sólo sin `.cifra` marcado, sino sin ver siquiera que había un número."""
+        plantilla = engines["django"].from_string(
+            '<span>{{ raciones }}</span> '
+            '{% if raciones == 1 %}ración{% else %}r<b>a</b>ciones{% endif %}'
+        )
+        with _con_procedencia_marcada(), self._vocabulario_ancho():
+            html = plantilla.render({"raciones": 4})
+            lector = _NumerosDeDatoEnElTexto()
+            lector.feed(html)
+            hallazgos = lector.hallazgos
+        numeros_de_variable = [
+            numero for numero, _, de_variable in hallazgos
+            if de_variable and " ".join(numero.split()) == "4 raciones"
+        ]
+        self.assertTrue(
+            numeros_de_variable,
+            f"«4 raciones» con la unidad partida por un `<b>` (`r<b>a</b>ciones`, inline) dejó de "
+            f"detectarse: {hallazgos}",
+        )
+
 
 # ------------------------------------------------------------------------------------------ #
 # R6 — el texto de ayuda queda asociado a su campo: en toda pantalla vigilada, todo

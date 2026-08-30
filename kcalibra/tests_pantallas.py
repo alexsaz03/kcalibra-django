@@ -583,10 +583,10 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # (`"".join(piezas)`), así que `<dt>Altura</dt><dd>...<span>{{ perfil.altura_cm }}</span> cm</dd>`
 # llegaba al regex como `"Altura167 cm"` — la `a` de "Altura" quedaba PEGADA al `1`, y la
 # frontera izquierda mataba una coincidencia real (medido: `perfiles/ver.html:98` y `:101`,
-# con las 893 en VERDE). El arreglo no es del regex: es del PEGADO. Ver
-# `_SEPARADOR_ENTRE_TROZOS`/`_piezas_por_procedencia`/`hallazgos`, abajo — separan los
-# sub-trozos que vienen de `handle_data` DISTINTOS con un espacio, y sólo dejan pegados a pelo
-# los que partió el propio centinela de procedencia (arriba).
+# con las 893 en VERDE). El arreglo no es del regex: es del PEGADO — refinado en H11 (revisión 6
+# de la 059) para que sólo separe un salto de elemento de BLOQUE, no cualquier `handle_data`
+# distinto. Ver `_SEPARADOR_ENTRE_TROZOS`/`_ETIQUETAS_INLINE`/`_piezas_por_procedencia`/
+# `hallazgos`, abajo.
 _NUMERO_CON_UNIDAD_RE = re.compile(r"(?<!\w)\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
 
 # Vuelta 12 — la 10ª revisión (BLOQUEANTE) midió que la procedencia "por construcción" de la
@@ -665,6 +665,35 @@ _MARCA_DE_PROCEDENCIA_RE = re.compile(f"[{_INICIO_VARIABLE}{_FIN_VARIABLE}]")
 # elemento distinto del número).
 _SEPARADOR_ENTRE_TROZOS = " "
 
+# H11 (revisión 6 de la 059, MEDIO) — H10 separaba TODO límite entre `handle_data` distintos,
+# sin mirar QUÉ etiqueta cruzaba ese límite. Eso también despega las mitades de una palabra que
+# una etiqueta parte por dentro (`r<b>a</b>ciones`, `Mili<wbr>litros`, `k<span>g</span>`): cada
+# apertura o cierre dispara un `handle_data` nuevo igual que un salto de bloque de verdad, y el
+# espacio insertado deja "raciones" convertido en "r a ciones" — la unidad ya no casa con ningún
+# vocabulario y la detección desaparece entera (falso VERDE, medido en la Revisión 6, cuatro
+# formas: `k<span>g</span>`, `Mili<wbr>litros`, `kc<br>al`, `<b>Gra</b>mos`).
+#
+# La regla no es "pegar" ni "separar": es lo que VE EL LECTOR. El HTML colapsa los espacios de la
+# fuente, así que dos trozos de texto sin espacio entre etiquetas INLINE se leen como UNA palabra
+# (van PEGADOS); un salto de elemento de BLOQUE se lee como una separación real (va SEPARADO). Un
+# `<span>`/`<b>`/`<wbr>`/etc. dentro de una palabra no cambia lo que un lector ve; un `</dt><dd>`
+# sin espacio en la fuente, sí. `_ETIQUETAS_INLINE` es la lista CERRADA que no separa; cualquier
+# otra etiqueta (las de bloque explícitas — `<p>`, `<li>`, `<div>`, `<td>`, `<tr>`, `<h1>`-`<h6>`,
+# `<section>`, `<ul>`, `<table>`, `<dt>`/`<dd>`… — y cualquiera no listada) SÍ separa: entre
+# "todo lo desconocido pega" y "todo lo desconocido separa", la segunda es la que falla hacia
+# ROJO (una etiqueta nueva y rara que en realidad es inline sólo arriesga un falso ROJO —
+# deuda—, nunca un falso VERDE — silencio).
+#
+# Efecto lateral medido (Revisión 6, Medición 3): con H10 (separaba SIEMPRE), dos `<span>`
+# hermanos —los dos inline— también se separaban, y eso le devolvía a un identificador opaco
+# PARTIDO entre ellos (`<span>ABC</span><span>{{v}}</span>`, familia H9) la frontera izquierda
+# que H9 le había quitado (`ABC2G` pegado no casa; `ABC 2G` separado sí). Con la regla de
+# bloque/inline, dos `<span>` seguidos NO separan: ese falso ROJO latente desaparece solo, sin
+# tocar H9.
+_ETIQUETAS_INLINE = frozenset({
+    "b", "i", "span", "wbr", "br", "a", "em", "strong", "small", "sup", "sub", "abbr", "code",
+})
+
 
 @contextmanager
 def _con_procedencia_marcada():
@@ -740,12 +769,23 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
 
     FALSO VERDE 2, mitad "ancla" (revisión, 8ª vuelta, y sigue igual): la cadena de ANCESTROS
     que se usa para mirar `.cifra` sigue siendo la del sub-trozo que trae el PRIMER DÍGITO —
-    eso no cambia; lo que cambia es sólo la decisión de "de_variable", arriba."""
+    eso no cambia; lo que cambia es sólo la decisión de "de_variable", arriba.
+
+    H11 (revisión 6 de la 059, MEDIO) — un tercer dato por sub-trozo, `separa_del_anterior`
+    (`_piezas_por_procedencia`/`hallazgos`, abajo): si el `handle_data` que lo trajo queda al
+    otro lado de un límite de BLOQUE (`_ETIQUETAS_INLINE`) del `handle_data` anterior. Se
+    calcula aquí, en `handle_starttag`/`handle_endtag`, porque sólo aquí se ve QUÉ etiqueta cruzó
+    ese límite — `_piezas_por_procedencia` sólo ve el resultado ya trazado."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.pila = []
-        self._trozos = []  # (texto, cadena_de_ancestros), en orden del documento
+        self._trozos = []  # (texto, cadena_de_ancestros, separa_del_anterior), en orden
+        # H11 — `True` mientras, desde el último `handle_data`, se haya abierto o cerrado
+        # ALGUNA etiqueta que no sea inline (`_ETIQUETAS_INLINE`); se consume (y se resetea a
+        # `False`) en el PRÓXIMO `handle_data`, así que "al menos una fue de bloque" sobrevive
+        # aunque entre medias también se cruce alguna inline.
+        self._cruza_bloque_pendiente = False
 
     def handle_starttag(self, etiqueta, atributos_crudos):
         # Vuelta 12b: el centinela marca la PROCEDENCIA DEL TEXTO (`handle_data`, abajo) — pero
@@ -763,28 +803,33 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
             for nombre, valor in atributos_crudos
         ]
         attrs = atributos(atributos_crudos)
+        if etiqueta not in _ETIQUETAS_INLINE:
+            self._cruza_bloque_pendiente = True
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
         if datos:
-            self._trozos.append((datos, list(self.pila)))
+            self._trozos.append((datos, list(self.pila), self._cruza_bloque_pendiente))
+            self._cruza_bloque_pendiente = False
 
     def handle_endtag(self, etiqueta):
         etiqueta = _MARCA_DE_PROCEDENCIA_RE.sub("", etiqueta)
+        if etiqueta not in _ETIQUETAS_INLINE:
+            self._cruza_bloque_pendiente = True
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:
                 del self.pila[k:]
                 return
 
     def _piezas_por_procedencia(self):
-        """`(subtexto, cadena_de_ancestros, de_variable, nuevo_trozo)` de cada sub-trozo del
-        documento entero, en orden, con el contador de profundidad cruzando los `handle_data`:
-        abre con `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE`
-        (profundidad -= 1, ACOTADA en 0), y todo lo que cae con profundidad > 0 es "de
-        variable". Las dos marcas se BORRAN del texto (no forman parte de ningún sub-trozo),
-        así que un número y su unidad separados sólo por el centinela de cierre quedan pegados
-        otra vez.
+        """`(subtexto, cadena_de_ancestros, de_variable, separa_del_anterior)` de cada sub-trozo
+        del documento entero, en orden, con el contador de profundidad cruzando los
+        `handle_data`: abre con `_INICIO_VARIABLE` (profundidad += 1), cierra con
+        `_FIN_VARIABLE` (profundidad -= 1, ACOTADA en 0), y todo lo que cae con profundidad > 0
+        es "de variable". Las dos marcas se BORRAN del texto (no forman parte de ningún
+        sub-trozo), así que un número y su unidad separados sólo por el centinela de cierre
+        quedan pegados otra vez.
 
         La cota en 0 (11ª revisión, BLOQUEANTE): un `_FIN_VARIABLE` que se cuela dentro de una
         etiqueta (fuera de `handle_data`, ver `handle_starttag`/`handle_endtag` arriba) mientras
@@ -794,20 +839,24 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         un centinela descompensado sólo hace perder profundidad de más (falso ROJO, el lado
         seguro) en vez de apagar el resto del documento.
 
-        `nuevo_trozo` (H10, revisión 5 de la 059): `True` para el PRIMER sub-trozo que sale de
-        cada `handle_data` original (cada entrada de `self._trozos`, es decir, cada texto que
-        `html.parser` entregó por separado); `False` para los que salen de PARTIR ese mismo
-        `handle_data` por el centinela de procedencia. `hallazgos`, abajo, sólo separa con un
-        espacio los `True` — los `False` son el número y su unidad reencontrándose DENTRO de la
-        misma variable, y tienen que seguir pegados a pelo."""
+        `separa_del_anterior` (H11, revisión 6 de la 059): `True` sólo para el PRIMER sub-trozo
+        de un `handle_data` cuyo límite con el anterior cruzó una etiqueta de BLOQUE
+        (`self._cruza_bloque_pendiente`, calculado en `handle_starttag`/`handle_endtag`);
+        `False` para cualquier sub-trozo que salga de PARTIR ese mismo `handle_data` por el
+        centinela de procedencia (nunca hay una etiqueta real entre ellos, así que nunca
+        separan) y para el primer sub-trozo de un `handle_data` cuyo límite sólo cruzó
+        etiquetas INLINE. `hallazgos`, abajo, sólo separa con un espacio los `True`."""
         piezas = []
         profundidad = 0
-        for texto, cadena in self._trozos:
+        for texto, cadena, cruza_bloque in self._trozos:
             cursor = 0
             primer_subtrozo = True
             for marca in _MARCA_DE_PROCEDENCIA_RE.finditer(texto):
                 if marca.start() > cursor:
-                    piezas.append((texto[cursor:marca.start()], cadena, profundidad > 0, primer_subtrozo))
+                    piezas.append((
+                        texto[cursor:marca.start()], cadena, profundidad > 0,
+                        primer_subtrozo and cruza_bloque,
+                    ))
                     primer_subtrozo = False
                 if marca.group() == _INICIO_VARIABLE:
                     profundidad += 1
@@ -815,7 +864,9 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
                     profundidad = max(0, profundidad - 1)
                 cursor = marca.end()
             if cursor < len(texto):
-                piezas.append((texto[cursor:], cadena, profundidad > 0, primer_subtrozo))
+                piezas.append((
+                    texto[cursor:], cadena, profundidad > 0, primer_subtrozo and cruza_bloque,
+                ))
         return piezas
 
     @property
@@ -826,24 +877,26 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         (`<dt>Altura</dt><dd>...` → `"Altura167 cm"`), y la frontera izquierda de H9 (`(?<!\\w)`)
         confundía la `a` de "Altura" con el dígito de un número de dato real y lo eximía.
 
-        El arreglo separa, con un ESPACIO (`_SEPARADOR_ENTRE_TROZOS`), los sub-trozos que
-        vienen de un `handle_data` DISTINTO (`nuevo_trozo=True`, arriba) — y deja pegados a
-        pelo, sin nada entre medias, los que sólo partió el centinela de procedencia
-        (`nuevo_trozo=False`): un número y su unidad que viven en ELEMENTOS distintos
-        (`<span>{{ v }}</span> kg`, el caso que la revisión 8ª vuelta ya arregló) siguen
-        reencontrándose igual, porque `\\s*` en `_NUMERO_CON_UNIDAD_RE` absorbe el espacio
-        añadido sin esfuerzo — y si el literal que sigue YA traía su propio espacio (`" cm"`),
-        el resultado son dos espacios seguidos, que `\\s*` también absorbe sin problema. Un
-        carácter NO-espacio (`\\x00`, por ejemplo) rompería justo ese reencuentro: `\\s*` no lo
-        traga, así que el número y la unidad dejarían de casar. Con el espacio, la única cadena
-        que cambia de comportamiento es la que NO tenía ningún separador en la fuente
-        (`"Altura167 cm"` → `"Altura 167 cm"`), que es exactamente el caso que había que
-        arreglar."""
+        H11 (revisión 6 de la 059, MEDIO) — separar TODO límite entre `handle_data` (el arreglo
+        de H10) también despegaba las mitades de una palabra que una etiqueta INLINE parte por
+        dentro (`r<b>a</b>ciones`, `Mili<wbr>litros`): la unidad dejaba de casar con su
+        vocabulario y la detección desaparecía entera. La regla ya no es "handle_data nuevo":
+        es **lo que separa un salto de elemento de BLOQUE** (`separa_del_anterior`, arriba) —
+        dos trozos que sólo cruzan etiquetas INLINE (o que vienen del mismo `handle_data`,
+        partido sólo por el centinela de procedencia) se quedan pegados a pelo, como los leería
+        un lector: `\\s*` en `_NUMERO_CON_UNIDAD_RE` sigue absorbiendo sin esfuerzo el espacio
+        que SÍ se añade en un salto de bloque, y si el literal que sigue YA traía el suyo
+        (`" cm"`), el resultado son dos espacios seguidos, que `\\s*` también absorbe. Con esto,
+        las cadenas que cambian de comportamiento frente al pegado total de `6dc5924` son las
+        que cruzan un salto de BLOQUE sin espacio en la fuente (`Altura167 cm`, el caso de H10,
+        y sus hermanas) — no "la única", como afirmaba una versión anterior de este docstring,
+        medible y falsa: la Medición 3 de la Revisión 6 midió once formas que cambian de
+        comportamiento con el separador puesto (`hallazgos.md`, "Vuelta de revisión 6")."""
         limites = []  # (inicio, fin, cadena_de_ancestros, de_variable) de cada sub-trozo
         piezas = []
         cursor = 0
-        for subtexto, cadena, de_variable, nuevo_trozo in self._piezas_por_procedencia():
-            if piezas and nuevo_trozo:
+        for subtexto, cadena, de_variable, separa_del_anterior in self._piezas_por_procedencia():
+            if piezas and separa_del_anterior:
                 piezas.append(_SEPARADOR_ENTRE_TROZOS)
                 cursor += len(_SEPARADOR_ENTRE_TROZOS)
             piezas.append(subtexto)
