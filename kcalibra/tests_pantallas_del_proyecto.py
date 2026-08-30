@@ -58,7 +58,6 @@ from kcalibra.tests_pantallas import (
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
-    _algun_elemento_de_la_cadena_es_identificador_opaco,
     _algun_elemento_de_la_cadena_lleva_cifra,
     _boton_redondo_es_alcanzable,
     _con_procedencia_marcada,
@@ -654,8 +653,10 @@ _VOCABULARIO = sorted(
     | {re.escape(p) for p in _PALABRAS_SIN_CHOICES}
     | {"kcal", "kg", "g", "min", "%"}
 )
+# H9 (revisión 4 de la 059): frontera IZQUIERDA — ver el comentario gemelo en
+# `kcalibra/tests_pantallas.py`, junto a `_NUMERO_CON_UNIDAD_RE`.
 _NUMERO_CON_UNIDAD_DEL_PROYECTO_RE = re.compile(
-    r"\d[\d.,]*\s*(?:" + "|".join(_VOCABULARIO) + r")(?!\w)", re.I
+    r"(?<!\w)\d[\d.,]*\s*(?:" + "|".join(_VOCABULARIO) + r")(?!\w)", re.I
 )
 
 
@@ -712,8 +713,6 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
                         continue
                     if _es_la_excepcion_de_perfiles_sobre_r6(ruta, cadena):
                         continue
-                    if _algun_elemento_de_la_cadena_es_identificador_opaco(cadena):
-                        continue  # O6 de la revisión 3: un identificador, no un número de dato
                     sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
         self.assertEqual(
             sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
@@ -845,18 +844,26 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "ninguna página trajo ni un aria-describedby: la fixture no está ejercitando "
             "ningún help_text — el test no probaría nada",
         )
-        self.assertEqual(huerfanos, [], f"aria-describedby huérfanos: {huerfanos}")
         # H8 (revisión 3), el trinquete que le faltaba a esta SEGUNDA lista de excepciones: si
         # `entrenos/corregir.html` deja de pedir `id_calorias_helptext` sin declararlo —porque el
         # padre aplicó el diff de hallazgos.md—, la exención ya no encuentra nada que eximir y
         # esto se pone ROJO pidiendo borrarla, en vez de quedarse muda para siempre en verde.
-        self.assertTrue(
-            vista_la_exencion_de_entrenos_corregir,
-            "la exención de `_es_el_hueco_r6_fuera_de_ficheros` ya no encontró su huérfano "
-            f"medido ({_ID_DEL_HUECO_R6_FUERA_DE_FICHEROS} en /entrenos/.../corregir/): "
-            "probablemente el padre ya aplicó la línea propuesta en hallazgos.md — borra la "
-            "exención, el trinquete acaba de cazarla",
-        )
+        #
+        # O9 (revisión 4) — el trinquete y los huérfanos reales se afirman JUNTOS, en un solo
+        # `assertEqual`: antes, `assertEqual(huerfanos, [])` corría ANTES del `assertTrue` del
+        # trinquete, así que una corrida con huérfanos reales Y el trinquete disparado sólo
+        # nombraba los huérfanos — arreglar y volver a correr para ver el trinquete. Ningún rojo
+        # se pierde (el trinquete seguía cayendo en la siguiente corrida); ahora uno solo cuenta
+        # los dos de golpe.
+        problemas = list(huerfanos)
+        if not vista_la_exencion_de_entrenos_corregir:
+            problemas.append(
+                "la exención de `_es_el_hueco_r6_fuera_de_ficheros` ya no encontró su huérfano "
+                f"medido ({_ID_DEL_HUECO_R6_FUERA_DE_FICHEROS} en /entrenos/.../corregir/): "
+                "probablemente el padre ya aplicó la línea propuesta en hallazgos.md — borra la "
+                "exención, el trinquete acaba de cazarla"
+            )
+        self.assertEqual(problemas, [], f"R6/H8 en rojo: {problemas}")
 
     def test_mutacion_un_id_que_no_coincide_se_pone_rojo(self):
         lector = _IdsYAriaDescribedby()
@@ -996,11 +1003,6 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
             total_controles, 0,
             "el recorrido no encontró ningún botón/menú redondo: este test no probaría nada",
         )
-        self.assertEqual(rotos, [], f"controles redondos que no llevan a ningún sitio: {rotos}")
-        self.assertEqual(
-            sin_nombre_accesible, [],
-            f"controles redondos sin nombre accesible: {sin_nombre_accesible}",
-        )
 
         # H7 (revisión 3) — R7 sólo miraba el DISPARADOR de `boton_redondo_menu`; sus opciones
         # (los destinos que hay que poder pulsar, pieza 8) no las miraba nadie en una pantalla
@@ -1030,8 +1032,20 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
             total_items, 0,
             "el recorrido no encontró ninguna opción de menú: esa mitad no probaría nada",
         )
+
+        # O9 (revisión 4) — las DOS mitades de `rotos` (disparadores y opciones de menú) y
+        # `sin_nombre_accesible` se afirman aquí, JUNTAS, en una sola vez, ya con las dos vueltas
+        # (disparador + opciones) terminadas: antes, el primer `assertEqual(rotos, [])` corría
+        # ANTES de la vuelta de opciones, así que una pantalla con el disparador roto Y las
+        # opciones rotas sólo nombraba el disparador — arreglar y volver a correr para ver el
+        # resto. No se pierde ningún rojo (el mismo defecto seguía cayendo en la siguiente
+        # corrida); ahora un solo rojo lo cuenta todo de golpe.
         self.assertEqual(
             rotos, [], f"controles/opciones redondos que no llevan a ningún sitio: {rotos}"
+        )
+        self.assertEqual(
+            sin_nombre_accesible, [],
+            f"controles redondos sin nombre accesible: {sin_nombre_accesible}",
         )
 
         # Pieza 7 del módulo compartido (`el_estado_es_compartido`): el disparador y el menú

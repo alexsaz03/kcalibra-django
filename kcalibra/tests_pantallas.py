@@ -570,7 +570,14 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # `.cifra`); (b) `%` se ancla con `(?!\\w)` en vez de `\\b`, igual que el resto de unidades
 # (`(?!\\w)` y `\\b` coinciden para las que terminan en letra, y sólo `(?!\\w)` funciona
 # también para `%`, que no es un carácter de palabra).
-_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
+#
+# H9 (revisión 4 de la 059) — frontera IZQUIERDA: el regex sólo anclaba por la derecha
+# (`(?!\w)`), así que un dígito pegado a una letra a su IZQUIERDA (`...KMN3G`, la cola de un
+# identificador alfanumérico al azar como el código de hogar) casaba igual («3G» ~ «3 gramos»,
+# con `re.I`). `(?<!\w)` exige que el dígito no venga precedido de una letra/dígito/`_`, cerrando
+# esa entrada sin tocar ningún número de dato real (medido: "4 raciones", "500 g", "2 lata",
+# "1800 kcal", "72.5 kg" siguen casando igual con la frontera puesta).
+_NUMERO_CON_UNIDAD_RE = re.compile(r"(?<!\w)\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
 
 # Vuelta 12 — la 10ª revisión (BLOQUEANTE) midió que la procedencia "por construcción" de la
 # vuelta 11 sólo cubría UNO de los caminos: parcheaba `render_value_in_context`
@@ -804,22 +811,6 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
 
 def _algun_elemento_de_la_cadena_lleva_cifra(cadena):
     return any("cifra" in (attrs.get("class") or "").split() for _, attrs in cadena)
-
-
-# O6 (revisión 3 de la 059) — el código de invitación del hogar (`hogares/mi_hogar.html`) es
-# ALFANUMÉRICO y AL AZAR (`hogares.models.generar_codigo_hogar`): una racha como «...3G» al
-# final encaja, por pura coincidencia, con el vocabulario de unidades («3 gramos», con `re.I`) —
-# medido con el generador fijado a `QWRT7XZKMN3G`, ~1 de cada 115 códigos, ~1,7 % de las corridas
-# de `full-suite` (dos sorteos independientes: la 059 y la 054 lo miran las dos). Ensanchar el
-# vocabulario no lo arregla (el vocabulario ANCHO del proyecto mide la MISMA tasa que el
-# ESTRECHO de la 054): el código no es un número de dato con una unidad que se le escapó, es un
-# IDENTIFICADOR OPACO — la app nunca hace aritmética con él ni lo compara con otro. Se marca esa
-# verdad en el propio elemento (`data-identificador-opaco`, un atributo semántico y deliberado,
-# no un token decorativo que un copiador pueda soltar sin querer al pegar la pieza) y el barrido
-# lo salta — nunca ampliando el vocabulario de unidades, que es justo la puerta por la que entró
-# el falso rojo.
-def _algun_elemento_de_la_cadena_es_identificador_opaco(cadena):
-    return any("data-identificador-opaco" in attrs for _, attrs in cadena)
 
 
 class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):

@@ -35,7 +35,6 @@ from kcalibra.tests_pantallas import (
     _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE,
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
-    _algun_elemento_de_la_cadena_es_identificador_opaco,
     _algun_elemento_de_la_cadena_lleva_cifra,
     _boton_redondo_es_alcanzable,
     _con_procedencia_marcada,
@@ -554,8 +553,10 @@ _VOCABULARIO_DE_ESTA_UNIDAD = sorted(
     | {re.escape(p) for p in _PALABRAS_SIN_CHOICES_QUE_R6_NOMBRA}
     | {"kcal", "kg", "g", "min", "%"}  # el vocabulario heredado de la 053 — no se afloja
 )
+# H9 (revisión 4 de la 059): frontera IZQUIERDA — ver el comentario gemelo en
+# `kcalibra/tests_pantallas.py`, junto a `_NUMERO_CON_UNIDAD_RE`.
 _NUMERO_CON_UNIDAD_DE_ESTA_UNIDAD_RE = re.compile(
-    r"\d[\d.,]*\s*(?:" + "|".join(_VOCABULARIO_DE_ESTA_UNIDAD) + r")(?!\w)", re.I
+    r"(?<!\w)\d[\d.,]*\s*(?:" + "|".join(_VOCABULARIO_DE_ESTA_UNIDAD) + r")(?!\w)", re.I
 )
 
 
@@ -679,8 +680,6 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConLaCasaMontada):
                         continue
                     if self._es_la_excepcion_de_r3_sobre_r6(ruta, cadena):
                         continue
-                    if _algun_elemento_de_la_cadena_es_identificador_opaco(cadena):
-                        continue  # O6 de la revisión 3 de la 059: un identificador, no un número
                     sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
         self.assertEqual(sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}")
 
