@@ -678,11 +678,26 @@ _SEPARADOR_ENTRE_TROZOS = " "
 # (van PEGADOS); un salto de elemento de BLOQUE se lee como una separación real (va SEPARADO). Un
 # `<span>`/`<b>`/`<wbr>`/etc. dentro de una palabra no cambia lo que un lector ve; un `</dt><dd>`
 # sin espacio en la fuente, sí. `_ETIQUETAS_INLINE` es la lista CERRADA que no separa; cualquier
-# otra etiqueta (las de bloque explícitas — `<p>`, `<li>`, `<div>`, `<td>`, `<tr>`, `<h1>`-`<h6>`,
-# `<section>`, `<ul>`, `<table>`, `<dt>`/`<dd>`… — y cualquiera no listada) SÍ separa: entre
-# "todo lo desconocido pega" y "todo lo desconocido separa", la segunda es la que falla hacia
-# ROJO (una etiqueta nueva y rara que en realidad es inline sólo arriesga un falso ROJO —
-# deuda—, nunca un falso VERDE — silencio).
+# otra etiqueta (las de bloque explícitas, `_ETIQUETAS_DE_BLOQUE` más abajo) SÍ separa.
+#
+# H12 (revisión 7 de la 059, MEDIO) — O13: esta misma sección afirmaba, hasta esta vuelta, que
+# entre "todo lo desconocido pega" y "todo lo desconocido separa" la segunda "sólo arriesga un
+# falso ROJO — deuda —, nunca un falso VERDE — silencio". MEDIDO Y FALSO, por los DOS lados
+# (DIANA 1 de la Revisión 7, `.runtime/rev7/diana1.py`): una etiqueta desconocida que en
+# realidad es de nivel de texto (`<mark>`, `<u>`, `<time>`…) cae del lado "separa" por defecto y
+# PIERDE la detección ENTERA en cuanto parte la palabra de la unidad — 52 de 104 medidas, falso
+# VERDE, no falso rojo —; y una desconocida que en realidad fuera de bloque, si el mecanismo
+# pegara por defecto, también fallaría hacia falso VERDE (es H10). Ninguna de las dos ramas de
+# esa disyuntiva falla hacia rojo: la lista es una ELECCIÓN con riesgo de falso VERDE por los dos
+# lados, y por eso necesita un TRINQUETE (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`,
+# `kcalibra/tests_pantallas_del_proyecto.py`), no una frase que prometa una garantía que la red
+# no da — la tercera vez en esta unidad que pasa (R10, O12, y ésta).
+#
+# El trinquete exige que TODA etiqueta que el árbol de plantillas usa de verdad esté nombrada en
+# una de las tres listas de aquí abajo — nunca "lo que no está en `_ETIQUETAS_INLINE` es de
+# bloque por descarte": `_ETIQUETAS_DE_BLOQUE` es explícita, y una etiqueta que no esté en
+# NINGUNA de las tres pone la suite roja nombrándola (H12, Medición C de la Revisión 7: antes de
+# esta vuelta, `_ETIQUETAS_INLINE` no la vigilaba nadie).
 #
 # Efecto lateral medido (Revisión 6, Medición 3): con H10 (separaba SIEMPRE), dos `<span>`
 # hermanos —los dos inline— también se separaban, y eso le devolvía a un identificador opaco
@@ -690,9 +705,52 @@ _SEPARADOR_ENTRE_TROZOS = " "
 # que H9 le había quitado (`ABC2G` pegado no casa; `ABC 2G` separado sí). Con la regla de
 # bloque/inline, dos `<span>` seguidos NO separan: ese falso ROJO latente desaparece solo, sin
 # tocar H9.
+#
+# O14 (Revisión 7) — la mitad que el párrafo de arriba NO dice: ese mismo efecto lateral sigue
+# VIVO, igual que en `838f51d`, cuando el identificador opaco se parte entre dos elementos de
+# BLOQUE hermanos (`<div>`/`<div>`, `<p>`/`<p>`, `<dt>`/`<dd>`, `<li>`/`<li>`): el separador de
+# bloque le regala la misma frontera izquierda que H9 le había quitado, y vuelve a casar
+# (medido: `.runtime/rev7/h9-partido.py`, los cuatro casos de bloque dan `[('32G', True)]`, igual
+# que el pegado total de `838f51d`). Hoy no ocurre en ninguna pantalla real —el código de hogar
+# se pinta entero dentro de un único `<p>`, medido vivo— así que es DEUDA, no bloqueo; se deja
+# escrito para que la mitad cerrada no esconda la mitad abierta.
 _ETIQUETAS_INLINE = frozenset({
     "b", "i", "span", "wbr", "br", "a", "em", "strong", "small", "sup", "sub", "abbr", "code",
+    # H12 (revisión 7 de la 059) — de nivel de texto: el lector las lee SEGUIDAS de lo que las
+    # rodea, igual que un `<span>` (`<label>Peso <span>80</span> kg</label>` se lee corrido).
+    "button", "label", "select", "option",
+    # H12 — vacía (`SIN_CIERRE`): nunca lleva texto propio y no rompe la línea que la contiene,
+    # el mismo papel que `<br>`, ya en esta lista.
+    "input",
+    # H12 — vacías (`SIN_CIERRE`) y sin texto propio; sólo existen DENTRO de `<svg>`, cuyo
+    # interior ya no se procesa como texto en absoluto (`_ETIQUETAS_SIN_TEXTO`, abajo — el
+    # mecanismo real que las excluye). Se clasifican aquí sólo para que el trinquete no las
+    # señale como huérfanas.
+    "path", "circle", "polyline",
 })
+
+# H12 (revisión 7 de la 059) — la lista EXPLÍCITA de lo que separa: antes de esta vuelta, "no
+# está en `_ETIQUETAS_INLINE`" bastaba para tratar una etiqueta como de bloque, sin que nadie la
+# nombrara — así es como `_ETIQUETAS_INLINE`, la CUARTA lista escrita a mano de esta unidad,
+# llevaba siete pantallas usando `button`/`label`/`input`/`svg`/`select`/`option`/`path`/
+# `circle`/`template` sin que nadie las clasificara nunca. Cada una de éstas es un elemento de
+# BLOQUE de verdad — el lector las lee como líneas o párrafos aparte, no corridas con el texto
+# que las rodea —, medidas sobre el árbol real de hoy (`kcalibra/tests_pantallas_del_proyecto.py`,
+# `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`).
+_ETIQUETAS_DE_BLOQUE = frozenset({
+    "body", "dd", "div", "dl", "dt", "form", "h1", "h2", "h3", "head", "header", "html",
+    "li", "link", "main", "meta", "nav", "p", "script", "section", "title", "ul",
+})
+
+# H12 (revisión 7 de la 059) — la tercera familia, que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`
+# no pueden representar sin forzarla: etiquetas cuyo INTERIOR no es texto que un lector vea EN
+# ABSOLUTO, así que la pregunta "¿pega o separa?" ni siquiera se aplica. `<template>` es un plano
+# inerte para JS — nunca se pinta tal cual (`recetas/_fila_ingrediente.html` lo usa así, "en
+# blanco, para clonar por JS"); dentro de `<svg>` no hay prosa, son coordenadas vectoriales de un
+# icono (`<path>`/`<circle>`/`<polyline>`, arriba). `_NumerosDeDatoEnElTexto` deja de acumular
+# texto mientras esté DENTRO de una de estas dos (ver `_profundidad_sin_texto`, abajo) en vez de
+# obligarlas a "pega" o "separa" para que quepan en una de las otras dos listas.
+_ETIQUETAS_SIN_TEXTO = frozenset({"template", "svg"})
 
 
 @contextmanager
@@ -775,7 +833,15 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
     (`_piezas_por_procedencia`/`hallazgos`, abajo): si el `handle_data` que lo trajo queda al
     otro lado de un límite de BLOQUE (`_ETIQUETAS_INLINE`) del `handle_data` anterior. Se
     calcula aquí, en `handle_starttag`/`handle_endtag`, porque sólo aquí se ve QUÉ etiqueta cruzó
-    ese límite — `_piezas_por_procedencia` sólo ve el resultado ya trazado."""
+    ese límite — `_piezas_por_procedencia` sólo ve el resultado ya trazado.
+
+    H12 (revisión 7 de la 059, MEDIO) — `_profundidad_sin_texto`: mientras esté por encima de
+    cero (dentro de `<template>`/`<svg>`, `_ETIQUETAS_SIN_TEXTO`), `handle_data` no acumula NADA
+    y ninguna etiqueta interior toca `_cruza_bloque_pendiente` — ese subárbol no cuenta como
+    texto en absoluto, ni pega ni separa. Al salir, `_cruza_bloque_pendiente` queda tal cual
+    estaba ANTES de entrar: abrir y cerrar `<svg>`/`<template>` es transparente para el
+    separador, como si el icono no estuviera — sólo las etiquetas de BLOQUE reales a cada lado
+    (si las hay) deciden la separación."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -786,6 +852,9 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         # `False`) en el PRÓXIMO `handle_data`, así que "al menos una fue de bloque" sobrevive
         # aunque entre medias también se cruce alguna inline.
         self._cruza_bloque_pendiente = False
+        # H12 — profundidad de anidamiento dentro de `_ETIQUETAS_SIN_TEXTO` (contador, no
+        # booleano: un `<svg>` dentro de otro, aunque no ocurra hoy, sigue cerrando bien).
+        self._profundidad_sin_texto = 0
 
     def handle_starttag(self, etiqueta, atributos_crudos):
         # Vuelta 12b: el centinela marca la PROCEDENCIA DEL TEXTO (`handle_data`, abajo) — pero
@@ -803,19 +872,27 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
             for nombre, valor in atributos_crudos
         ]
         attrs = atributos(atributos_crudos)
-        if etiqueta not in _ETIQUETAS_INLINE:
+        if self._profundidad_sin_texto:
+            if etiqueta in _ETIQUETAS_SIN_TEXTO:
+                self._profundidad_sin_texto += 1
+        elif etiqueta in _ETIQUETAS_SIN_TEXTO:
+            self._profundidad_sin_texto = 1
+        elif etiqueta not in _ETIQUETAS_INLINE:
             self._cruza_bloque_pendiente = True
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
-        if datos:
+        if datos and not self._profundidad_sin_texto:
             self._trozos.append((datos, list(self.pila), self._cruza_bloque_pendiente))
             self._cruza_bloque_pendiente = False
 
     def handle_endtag(self, etiqueta):
         etiqueta = _MARCA_DE_PROCEDENCIA_RE.sub("", etiqueta)
-        if etiqueta not in _ETIQUETAS_INLINE:
+        if self._profundidad_sin_texto:
+            if etiqueta in _ETIQUETAS_SIN_TEXTO:
+                self._profundidad_sin_texto -= 1
+        elif etiqueta not in _ETIQUETAS_INLINE:
             self._cruza_bloque_pendiente = True
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:

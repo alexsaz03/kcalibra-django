@@ -54,7 +54,10 @@ from kcalibra.tests_nada_escondido import _rutas_enlazadas
 from kcalibra.tests_pantallas import (
     _CLASE_CON_ETIQUETA_RE,
     _CLASES_DEL_BOTON_REDONDO,
+    _ETIQUETAS_DE_BLOQUE,
     _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE,
+    _ETIQUETAS_INLINE,
+    _ETIQUETAS_SIN_TEXTO,
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
@@ -362,6 +365,108 @@ class R8_LaListaDeExcepcionesSoloPuedeEncogerTests(SimpleTestCase):
                 cumplen_ya, ["ya_no_incumple.html"],
                 "una excepción arreglada tiene que aparecer como 'ya no incumple': si no, el "
                 "trinquete no la habría cazado",
+            )
+
+
+# ------------------------------------------------------------------------------------------ #
+# H12 (revisión 7 de la 059, MEDIO) — el trinquete que le faltaba a `_ETIQUETAS_INLINE`: toda
+# etiqueta que el árbol de plantillas usa de verdad tiene que estar NOMBRADA en una de las tres
+# listas de `kcalibra/tests_pantallas.py` (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`,
+# `_ETIQUETAS_SIN_TEXTO`) — el mismo papel que R8 hace para `EXCEPCIONES`: hasta esta vuelta,
+# `_ETIQUETAS_INLINE` era una lista cerrada sin trinquete, la CUARTA de esta unidad, y nueve
+# etiquetas que el árbol ya usaba (`button`, `label`, `input`, `svg`, `select`, `option`,
+# `path`, `circle`, `template`) llevaban desde siempre sin que nadie las clasificara.
+# ------------------------------------------------------------------------------------------ #
+
+
+class _RecolectorDeEtiquetas(HTMLParser):
+    """Sólo el NOMBRE de cada etiqueta que abre — ni atributos ni texto, que es lo único que
+    hace falta para el trinquete de abajo. `HTMLParser.handle_startendtag` (un `<path … />`
+    autocerrado) ya llama a `handle_starttag` por dentro: no hace falta sobrescribirlo aparte."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.etiquetas = set()
+
+    def handle_starttag(self, etiqueta, atributos_crudos):
+        self.etiquetas.add(etiqueta)
+
+
+def _plantillas_del_arbol_propio(directorios=None):
+    """`_todas_las_plantillas_html` (arriba) incluye TODO lo que Django ve, y `django.contrib.
+    admin` está en `INSTALLED_APPS` — así que también trae las plantillas VENDIDAS de paquetes
+    instalados (`django/contrib/admin/templates/…`, `allauth/templates/…`, bajo
+    `site-packages`), que nadie de este proyecto escribe ni puede clasificar y que no son "el
+    árbol" que el encargo de H12 pide vigilar (medido: sin este filtro, el inventario de
+    etiquetas subía de 36 a 58 y aparecían básicamente las plantillas propias de Django/allauth,
+    nunca tocadas por esta unidad). Se filtra por `site-packages` en la ruta — no por `.venv` —
+    porque es portable a cualquier nombre de entorno virtual. El `directorios` que usa el test
+    EN CÓDIGO más abajo (un directorio de usar y tirar) nunca cae bajo `site-packages`, así que
+    el filtro no le afecta."""
+    return [
+        r for r in _todas_las_plantillas_html(directorios)
+        if "site-packages" not in Path(r).resolve().parts
+    ]
+
+
+def _etiquetas_usadas_en_el_arbol(directorios=None):
+    """Toda etiqueta HTML que aparece de verdad en las plantillas PROPIAS del proyecto — misma
+    definición de caso que R1 (lo que Django ve, no una lista escrita a mano). Se despoja
+    `{% … %}`/`{# … #}` antes de parsear (`_ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE`, ya usado por
+    el resto de este fichero): una etiqueta de Django partida a mitad por su propia sintaxis
+    (`<div {% if … %}data-x="1"{% endif %}>`) confunde a `html.parser` si no se limpia antes —
+    medido: sin este paso aparecían etiquetas fantasma como `div{%`/`h{{` que no existen en
+    ningún HTML real."""
+    etiquetas = set()
+    for ruta in _plantillas_del_arbol_propio(directorios):
+        recolector = _RecolectorDeEtiquetas()
+        recolector.feed(_ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE.sub("", _texto(ruta)))
+        etiquetas |= recolector.etiquetas
+    return etiquetas
+
+
+def _etiquetas_sin_clasificar(directorios=None):
+    """Lo que R8 hace para `EXCEPCIONES`, aquí para la separación de H11/H12: cualquier etiqueta
+    del árbol que no esté en NINGUNA de las tres listas explícitas."""
+    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _ETIQUETAS_SIN_TEXTO
+    return sorted(_etiquetas_usadas_en_el_arbol(directorios) - clasificadas)
+
+
+class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
+    databases = set()
+
+    def test_ninguna_etiqueta_del_arbol_real_queda_sin_clasificar(self):
+        sin_clasificar = _etiquetas_sin_clasificar()
+        self.assertEqual(
+            sin_clasificar, [],
+            f"etiquetas que el árbol usa y que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`/"
+            f"`_ETIQUETAS_SIN_TEXTO` (kcalibra/tests_pantallas.py) todavía no clasifican — "
+            f"H12: clasifícalas una a una con su porqué, no las adivines: {sin_clasificar}",
+        )
+
+    def test_mutacion_una_etiqueta_nueva_sin_clasificar_pone_la_suite_roja(self):
+        """H12 (revisión 7 de la 059) — el trinquete demostrado EN CÓDIGO, sobre un directorio de
+        usar y tirar (nunca sobre un fichero real del repositorio): una plantilla con un
+        `<mark>` —justo la etiqueta de la Medición A de la Revisión 7, "algo que cualquiera
+        escribiría para resaltar una letra"— tiene que aparecer como sin clasificar; borrada, el
+        barrido vuelve a estar vacío."""
+        with TemporaryDirectory() as tmp:
+            directorio = Path(tmp) / "paginas" / "templates" / "paginas"
+            directorio.mkdir(parents=True)
+            plantilla = directorio / "prueba_h12_con_mark.html"
+            plantilla.write_text("<p>Texto con <mark>resaltado</mark> de verdad.</p>\n")
+            sin_clasificar = _etiquetas_sin_clasificar([Path(tmp)])
+            self.assertIn(
+                "mark", sin_clasificar,
+                "una etiqueta nueva (<mark>) en una plantilla real no apareció como sin "
+                "clasificar: el trinquete no la está vigilando de verdad",
+            )
+            plantilla.unlink()
+            sin_clasificar_despues = _etiquetas_sin_clasificar([Path(tmp)])
+            self.assertEqual(
+                sin_clasificar_despues, [],
+                "borrar la única plantilla con `<mark>` debía vaciar el barrido sin tocar "
+                "ninguna lista, igual que R1",
             )
 
 
@@ -897,6 +1002,67 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             f"«4 raciones» con la unidad partida por un `<b>` (`r<b>a</b>ciones`, inline) dejó de "
             f"detectarse: {hallazgos}",
         )
+
+    def test_una_etiqueta_de_nivel_de_texto_fuera_de_la_lista_sigue_perdiendo_la_deteccion_en_la_palabra_de_la_unidad(self):
+        """La sexta dirección, H12 (revisión 7 de la 059) — los cinco tests de arriba (3a/3c del
+        lado BLOQUE, 3b/3d/3e del lado INLINE) miden los dos lados del separador, pero los DOS
+        con etiquetas que YA estaban en `_ETIQUETAS_INLINE`: ninguno mide qué pasa con una
+        etiqueta que NO esté clasificada — que es justo donde vivía H12. `_ETIQUETAS_INLINE`
+        era una lista CERRADA, y una etiqueta ajena, aunque fuera de nivel de texto de verdad,
+        perdía la detección ENTERA (DIANA 1 de la Revisión 7: 52 pérdidas de 104 medidas, con
+        `mark`/`u`/`s`/`del`/`ins`/`time`/`q`/`var`… — las 26 probadas dieron el mismo patrón).
+
+        Esto NO se arregla añadiendo `mark`/`u`/`time`/`q`/`x-foo` a `_ETIQUETAS_INLINE` — sería
+        la OCTAVA recaída, adivinar la próxima lista cerrada. El arreglo es el TRINQUETE
+        (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`, arriba): cualquier etiqueta nueva que
+        aparezca de VERDAD en una plantilla pone la suite roja hasta que alguien la clasifique.
+        Este test deja escrito, de forma permanente, QUÉ pasa mientras una etiqueta no está
+        clasificada: sigue perdiendo la detección entera si parte la palabra de la unidad —
+        exactamente las formas que la Revisión 7 midió (`Mili<T>litros</T>`, `k<T>g</T>`), sobre
+        cinco etiquetas representativas que hoy NO existen en el árbol real (por eso el
+        trinquete de arriba no las nombra: `mark`, `u`, `time`, `q`, y una personalizada
+        `x-foo`, que corrobora que el efecto no depende de que la etiqueta sea HTML estándar)."""
+        for etiqueta in ("mark", "u", "time", "q", "x-foo"):
+            with self.subTest(etiqueta=etiqueta):
+                plantilla = engines["django"].from_string(
+                    f"<span>{{{{ cantidad }}}}</span> Mili<{etiqueta}>litros</{etiqueta}>"
+                )
+                with _con_procedencia_marcada(), self._vocabulario_ancho():
+                    html = plantilla.render({"cantidad": 300})
+                    lector = _NumerosDeDatoEnElTexto()
+                    lector.feed(html)
+                    hallazgos = lector.hallazgos
+                numeros_de_variable = [
+                    numero for numero, _, de_variable in hallazgos
+                    if de_variable and " ".join(numero.split()) == "300 Mililitros"
+                ]
+                self.assertEqual(
+                    numeros_de_variable, [],
+                    f"«300 Mililitros» con la unidad partida por `<{etiqueta}>` (fuera de "
+                    f"`_ETIQUETAS_INLINE`) se detectó igualmente — si esto se ha vuelto a "
+                    f"clasificar, esta lista de etiquetas de control ya no vale de testigo: "
+                    f"{hallazgos}",
+                )
+
+                plantilla_kg = engines["django"].from_string(
+                    f"<span>{{{{ cantidad }}}}</span> k<{etiqueta}>g</{etiqueta}>"
+                )
+                with _con_procedencia_marcada(), self._vocabulario_ancho():
+                    html_kg = plantilla_kg.render({"cantidad": 80})
+                    lector_kg = _NumerosDeDatoEnElTexto()
+                    lector_kg.feed(html_kg)
+                    hallazgos_kg = lector_kg.hallazgos
+                numeros_de_variable_kg = [
+                    numero for numero, _, de_variable in hallazgos_kg
+                    if de_variable and " ".join(numero.split()) == "80 kg"
+                ]
+                self.assertEqual(
+                    numeros_de_variable_kg, [],
+                    f"«80 kg» con la unidad partida por `<{etiqueta}>` (fuera de "
+                    f"`_ETIQUETAS_INLINE`) se detectó igualmente — si esto se ha vuelto a "
+                    f"clasificar, esta lista de etiquetas de control ya no vale de testigo: "
+                    f"{hallazgos_kg}",
+                )
 
 
 # ------------------------------------------------------------------------------------------ #
