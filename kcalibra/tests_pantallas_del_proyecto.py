@@ -57,7 +57,6 @@ from kcalibra.tests_pantallas import (
     _ETIQUETAS_DE_BLOQUE,
     _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE,
     _ETIQUETAS_INLINE,
-    _ETIQUETAS_SIN_TEXTO,
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
     _NumerosDeDatoEnElTexto,
@@ -370,12 +369,27 @@ class R8_LaListaDeExcepcionesSoloPuedeEncogerTests(SimpleTestCase):
 
 # ------------------------------------------------------------------------------------------ #
 # H12 (revisión 7 de la 059, MEDIO) — el trinquete que le faltaba a `_ETIQUETAS_INLINE`: toda
-# etiqueta que el árbol de plantillas usa de verdad tiene que estar NOMBRADA en una de las tres
-# listas de `kcalibra/tests_pantallas.py` (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`,
-# `_ETIQUETAS_SIN_TEXTO`) — el mismo papel que R8 hace para `EXCEPCIONES`: hasta esta vuelta,
-# `_ETIQUETAS_INLINE` era una lista cerrada sin trinquete, la CUARTA de esta unidad, y nueve
-# etiquetas que el árbol ya usaba (`button`, `label`, `input`, `svg`, `select`, `option`,
-# `path`, `circle`, `template`) llevaban desde siempre sin que nadie las clasificara.
+# etiqueta que el árbol de plantillas usa de verdad tiene que estar NOMBRADA en una de las dos
+# listas de `kcalibra/tests_pantallas.py` (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`) — el
+# mismo papel que R8 hace para `EXCEPCIONES`: hasta esa vuelta, `_ETIQUETAS_INLINE` era una
+# lista cerrada sin trinquete, la CUARTA de esta unidad, y nueve etiquetas que el árbol ya usaba
+# (`button`, `label`, `input`, `svg`, `select`, `option`, `path`, `circle`, `template`) llevaban
+# desde siempre sin que nadie las clasificara. (Hubo una tercera lista, `_ETIQUETAS_SIN_TEXTO`,
+# entre la 7ª y la 8ª vuelta — H14, `kcalibra/tests_pantallas.py`, la retiró por perder
+# cobertura: hoy sólo quedan dos.)
+#
+# H13 (revisión 8 de la 059, BLOQUEANTE) — este trinquete mira los `.html` del REPOSITORIO, pero
+# `_NumerosDeDatoEnElTexto` (R5/R6, más abajo) actúa sobre HTML ya RENDERIZADO: son poblaciones
+# DISTINTAS, y algo que llega al HTML sin pasar por un `.html` propio —un widget de Django
+# (`forms.Textarea`), `mark_safe`, `format_html`, `|safe`— le es invisible a este trinquete.
+# Medido, sin mutar nada: `<textarea>` aparece en nueve páginas reales de hoy (lo emiten
+# `recetas/forms.py`, `perfiles/forms.py`, `hogares/forms.py`), no está en NINGÚN `.html` del
+# repo, y no estaba clasificado — el trinquete de abajo seguía en VERDE. Por eso hay un SEGUNDO
+# trinquete, `_etiquetas_sin_clasificar_en_paginas` (justo después), que corre sobre la MISMA
+# población que la red: páginas YA renderizadas, dentro del barrido de R5 que ya las tiene en la
+# mano — cero renderizados extra. Los dos trinquetes se quedan, ninguno sustituye al otro: el de
+# aquí abajo caza lo que una RAMA de plantilla usa y el recorrido de R5/R6 no llega a pintar; el
+# de páginas renderizadas caza lo que sale al HTML sin pasar por ningún `.html` propio.
 # ------------------------------------------------------------------------------------------ #
 
 
@@ -427,9 +441,33 @@ def _etiquetas_usadas_en_el_arbol(directorios=None):
 
 def _etiquetas_sin_clasificar(directorios=None):
     """Lo que R8 hace para `EXCEPCIONES`, aquí para la separación de H11/H12: cualquier etiqueta
-    del árbol que no esté en NINGUNA de las tres listas explícitas."""
-    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _ETIQUETAS_SIN_TEXTO
+    del árbol que no esté en NINGUNA de las dos listas explícitas."""
+    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE
     return sorted(_etiquetas_usadas_en_el_arbol(directorios) - clasificadas)
+
+
+def _etiquetas_sin_clasificar_en_paginas(paginas):
+    """H13 (revisión 8 de la 059, BLOQUEANTE) — la MISMA pregunta que `_etiquetas_sin_clasificar`
+    (arriba), pero sobre la población REAL sobre la que actúa `_NumerosDeDatoEnElTexto`: HTML YA
+    RENDERIZADO, no los `.html` del repositorio. `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`
+    cierra H12 mirando el árbol de plantillas — pero un widget de Django (`forms.Textarea`),
+    `mark_safe`, `format_html` o un filtro `|safe` puede poner una etiqueta en el HTML servido sin
+    que exista en ningún `.html` propio, y ese trinquete no la ve (medido: `<textarea>` en nueve
+    páginas reales de hoy, en ningún `.html` del repo, sin clasificar en ninguna de las dos
+    listas — sobre HEAD limpio, sin mutar nada).
+
+    `paginas` es una lista de `(ruta, contenido)` YA renderizado — la misma forma que devuelve
+    `_paginas_de_pantallas_reales` — para que quien la llame no tenga que renderizar nada de más:
+    el barrido de R5 (abajo) ya tiene ese HTML en la mano antes de comprobar `.cifra`, así que la
+    población de este trinquete pasa a ser, por construcción, la misma sobre la que actúa la red,
+    con cero renderizados extra."""
+    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE
+    etiquetas = set()
+    for _, contenido in paginas:
+        recolector = _RecolectorDeEtiquetas()
+        recolector.feed(contenido)
+        etiquetas |= recolector.etiquetas
+    return sorted(etiquetas - clasificadas)
 
 
 class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
@@ -439,8 +477,8 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
         sin_clasificar = _etiquetas_sin_clasificar()
         self.assertEqual(
             sin_clasificar, [],
-            f"etiquetas que el árbol usa y que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`/"
-            f"`_ETIQUETAS_SIN_TEXTO` (kcalibra/tests_pantallas.py) todavía no clasifican — "
+            f"etiquetas que el árbol usa y que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` "
+            f"(kcalibra/tests_pantallas.py) todavía no clasifican — "
             f"H12: clasifícalas una a una con su porqué, no las adivines: {sin_clasificar}",
         )
 
@@ -468,6 +506,31 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
                 "borrar la única plantilla con `<mark>` debía vaciar el barrido sin tocar "
                 "ninguna lista, igual que R1",
             )
+
+    def test_mutacion_una_etiqueta_sin_clasificar_en_una_pagina_renderizada_pone_la_suite_roja(self):
+        """H13 (revisión 8 de la 059, BLOQUEANTE) — el trinquete de arriba mira el ÁRBOL de
+        `.html`; `_etiquetas_sin_clasificar_en_paginas` mira PÁGINAS RENDERIZADAS, que es la
+        población de la que H13 dice que el trinquete de arriba está ciego (un widget de Django,
+        `mark_safe`, `|safe`… pueden poner una etiqueta en el HTML servido sin que exista en
+        ningún `.html` del repo). Demostrado EN CÓDIGO, sobre HTML sintético (nunca sobre una
+        plantilla ni un formulario reales): un `<mark>` en una "página" que ningún fichero del
+        repositorio escribe tiene que aparecer como sin clasificar; sin él, el barrido vuelve a
+        estar vacío — el mismo patrón que la mutación de arriba, sobre la otra población."""
+        sin_clasificar = _etiquetas_sin_clasificar_en_paginas(
+            [("/pagina-h13-de-prueba/", "<p>Texto con <mark>resaltado</mark> de verdad.</p>")]
+        )
+        self.assertIn(
+            "mark", sin_clasificar,
+            "un <mark> en HTML renderizado (sin escribirlo en ningún .html) no apareció como "
+            "sin clasificar: el trinquete de páginas renderizadas no está vigilando de verdad",
+        )
+        sin_clasificar_sin_mark = _etiquetas_sin_clasificar_en_paginas(
+            [("/pagina-h13-de-prueba/", "<p>Texto sin resaltado de verdad.</p>")]
+        )
+        self.assertEqual(
+            sin_clasificar_sin_mark, [],
+            "quitar el único <mark> debía vaciar el barrido sin tocar ninguna lista",
+        )
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -800,6 +863,26 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
         self.assertEqual(
             alcanzadas, nombres,
             f"pantallas reales que el recorrido no alcanzó, y R5 no las miró: {sorted(nombres - alcanzadas)}",
+        )
+        # H13 (revisión 8 de la 059, BLOQUEANTE) — el trinquete de etiquetas
+        # (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`, arriba) sólo mira los `.html` del
+        # repositorio; `_NumerosDeDatoEnElTexto`, un párrafo más abajo, actúa sobre ESTE HTML —
+        # ya renderizado, con las 39 rutas de las dos sesiones — que es una población distinta
+        # (un widget de Django, `mark_safe`, `|safe`… puede poner una etiqueta aquí sin que
+        # exista en ningún `.html` propio; medido: `<textarea>` en nueve páginas reales, en
+        # ningún `.html`, sin clasificar). Se recolecta sobre el HTML que este mismo barrido ya
+        # tiene en la mano (`paginas_alejandro`/`paginas_carlos`, antes de re-renderizar bajo
+        # `_con_procedencia_marcada` para la comprobación de `.cifra`) — cero renderizados
+        # extra — y se exige que toda etiqueta vista esté clasificada: por construcción, la
+        # MISMA población sobre la que actúa la red, no una lista paralela.
+        sin_clasificar_en_render = _etiquetas_sin_clasificar_en_paginas(
+            paginas_alejandro + paginas_carlos
+        )
+        self.assertEqual(
+            sin_clasificar_en_render, [],
+            f"H13: etiquetas en HTML renderizado (no necesariamente en ningún .html del "
+            f"repo) que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` todavía no clasifican: "
+            f"{sin_clasificar_en_render}",
         )
         sin_cifra = []
         with _con_procedencia_marcada(), self._vocabulario_ancho():

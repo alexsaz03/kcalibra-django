@@ -694,10 +694,15 @@ _SEPARADOR_ENTRE_TROZOS = " "
 # no da — la tercera vez en esta unidad que pasa (R10, O12, y ésta).
 #
 # El trinquete exige que TODA etiqueta que el árbol de plantillas usa de verdad esté nombrada en
-# una de las tres listas de aquí abajo — nunca "lo que no está en `_ETIQUETAS_INLINE` es de
-# bloque por descarte": `_ETIQUETAS_DE_BLOQUE` es explícita, y una etiqueta que no esté en
-# NINGUNA de las tres pone la suite roja nombrándola (H12, Medición C de la Revisión 7: antes de
-# esta vuelta, `_ETIQUETAS_INLINE` no la vigilaba nadie).
+# una de las dos listas de aquí abajo (H14, revisión 8 de la 059: eran tres, hasta que esa
+# tercera familia demostró perder cobertura y se retiró — ver el comentario de
+# `_ETIQUETAS_DE_BLOQUE`) — nunca "lo que no está en `_ETIQUETAS_INLINE` es de bloque por
+# descarte": `_ETIQUETAS_DE_BLOQUE` es explícita, y una etiqueta que no esté en NINGUNA de las
+# dos pone la suite roja nombrándola (H12, Medición C de la Revisión 7: antes de esa vuelta,
+# `_ETIQUETAS_INLINE` no la vigilaba nadie). H13 (revisión 8) — este trinquete sólo mira los
+# `.html` del repositorio, una población DISTINTA de la que `_NumerosDeDatoEnElTexto` recorre de
+# verdad (HTML ya renderizado): `kcalibra/tests_pantallas_del_proyecto.py` añade un segundo
+# trinquete, sobre páginas renderizadas, para que la población deje de ser una lista paralela.
 #
 # Efecto lateral medido (Revisión 6, Medición 3): con H10 (separaba SIEMPRE), dos `<span>`
 # hermanos —los dos inline— también se separaban, y eso le devolvía a un identificador opaco
@@ -719,13 +724,22 @@ _ETIQUETAS_INLINE = frozenset({
     # H12 (revisión 7 de la 059) — de nivel de texto: el lector las lee SEGUIDAS de lo que las
     # rodea, igual que un `<span>` (`<label>Peso <span>80</span> kg</label>` se lee corrido).
     "button", "label", "select", "option",
+    # H13 (revisión 8 de la 059, BLOQUEANTE) — otro control de formulario de nivel de texto, el
+    # mismo papel que `input`/`select`/`button` arriba: el navegador la pinta `inline-block`, no
+    # rompe la línea que la contiene. Medido en vivo (sin mutar nada): `<textarea>` la emite
+    # `forms.Textarea` (`recetas/forms.py`, `perfiles/forms.py`, `hogares/forms.py`) en nueve
+    # páginas reales de hoy, en NINGÚN `.html` del repositorio — el trinquete sobre el árbol
+    # (H12) no podía verla nunca; el trinquete sobre páginas renderizadas
+    # (`_etiquetas_sin_clasificar_en_paginas`, `kcalibra/tests_pantallas_del_proyecto.py`) sí.
+    "textarea",
     # H12 — vacía (`SIN_CIERRE`): nunca lleva texto propio y no rompe la línea que la contiene,
     # el mismo papel que `<br>`, ya en esta lista.
     "input",
-    # H12 — vacías (`SIN_CIERRE`) y sin texto propio; sólo existen DENTRO de `<svg>`, cuyo
-    # interior ya no se procesa como texto en absoluto (`_ETIQUETAS_SIN_TEXTO`, abajo — el
-    # mecanismo real que las excluye). Se clasifican aquí sólo para que el trinquete no las
-    # señale como huérfanas.
+    # H12 — vacías (`SIN_CIERRE`) y sin texto propio: son coordenadas vectoriales de un icono,
+    # nunca encierran un `handle_data` entre su apertura y su cierre — da igual si la etiqueta
+    # que las envuelve (`<svg>`) es INLINE o de BLOQUE (ahora de BLOQUE, H14 más abajo), porque
+    # jamás hay texto que pegar o separar con ellas. Se clasifican aquí sólo para que el
+    # trinquete no las señale como huérfanas.
     "path", "circle", "polyline",
 })
 
@@ -737,20 +751,33 @@ _ETIQUETAS_INLINE = frozenset({
 # BLOQUE de verdad — el lector las lee como líneas o párrafos aparte, no corridas con el texto
 # que las rodea —, medidas sobre el árbol real de hoy (`kcalibra/tests_pantallas_del_proyecto.py`,
 # `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`).
+#
+# H14 (revisión 8 de la 059, BLOQUEANTE) — `svg`/`template` viven AQUÍ, no en una tercera lista
+# aparte. La vuelta 8 los sacó de aquí a una `_ETIQUETAS_SIN_TEXTO` propia que dejaba de acumular
+# TODO su interior como texto, con la premisa "dentro de `<svg>` no hay prosa, son coordenadas
+# vectoriales" — verdad de los `<svg>` que había entonces (`templates/_iconos.html`,
+# `progreso/_grafica.html`, los dos sin una sola palabra dentro), FALSA de `<svg>` en general:
+# `<svg><text>` es texto que el navegador PINTA, `<svg><title>` es el NOMBRE ACCESIBLE que un
+# lector de pantalla lee, y `<foreignObject>` lleva HTML de verdad. Medido: de nueve formas
+# realistas, SEIS pasaron de detectarse a NO detectarse (`<svg><text>`, `<svg><foreignObject>`,
+# `<template>` con contenido, un `<svg>` que envuelve algo legible, y un `<svg>`/`<template>` SIN
+# CERRAR) — cobertura perdida, el lado que la 26ª cara prohíbe expresamente ("cuando el mecanismo
+# no sabe clasificar, la respuesta segura es vigílalo, no exímelo"). El agravante: un `<svg>` o
+# `<template>` sin cerrar dejaba el contador de esa tercera familia atascado por encima de cero
+# PARA SIEMPRE, apagando R5/R6 para el resto de la página entera en silencio — la misma familia
+# que el `max(0, …)` de la 11ª revisión de la 054 cerró del lado de la procedencia, reabierta aquí
+# del lado de "sin texto". Tratarlos como BLOQUE (lo que eran antes de la vuelta 8) cierra las dos
+# cosas de una vez: el contenido de un `<template>` vuelve a contar como texto de verdad —
+# precisamente lo que JS clona al DOM (`recetas/_fila_ingrediente.html` vive dentro de uno) —, y
+# no queda ningún contador que un desbalance pueda dejar descuadrado. Ninguna plantilla real de
+# hoy tiene texto DENTRO de un `<svg>` (los iconos y la gráfica sólo llevan `<path>`/`<circle>`/
+# `<polyline>`, vacíos), así que este cambio no abre ningún falso rojo sobre el árbol de hoy
+# (barrido de las 39 rutas, cero diferencias contra antes de esta vuelta — hallazgos.md).
 _ETIQUETAS_DE_BLOQUE = frozenset({
     "body", "dd", "div", "dl", "dt", "form", "h1", "h2", "h3", "head", "header", "html",
-    "li", "link", "main", "meta", "nav", "p", "script", "section", "title", "ul",
+    "li", "link", "main", "meta", "nav", "p", "script", "section", "svg", "template", "title",
+    "ul",
 })
-
-# H12 (revisión 7 de la 059) — la tercera familia, que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`
-# no pueden representar sin forzarla: etiquetas cuyo INTERIOR no es texto que un lector vea EN
-# ABSOLUTO, así que la pregunta "¿pega o separa?" ni siquiera se aplica. `<template>` es un plano
-# inerte para JS — nunca se pinta tal cual (`recetas/_fila_ingrediente.html` lo usa así, "en
-# blanco, para clonar por JS"); dentro de `<svg>` no hay prosa, son coordenadas vectoriales de un
-# icono (`<path>`/`<circle>`/`<polyline>`, arriba). `_NumerosDeDatoEnElTexto` deja de acumular
-# texto mientras esté DENTRO de una de estas dos (ver `_profundidad_sin_texto`, abajo) en vez de
-# obligarlas a "pega" o "separa" para que quepan en una de las otras dos listas.
-_ETIQUETAS_SIN_TEXTO = frozenset({"template", "svg"})
 
 
 @contextmanager
@@ -835,13 +862,16 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
     calcula aquí, en `handle_starttag`/`handle_endtag`, porque sólo aquí se ve QUÉ etiqueta cruzó
     ese límite — `_piezas_por_procedencia` sólo ve el resultado ya trazado.
 
-    H12 (revisión 7 de la 059, MEDIO) — `_profundidad_sin_texto`: mientras esté por encima de
-    cero (dentro de `<template>`/`<svg>`, `_ETIQUETAS_SIN_TEXTO`), `handle_data` no acumula NADA
-    y ninguna etiqueta interior toca `_cruza_bloque_pendiente` — ese subárbol no cuenta como
-    texto en absoluto, ni pega ni separa. Al salir, `_cruza_bloque_pendiente` queda tal cual
-    estaba ANTES de entrar: abrir y cerrar `<svg>`/`<template>` es transparente para el
-    separador, como si el icono no estuviera — sólo las etiquetas de BLOQUE reales a cada lado
-    (si las hay) deciden la separación."""
+    H12 (revisión 7 de la 059, MEDIO) introdujo un contador, `_profundidad_sin_texto`, que
+    dejaba de acumular texto en absoluto dentro de `<template>`/`<svg>`. H14 (revisión 8,
+    BLOQUEANTE) lo retiró: medido en vivo, esa exención perdía seis de nueve formas de texto que
+    un usuario SÍ lee o SÍ escucha (`<svg><text>`, `<svg><title>`, `<foreignObject>`, el
+    contenido de un `<template>` que JS clona al DOM…), y un `<svg>`/`<template>` sin cerrar
+    dejaba el contador atascado por encima de cero para siempre, apagando R5/R6 para el resto
+    del documento en silencio. `<svg>`/`<template>` son ahora etiquetas de BLOQUE normales
+    (`_ETIQUETAS_DE_BLOQUE`, arriba): su contenido cuenta como texto igual que el de cualquier
+    otro elemento, y `_cruza_bloque_pendiente` (abajo) es lo único que decide si un salto de
+    etiqueta pega o separa."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -852,9 +882,6 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         # `False`) en el PRÓXIMO `handle_data`, así que "al menos una fue de bloque" sobrevive
         # aunque entre medias también se cruce alguna inline.
         self._cruza_bloque_pendiente = False
-        # H12 — profundidad de anidamiento dentro de `_ETIQUETAS_SIN_TEXTO` (contador, no
-        # booleano: un `<svg>` dentro de otro, aunque no ocurra hoy, sigue cerrando bien).
-        self._profundidad_sin_texto = 0
 
     def handle_starttag(self, etiqueta, atributos_crudos):
         # Vuelta 12b: el centinela marca la PROCEDENCIA DEL TEXTO (`handle_data`, abajo) — pero
@@ -872,27 +899,19 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
             for nombre, valor in atributos_crudos
         ]
         attrs = atributos(atributos_crudos)
-        if self._profundidad_sin_texto:
-            if etiqueta in _ETIQUETAS_SIN_TEXTO:
-                self._profundidad_sin_texto += 1
-        elif etiqueta in _ETIQUETAS_SIN_TEXTO:
-            self._profundidad_sin_texto = 1
-        elif etiqueta not in _ETIQUETAS_INLINE:
+        if etiqueta not in _ETIQUETAS_INLINE:
             self._cruza_bloque_pendiente = True
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
-        if datos and not self._profundidad_sin_texto:
+        if datos:
             self._trozos.append((datos, list(self.pila), self._cruza_bloque_pendiente))
             self._cruza_bloque_pendiente = False
 
     def handle_endtag(self, etiqueta):
         etiqueta = _MARCA_DE_PROCEDENCIA_RE.sub("", etiqueta)
-        if self._profundidad_sin_texto:
-            if etiqueta in _ETIQUETAS_SIN_TEXTO:
-                self._profundidad_sin_texto -= 1
-        elif etiqueta not in _ETIQUETAS_INLINE:
+        if etiqueta not in _ETIQUETAS_INLINE:
             self._cruza_bloque_pendiente = True
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:
