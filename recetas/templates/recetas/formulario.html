@@ -43,7 +43,7 @@
         {% endif %}
       </div>
 
-      <div>
+      <div role="group" aria-describedby="{{ form.comidas.auto_id }}_helptext">
         <span class="mb-2 block text-[13px] font-semibold text-tinta-media">{{ form.comidas.label }}</span>
         <div class="flex flex-wrap gap-2">
           {% for casilla in form.comidas %}

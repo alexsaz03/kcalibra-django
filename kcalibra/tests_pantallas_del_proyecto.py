@@ -59,6 +59,7 @@ from kcalibra.tests_pantallas import (
     _ETIQUETAS_INLINE,
     _PALETA_VIEJA_RE,
     _VARIABLE_DE_DJANGO_RE,
+    SIN_CIERRE,
     _NumerosDeDatoEnElTexto,
     _algun_elemento_de_la_cadena_lleva_cifra,
     _boton_redondo_es_alcanzable,
@@ -479,13 +480,19 @@ def _etiquetas_sin_clasificar_en_paginas(paginas):
     el barrido de R5 (abajo) ya tiene ese HTML en la mano antes de comprobar `.cifra`, con cero
     renderizados extra.
 
-    Lo que esto SÍ garantiza, por construcción: la misma LISTA DE RUTAS que recorre la red, y
-    —desde H16, revisión 9— los mismos EVENTOS de parseo que `_NumerosDeDatoEnElTexto` consulta
-    (`handle_starttag` y `handle_endtag`, ver `_RecolectorDeEtiquetas` arriba). Lo que NO
-    garantiza: `paginas` es el HTML del PRIMER render de cada ruta; `_NumerosDeDatoEnElTexto`
-    recorre un SEGUNDO render de las mismas rutas, hecho bajo `_con_procedencia_marcada` —no
-    es el mismo HTML byte a byte, aunque hoy produzca las mismas etiquetas (medido, revisión 9:
-    `RED − TRINQUETE = []`)."""
+    Lo que esto garantiza: la misma LISTA DE RUTAS que recorre la red. Los EVENTOS de parseo
+    (`handle_starttag`/`handle_endtag`) los comparten por COPIA A MANO, NO por construcción —
+    `_RecolectorDeEtiquetas` y `_NumerosDeDatoEnElTexto` son dos subclases de `HTMLParser`
+    independientes que alguien mantiene sincronizadas, y hasta H18 (revisión 10) nada lo
+    comprobaba. Y `_NumerosDeDatoEnElTexto` consulta, por cada etiqueta, una TERCERA estructura
+    que ninguno de los dos trinquetes de arriba vigilaba — `SIN_CIERRE`
+    (`kcalibra/ayuda_de_alcanzabilidad.py`), que decide si la etiqueta entra en la cadena de
+    ancestros que R5/R6 usan para eximir por `.cifra` — hasta que
+    `test_toda_etiqueta_vacia_clasificada_esta_en_sin_cierre` (abajo) se convirtió en el
+    tercero. Lo que tampoco garantiza: `paginas` es el HTML del PRIMER render de cada ruta;
+    `_NumerosDeDatoEnElTexto` recorre un SEGUNDO render de las mismas rutas, hecho bajo
+    `_con_procedencia_marcada` —no es el mismo HTML byte a byte, aunque hoy produzca las mismas
+    etiquetas (medido, revisión 9: `RED − TRINQUETE = []`)."""
     clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE
     etiquetas = set()
     for _, contenido in paginas:
@@ -493,6 +500,49 @@ def _etiquetas_sin_clasificar_en_paginas(paginas):
         recolector.feed(contenido)
         etiquetas |= recolector.etiquetas
     return sorted(etiquetas - clasificadas)
+
+
+# H18 (revisión 10 de la 059, MEDIO) — el trinquete que le faltaba a `SIN_CIERRE`
+# (`kcalibra/ayuda_de_alcanzabilidad.py`): `_NumerosDeDatoEnElTexto.handle_starttag`
+# (`kcalibra/tests_pantallas.py`) decide DOS cosas por etiqueta, contra DOS estructuras — si
+# pega o separa (`_ETIQUETAS_INLINE`, vigilada por el trinquete de arriba) Y si entra en la
+# cadena de ancestros (`SIN_CIERRE`, que NINGÚN trinquete vigilaba). Una etiqueta perfectamente
+# clasificada (trinquete de arriba VERDE) que HTML considere VACÍA y que falte de `SIN_CIERRE`
+# se apila y no se desapila NUNCA —no hay cierre que la saque—, así que se queda de ancestro de
+# todo lo que venga detrás dentro de su padre y le regala su `class="cifra"`: falso VERDE.
+# `_VACIAS_DE_HTML` es universo EXTERNO (las 14 "void elements" del HTML Living Standard), no
+# una lista de pantallas ni de piezas de este proyecto: sirve sólo para comprobar la COHERENCIA
+# entre lo que el trinquete de arriba ya clasifica y lo que `SIN_CIERRE` cubre.
+_VACIAS_DE_HTML = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
+
+
+def _etiquetas_vacias_clasificadas_sin_sin_cierre(clasificadas=None, sin_cierre=None, vacias=None):
+    """H18: qué etiquetas están CLASIFICADAS (`_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`) y son
+    VACÍAS de HTML, pero `SIN_CIERRE` no las trae — el hueco exacto que deja una etiqueta
+    apilada para siempre en `_NumerosDeDatoEnElTexto`. Los tres conjuntos son PARÁMETROS (nunca
+    los reales metidos a fuego en el cuerpo) para que la mutación de
+    `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests` los sustituya por sintéticos, nunca por los
+    reales."""
+    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE if clasificadas is None else clasificadas
+    sin_cierre = SIN_CIERRE if sin_cierre is None else sin_cierre
+    vacias = _VACIAS_DE_HTML if vacias is None else vacias
+    return sorted((vacias & clasificadas) - set(sin_cierre))
+
+
+_LA_ETIQUETA_DEL_HUECO_H18_FUERA_DE_FICHEROS = "wbr"
+
+
+def _es_el_hueco_h18_fuera_de_ficheros(etiqueta):
+    """`wbr` (revisión 10 de la 059, H18): está en `_ETIQUETAS_INLINE` desde H11 (revisión 6) y
+    ausente de `SIN_CIERRE` — `kcalibra/ayuda_de_alcanzabilidad.py`, fuera de `ficheros:` de
+    esta unidad, no se puede tocar aquí ("Reglas del constructor"). Se propone en
+    `hallazgos.md` que el padre añada `wbr` a `SIN_CIERRE`. Trinqueteada aparte, como
+    `_es_el_hueco_r6_fuera_de_ficheros` (arriba): si el padre ya la corrigió, este test se pone
+    ROJO pidiendo borrar la excepción, en vez de quedarse callado para siempre en verde."""
+    return etiqueta == _LA_ETIQUETA_DEL_HUECO_H18_FUERA_DE_FICHEROS
 
 
 class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
@@ -555,6 +605,57 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
         self.assertEqual(
             sin_clasificar_sin_mark, [],
             "quitar el único <mark> debía vaciar el barrido sin tocar ninguna lista",
+        )
+
+    def test_toda_etiqueta_vacia_clasificada_esta_en_sin_cierre(self):
+        """H18 (revisión 10 de la 059, MEDIO) — los dos trinquetes de arriba exigen que TODA
+        etiqueta usada esté NOMBRADA en `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`, pero
+        `_NumerosDeDatoEnElTexto` (R5/R6, `kcalibra/tests_pantallas.py`) decide una SEGUNDA
+        cosa por etiqueta —si entra en la cadena de ancestros— contra una TERCERA lista,
+        `SIN_CIERRE`, que ninguno de los dos vigilaba. `wbr` es hoy ese caso (medido, revisión
+        10 de hallazgos.md): clasificada como INLINE desde H11 y ausente de `SIN_CIERRE` —el
+        trinquete de arriba la da por buena, pero, si algún día aparece en el árbol, se apilaría
+        y no se desapilaría nunca, regalando su `class="cifra"` a todo lo que la siga."""
+        descuadradas = _etiquetas_vacias_clasificadas_sin_sin_cierre()
+        problemas = []
+        vista_la_excepcion_wbr = False
+        for etiqueta in descuadradas:
+            if _es_el_hueco_h18_fuera_de_ficheros(etiqueta):
+                vista_la_excepcion_wbr = True
+                continue  # ver el comentario de arriba: hueco fuera de `ficheros:`
+            problemas.append(etiqueta)
+        if not vista_la_excepcion_wbr:
+            problemas.append(
+                "la excepción de `_es_el_hueco_h18_fuera_de_ficheros` ('wbr') ya no encontró "
+                "su descuadre: probablemente el padre ya añadió `wbr` a `SIN_CIERRE` "
+                "(kcalibra/ayuda_de_alcanzabilidad.py) — borra la excepción, el trinquete "
+                "acaba de cazarla"
+            )
+        self.assertEqual(
+            problemas, [],
+            f"H18: etiquetas vacías y clasificadas que `SIN_CIERRE` no cubre: {problemas}",
+        )
+
+    def test_mutacion_una_etiqueta_vacia_sin_sin_cierre_pone_la_suite_roja(self):
+        """H18 — el trinquete demostrado EN CÓDIGO, sobre conjuntos SINTÉTICOS (nunca sobre
+        `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`/`SIN_CIERRE` reales): una etiqueta vacía y
+        clasificada que falte de `SIN_CIERRE` tiene que aparecer como descuadrada; puesta
+        también en `SIN_CIERRE`, el barrido vuelve a estar vacío — el mismo patrón que las dos
+        mutaciones de arriba, sobre la tercera lista."""
+        descuadradas = _etiquetas_vacias_clasificadas_sin_sin_cierre(
+            clasificadas={"track"}, sin_cierre=set(), vacias={"track"},
+        )
+        self.assertEqual(
+            descuadradas, ["track"],
+            "una etiqueta vacía y clasificada, ausente de SIN_CIERRE, no apareció como "
+            "descuadrada: el trinquete no está vigilando de verdad",
+        )
+        descuadradas_con_sin_cierre = _etiquetas_vacias_clasificadas_sin_sin_cierre(
+            clasificadas={"track"}, sin_cierre={"track"}, vacias={"track"},
+        )
+        self.assertEqual(
+            descuadradas_con_sin_cierre, [],
+            "meter la misma etiqueta en SIN_CIERRE debía vaciar el barrido",
         )
 
 
@@ -883,12 +984,15 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
         # ningún `.html`, sin clasificar). Se recolecta sobre el HTML que este mismo barrido ya
         # tiene en la mano (`paginas_alejandro`/`paginas_carlos`, antes de re-renderizar bajo
         # `_con_procedencia_marcada` para la comprobación de `.cifra`) — cero renderizados
-        # extra — y se exige que toda etiqueta vista esté clasificada. Lo que esto garantiza,
-        # por construcción: la misma LISTA DE RUTAS que recorre la red, y —desde H16, revisión
-        # 9— los mismos EVENTOS de parseo (`handle_starttag` y `handle_endtag`,
-        # `_RecolectorDeEtiquetas`). No garantiza el mismo HTML byte a byte: éste es el render
-        # de `paginas_alejandro`/`paginas_carlos`; la red, más abajo, recorre un SEGUNDO render
-        # de las mismas rutas, bajo `_con_procedencia_marcada`.
+        # extra — y se exige que toda etiqueta vista esté clasificada. Lo que esto garantiza: la
+        # misma LISTA DE RUTAS que recorre la red. Los EVENTOS de parseo (`handle_starttag`/
+        # `handle_endtag`, `_RecolectorDeEtiquetas`) los comparten por COPIA A MANO, no por
+        # construcción, y `_NumerosDeDatoEnElTexto` consulta además una TERCERA estructura,
+        # `SIN_CIERRE`, que hasta H18 (revisión 10) ningún trinquete vigilaba — ver el comentario
+        # completo junto a `_etiquetas_sin_clasificar_en_paginas`, arriba. Tampoco garantiza el
+        # mismo HTML byte a byte: éste es el render de `paginas_alejandro`/`paginas_carlos`; la
+        # red, más abajo, recorre un SEGUNDO render de las mismas rutas, bajo
+        # `_con_procedencia_marcada`.
         #
         # O26 (revisión 9): este `assertEqual` va ANTES de las dos guardas de abajo —no después,
         # como hasta esta vuelta— para que diagnostique siempre: si fuera el TERCERO, una guarda
@@ -1308,6 +1412,70 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "colar como si existiera",
         )
         self.assertIn("id_nombre_helptext", lector.referencias)
+
+    def test_todo_id_helptext_tiene_algun_aria_describedby_que_lo_pida(self):
+        """H17 (revisión 10 de la 059, MEDIO) — el test de arriba sólo comprueba la flecha
+        `aria-describedby → id existe`; le falta la contraria. Un `<p id="..._helptext">` al
+        que nadie apunte con `aria-describedby` es invisible para ese test aunque su `id` siga
+        ahí escrito — es justo lo que le pasaba a `recetas/formulario.html` (campo `comidas`,
+        un `CheckboxSelectMultiple` con `use_fieldset=True`: Django no le pone
+        `aria-describedby` al widget de un grupo, así que hacía falta ponerlo a mano en el
+        contenedor del grupo, como hace el propio `django/forms/templates/django/forms/
+        field.html` con el `<fieldset>`). Derivado de la MISMA estructura que el test de
+        arriba (`_IdsYAriaDescribedby`, todos los `id` de la página), sin nombrar ninguna
+        pantalla: cualquier `id` que termine en `_helptext` tiene que aparecer en ALGÚN
+        `aria-describedby` de la MISMA página."""
+        nombres = _nombres_de_pantallas_reales_hoy()
+        paginas_alejandro, alcanzadas_alejandro = _paginas_de_pantallas_reales(self.client, nombres, "/")
+        paginas_carlos, alcanzadas_carlos = _paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        paginas = paginas_alejandro + paginas_carlos
+        self.assertGreaterEqual(len(paginas), 10, "el recorrido apenas alcanzó pantallas reales")
+        inertes = []
+        total_helptexts = 0
+        for ruta, contenido in paginas:
+            lector = _IdsYAriaDescribedby()
+            lector.feed(contenido)
+            referenciados = set(lector.referencias)
+            helptexts = sorted(id_ for id_ in lector.ids if id_.endswith("_helptext"))
+            total_helptexts += len(helptexts)
+            for id_ in helptexts:
+                if id_ not in referenciados:
+                    inertes.append(f"{ruta}: id='{id_}' sin ningún aria-describedby que lo pida")
+        self.assertGreater(
+            total_helptexts, 0,
+            "ninguna página trajo ni un id de ayuda (*_helptext): la fixture no está "
+            "ejercitando ningún help_text — el test no probaría nada",
+        )
+        self.assertEqual(
+            inertes, [],
+            f"H17: `id` de ayuda escrito pero inerte, sin nadie que lo pida: {inertes}",
+        )
+
+    def test_mutacion_un_id_helptext_sin_referencia_se_pone_rojo(self):
+        """H17 — el mismo patrón de mutación EN CÓDIGO que el resto de esta clase, sobre HTML
+        sintético: un `id="..._helptext"` sin ningún `aria-describedby` que lo pida tiene que
+        aparecer como inerte; añadido el `aria-describedby`, deja de estarlo."""
+        lector = _IdsYAriaDescribedby()
+        lector.feed('<p id="id_nombre_helptext">ayuda</p>')
+        inertes = [
+            id_ for id_ in lector.ids
+            if id_.endswith("_helptext") and id_ not in set(lector.referencias)
+        ]
+        self.assertEqual(
+            inertes, ["id_nombre_helptext"],
+            "el control: un id_helptext sin ningún aria-describedby debía aparecer como inerte",
+        )
+        lector_con_referencia = _IdsYAriaDescribedby()
+        lector_con_referencia.feed(
+            '<div aria-describedby="id_nombre_helptext"><p id="id_nombre_helptext">ayuda</p></div>'
+        )
+        inertes_con_referencia = [
+            id_ for id_ in lector_con_referencia.ids
+            if id_.endswith("_helptext") and id_ not in set(lector_con_referencia.referencias)
+        ]
+        self.assertEqual(inertes_con_referencia, [])
 
 
 # ------------------------------------------------------------------------------------------ #
