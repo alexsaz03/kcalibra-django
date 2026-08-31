@@ -657,8 +657,34 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConLaCasaMontada):
         Hueco H2 (revisión, hallazgos.md): las RUTAS y el VOCABULARIO salen los dos de una
         estructura que ya existe (`_rutas_que_pintan_las_nueve_pantallas`/
         `_con_vocabulario_ampliado`, arriba) — no de una lista de seis rutas ni de un vocabulario
-        heredado que no conoce ni "raciones" ni "cm"."""
+        heredado que no conoce ni "raciones" ni "cm".
+
+        O25 (revisión 9 de la 059): este barrido consumía `_ETIQUETAS_INLINE`/
+        `_ETIQUETAS_DE_BLOQUE` sin trinquete propio — medido entonces: sus etiquetas eran
+        subconjunto clasificado de las de R5 en `kcalibra/tests_pantallas_del_proyecto.py`, así
+        que no había hueco vivo, pero era coincidencia de dos recorridos, no garantía. Se le pasa
+        el mismo `assertEqual` que usa H13/H16 allí, importado (`_etiquetas_sin_clasificar_en_
+        paginas`), no reimplementado."""
+        # Import local: `kcalibra.tests_pantallas_del_proyecto` importa de este módulo a nivel
+        # de fichero (`_BLOQUE_TITULO_GRANDE_RE`/`_todo_lo_que_titulo_grande_puede_pintar_lleva_
+        # un_h1`) — un `import` a nivel de módulo aquí crearía un ciclo. Dentro del método, los
+        # dos módulos ya están cargados del todo cuando el test corre.
+        from kcalibra.tests_pantallas_del_proyecto import _etiquetas_sin_clasificar_en_paginas
+
         rutas = _rutas_que_pintan_las_nueve_pantallas(self.client)
+        # H13/H16: se recolecta ANTES de renderizar bajo `_con_procedencia_marcada` (igual que
+        # R5, `kcalibra/tests_pantallas_del_proyecto.py`) — ese parche cuela el centinela dentro
+        # del NOMBRE de la etiqueta (ver el comentario de `handle_starttag` en
+        # `kcalibra/tests_pantallas.py`), y `_RecolectorDeEtiquetas` no lo limpia: mezclarlo aquí
+        # metería etiquetas fantasma. Va ANTES de la guarda de rojo mudo para que diagnostique
+        # siempre (O26): si fuera después, un recorrido roto la dejaría sin correr.
+        paginas = [(ruta, self.client.get(ruta).content.decode()) for ruta in sorted(rutas)]
+        sin_clasificar_en_render = _etiquetas_sin_clasificar_en_paginas(paginas)
+        self.assertEqual(
+            sin_clasificar_en_render, [],
+            f"H13: etiquetas en HTML renderizado que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` "
+            f"todavía no clasifican: {sin_clasificar_en_render}",
+        )
         # Guarda de rojo mudo (mismo motivo que `test_el_recorrido_no_prueba_nada_vacio` de
         # `kcalibra/tests_nada_escondido.py`): si el recorrido se rompiera y no alcanzara nada,
         # el barrido de abajo compararía una lista vacía contra sí misma y colaría en verde sin

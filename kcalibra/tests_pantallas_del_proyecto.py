@@ -394,15 +394,33 @@ class R8_LaListaDeExcepcionesSoloPuedeEncogerTests(SimpleTestCase):
 
 
 class _RecolectorDeEtiquetas(HTMLParser):
-    """Sólo el NOMBRE de cada etiqueta que abre — ni atributos ni texto, que es lo único que
-    hace falta para el trinquete de abajo. `HTMLParser.handle_startendtag` (un `<path … />`
-    autocerrado) ya llama a `handle_starttag` por dentro: no hace falta sobrescribirlo aparte."""
+    """El NOMBRE de cada etiqueta que el parser ve — ni atributos ni texto, que es lo único que
+    hace falta para el trinquete de abajo. Recoge en `handle_starttag` Y `handle_endtag`.
+
+    H16 (revisión 9 de la 059, MEDIO) — hasta esta vuelta sólo implementaba `handle_starttag`,
+    pero `_NumerosDeDatoEnElTexto` (`kcalibra/tests_pantallas.py`) consulta `_ETIQUETAS_INLINE`
+    en DOS sitios — `handle_starttag` Y `handle_endtag` — para decidir si un salto de etiqueta
+    pega o separa el texto de dato de su unidad: una etiqueta que llegue al HTML renderizado
+    SÓLO como cierre (una `</mark>` huérfana, típica de un `mark_safe`/`format_html`
+    desbalanceado) decide esa pega-o-separa igual que una etiqueta completa, y este recolector,
+    con sólo aperturas, no la veía nunca — apagaba una detección real con la suite entera en
+    verde. Medido (`.runtime/rev9-revision/d1_punto_ciego.py` de la revisión 9): con
+    `help_text=mark_safe("… 300 Gra</mark>mos.")`, la red deja de detectar «300 Gramos» y el
+    trinquete, antes de esta vuelta, no decía nada — `Ran 85 tests … OK`.
+
+    `HTMLParser.handle_startendtag` (un `<path … />` autocerrado) ya llama a `handle_starttag` Y
+    a `handle_endtag` por dentro —es la implementación por defecto de `html.parser`—, así que no
+    hace falta sobrescribirlo aparte: con las dos aquí abajo, una etiqueta autocerrada añade el
+    mismo nombre dos veces a un `set`, sin efecto."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.etiquetas = set()
 
     def handle_starttag(self, etiqueta, atributos_crudos):
+        self.etiquetas.add(etiqueta)
+
+    def handle_endtag(self, etiqueta):
         self.etiquetas.add(etiqueta)
 
 
@@ -458,9 +476,16 @@ def _etiquetas_sin_clasificar_en_paginas(paginas):
 
     `paginas` es una lista de `(ruta, contenido)` YA renderizado — la misma forma que devuelve
     `_paginas_de_pantallas_reales` — para que quien la llame no tenga que renderizar nada de más:
-    el barrido de R5 (abajo) ya tiene ese HTML en la mano antes de comprobar `.cifra`, así que la
-    población de este trinquete pasa a ser, por construcción, la misma sobre la que actúa la red,
-    con cero renderizados extra."""
+    el barrido de R5 (abajo) ya tiene ese HTML en la mano antes de comprobar `.cifra`, con cero
+    renderizados extra.
+
+    Lo que esto SÍ garantiza, por construcción: la misma LISTA DE RUTAS que recorre la red, y
+    —desde H16, revisión 9— los mismos EVENTOS de parseo que `_NumerosDeDatoEnElTexto` consulta
+    (`handle_starttag` y `handle_endtag`, ver `_RecolectorDeEtiquetas` arriba). Lo que NO
+    garantiza: `paginas` es el HTML del PRIMER render de cada ruta; `_NumerosDeDatoEnElTexto`
+    recorre un SEGUNDO render de las mismas rutas, hecho bajo `_con_procedencia_marcada` —no
+    es el mismo HTML byte a byte, aunque hoy produzca las mismas etiquetas (medido, revisión 9:
+    `RED − TRINQUETE = []`)."""
     clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE
     etiquetas = set()
     for _, contenido in paginas:
@@ -849,6 +874,35 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             [(self.client, ruta) for ruta, _ in paginas_alejandro]
             + [(self.client_carlos, ruta) for ruta, _ in paginas_carlos]
         )
+        # H13 (revisión 8 de la 059, BLOQUEANTE) — el trinquete de etiquetas
+        # (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`, arriba) sólo mira los `.html` del
+        # repositorio; `_NumerosDeDatoEnElTexto`, más abajo, actúa sobre ESTE HTML — ya
+        # renderizado, con las 39 rutas de las dos sesiones — que es una población distinta
+        # (un widget de Django, `mark_safe`, `|safe`… puede poner una etiqueta aquí sin que
+        # exista en ningún `.html` propio; medido: `<textarea>` en nueve páginas reales, en
+        # ningún `.html`, sin clasificar). Se recolecta sobre el HTML que este mismo barrido ya
+        # tiene en la mano (`paginas_alejandro`/`paginas_carlos`, antes de re-renderizar bajo
+        # `_con_procedencia_marcada` para la comprobación de `.cifra`) — cero renderizados
+        # extra — y se exige que toda etiqueta vista esté clasificada. Lo que esto garantiza,
+        # por construcción: la misma LISTA DE RUTAS que recorre la red, y —desde H16, revisión
+        # 9— los mismos EVENTOS de parseo (`handle_starttag` y `handle_endtag`,
+        # `_RecolectorDeEtiquetas`). No garantiza el mismo HTML byte a byte: éste es el render
+        # de `paginas_alejandro`/`paginas_carlos`; la red, más abajo, recorre un SEGUNDO render
+        # de las mismas rutas, bajo `_con_procedencia_marcada`.
+        #
+        # O26 (revisión 9): este `assertEqual` va ANTES de las dos guardas de abajo —no después,
+        # como hasta esta vuelta— para que diagnostique siempre: si fuera el TERCERO, una guarda
+        # anterior que cayera en rojo le impedía correr, y el hueco que H13/H16 vigilan se
+        # quedaba sin decir nada.
+        sin_clasificar_en_render = _etiquetas_sin_clasificar_en_paginas(
+            paginas_alejandro + paginas_carlos
+        )
+        self.assertEqual(
+            sin_clasificar_en_render, [],
+            f"H13: etiquetas en HTML renderizado (no necesariamente en ningún .html del "
+            f"repo) que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` todavía no clasifican: "
+            f"{sin_clasificar_en_render}",
+        )
         # Guarda de rojo mudo (misma familia que `kcalibra.tests_nada_escondido`): si el
         # recorrido se rompiera y no alcanzara nada, el barrido de abajo compararía una lista
         # vacía contra sí misma y colaría en verde sin haber mirado ni una pantalla.
@@ -863,26 +917,6 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
         self.assertEqual(
             alcanzadas, nombres,
             f"pantallas reales que el recorrido no alcanzó, y R5 no las miró: {sorted(nombres - alcanzadas)}",
-        )
-        # H13 (revisión 8 de la 059, BLOQUEANTE) — el trinquete de etiquetas
-        # (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`, arriba) sólo mira los `.html` del
-        # repositorio; `_NumerosDeDatoEnElTexto`, un párrafo más abajo, actúa sobre ESTE HTML —
-        # ya renderizado, con las 39 rutas de las dos sesiones — que es una población distinta
-        # (un widget de Django, `mark_safe`, `|safe`… puede poner una etiqueta aquí sin que
-        # exista en ningún `.html` propio; medido: `<textarea>` en nueve páginas reales, en
-        # ningún `.html`, sin clasificar). Se recolecta sobre el HTML que este mismo barrido ya
-        # tiene en la mano (`paginas_alejandro`/`paginas_carlos`, antes de re-renderizar bajo
-        # `_con_procedencia_marcada` para la comprobación de `.cifra`) — cero renderizados
-        # extra — y se exige que toda etiqueta vista esté clasificada: por construcción, la
-        # MISMA población sobre la que actúa la red, no una lista paralela.
-        sin_clasificar_en_render = _etiquetas_sin_clasificar_en_paginas(
-            paginas_alejandro + paginas_carlos
-        )
-        self.assertEqual(
-            sin_clasificar_en_render, [],
-            f"H13: etiquetas en HTML renderizado (no necesariamente en ningún .html del "
-            f"repo) que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` todavía no clasifican: "
-            f"{sin_clasificar_en_render}",
         )
         sin_cifra = []
         with _con_procedencia_marcada(), self._vocabulario_ancho():

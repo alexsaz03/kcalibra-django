@@ -725,8 +725,14 @@ _ETIQUETAS_INLINE = frozenset({
     # rodea, igual que un `<span>` (`<label>Peso <span>80</span> kg</label>` se lee corrido).
     "button", "label", "select", "option",
     # H13 (revisión 8 de la 059, BLOQUEANTE) — otro control de formulario de nivel de texto, el
-    # mismo papel que `input`/`select`/`button` arriba: el navegador la pinta `inline-block`, no
-    # rompe la línea que la contiene. Medido en vivo (sin mutar nada): `<textarea>` la emite
+    # mismo papel que `input`/`select`/`button` arriba. O22 (revisión 9): el porqué es el mismo
+    # criterio que el resto de esta lista —lo que VE EL LECTOR, no cómo lo pinta el navegador—:
+    # un `<textarea>` va pegado dentro de una frase corrida igual que un `<span>`
+    # (`Escríbela de corrido <textarea>…</textarea> aquí` se leería seguido si hubiera texto a
+    # los lados). Medido por los dos lados (revisión 9, `.runtime/rev9-revision/d5-textarea.txt`):
+    # pasarla a `_ETIQUETAS_DE_BLOQUE` no pega ni separa nada distinto sobre las 39 rutas reales
+    # de hoy (0 pérdidas, 0 ganancias) — así que hoy da igual, pero el criterio que manda es el
+    # de arriba, no cómo la renderiza CSS. Medido en vivo (sin mutar nada): `<textarea>` la emite
     # `forms.Textarea` (`recetas/forms.py`, `perfiles/forms.py`, `hogares/forms.py`) en nueve
     # páginas reales de hoy, en NINGÚN `.html` del repositorio — el trinquete sobre el árbol
     # (H12) no podía verla nunca; el trinquete sobre páginas renderizadas
@@ -735,11 +741,15 @@ _ETIQUETAS_INLINE = frozenset({
     # H12 — vacía (`SIN_CIERRE`): nunca lleva texto propio y no rompe la línea que la contiene,
     # el mismo papel que `<br>`, ya en esta lista.
     "input",
-    # H12 — vacías (`SIN_CIERRE`) y sin texto propio: son coordenadas vectoriales de un icono,
-    # nunca encierran un `handle_data` entre su apertura y su cierre — da igual si la etiqueta
-    # que las envuelve (`<svg>`) es INLINE o de BLOQUE (ahora de BLOQUE, H14 más abajo), porque
-    # jamás hay texto que pegar o separar con ellas. Se clasifican aquí sólo para que el
-    # trinquete no las señale como huérfanas.
+    # H12 — sin texto propio: son coordenadas vectoriales de un icono, nunca encierran un
+    # `handle_data` entre su apertura y su cierre — da igual si la etiqueta que las envuelve
+    # (`<svg>`) es INLINE o de BLOQUE (ahora de BLOQUE, H14 más abajo), porque jamás hay texto
+    # que pegar o separar con ellas. Se clasifican aquí sólo para que el trinquete no las señale
+    # como huérfanas. `path` y `circle` están además en `SIN_CIERRE`
+    # (`kcalibra/ayuda_de_alcanzabilidad.py`); `polyline` NO (O21, revisión 9: el comentario
+    # anterior lo afirmaba de los tres y era falso para éste — medido, `polyline INLINE=True
+    # SIN_CIERRE=False`) — en el marcado real siempre llega autocerrada (`<polyline … />`) y
+    # `handle_startendtag` la equilibra igual, así que hoy es inocuo, pero el dato estaba mal.
     "path", "circle", "polyline",
 })
 
