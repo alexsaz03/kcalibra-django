@@ -523,7 +523,8 @@ def _etiquetas_sin_clasificar_en_paginas(paginas):
 # clasificada (trinquete de arriba VERDE) que HTML considere VACÍA y que falte de `SIN_CIERRE`
 # se apila y no se desapila NUNCA —no hay cierre que la saque—, así que se queda de ancestro de
 # todo lo que venga detrás dentro de su padre y le regala su `class="cifra"`: falso VERDE.
-# `_VACIAS_DE_HTML` es universo EXTERNO (las 14 "void elements" del HTML Living Standard), no
+# `_VACIAS_DE_HTML` es universo EXTERNO (las 13 "void elements" del HTML Living Standard vigente
+# — `param` salió de esa lista, pero se deja aquí de más: sólo puede apretar, nunca aflojar), no
 # una lista de pantallas ni de piezas de este proyecto: sirve sólo para comprobar la COHERENCIA
 # entre lo que el trinquete de arriba ya clasifica y lo que `SIN_CIERRE` cubre.
 _VACIAS_DE_HTML = frozenset({
@@ -607,9 +608,13 @@ class _ContadorDeAperturasYCierres(HTMLParser):
     (1) hay un `<p>` ABIERTO EN ALGÚN PUNTO DE LA PILA (no sólo en la cima: cualquier etiqueta
         que el navegador SÍ cierra sola —una inline sin su propio cierre, `<span>x` sin
         `</span>`— puede quedar por encima suyo) cuando se abre un hijo de bloque
-        (`_ETIQUETAS_DE_BLOQUE`: el único caso hoy clasificado cuyo modelo de contenido no
-        admite NINGÚN hijo de bloque es `<p>`) — se cierra el `<p>` Y todo lo que quedara
-        abierto por encima de él, que es lo que hace el navegador. Esto caza, con el MISMO
+        (`_ETIQUETAS_DE_BLOQUE`: de las ocho clasificadas, `<p>` NO es el único cuyo modelo de
+        contenido no admite ningún hijo de bloque —`option`, `head` y `html` tampoco lo admiten,
+        revisión 13 D2—, pero SÍ es el único que aparece con `class="cifra"` en marcado real y
+        cuyo hijo de bloque el navegador RE-PARENTA en vez de descartar; generalizar esta regla
+        a las otras siete abre falsos rojos reales sobre el árbol, medido en revisión 13 D4) —
+        se cierra el `<p>` Y todo lo que quedara abierto por encima de él, que es lo que hace el
+        navegador. Esto caza, con el MISMO
         mecanismo, tanto el hermano (`<p>Uno<p>Dos`, `p` ∈ `_ETIQUETAS_DE_BLOQUE`) como el hijo
         de bloque (`<p>Resumen<dl>`), y ya no lo tapa una etiqueta vacía de por medio
         (`<p>Resumen<br><dl>` — H25, revisión 13: con la CIMA en vez de la pila entera, un
@@ -2107,16 +2112,18 @@ def _campos_pintados_de_help_text(campos, contenido):
     ]
 
 
-# H22 (revisión 12 de la 059, BLOQUEANTE) — el hueco que `_campos_pintados_de_help_text` deja
-# (O34, arriba): decide "pintado" por IGUALDAD DE TEXTO, así que una plantilla que pinte el MISMO
-# `help_text` de otra forma (a mano, con `<strong>`, por un filtro) saca al campo de la población
-# de R6 ENTERA, no sólo de este filtro — las tres flechas se quedan mudas a la vez. Este trinquete
-# de POBLACIÓN, hermano del de H21 (`.cifra`) y del de H19-POBLACIÓN, no cambia el filtro de
-# arriba (sigue siendo el correcto para decidir SOBRE QUÉ CAMPO exigir R6): decide "pintado" por
-# el WIDGET —lo que Django SIEMPRE escribe para cualquier campo visible, con o sin `help_text`
-# canónico— y exige que, si el widget se pinta, su ayuda se pinte por la vía canónica O esté
-# declarada aquí con su porqué. Vacía hoy: medido (revisión 12), los 5 campos que el barrido
-# alcanza están, los 5, con su ayuda pintada por la vía canónica.
+# H22/H26 (revisiones 12 y 13 de la 059, BLOQUEANTE) — el hueco que `_campos_pintados_de_help_text`
+# deja (O34, arriba): decide "pintado" por IGUALDAD DE TEXTO, así que una plantilla que pinte el
+# MISMO `help_text` de otra forma (a mano, con `<strong>`, por un filtro) saca al campo de la
+# población de R6 ENTERA, no sólo de este filtro — las tres flechas se quedan mudas a la vez. Este
+# trinquete de POBLACIÓN, hermano del de H21 (`.cifra`) y del de H19-POBLACIÓN, no cambia el filtro
+# de arriba (sigue siendo el correcto para decidir SOBRE QUÉ CAMPO exigir R6): decide "pintado"
+# preguntándoselo al WIDGET —el conjunto de `name=` que declara de verdad, no una `f`-string que
+# asuma `name="<html_name>"` (H26, revisión 13: falso para `MultiWidget`/`SelectDateWidget`, las
+# dos familias con `use_fieldset=True` que escriben un `name=` POR SUBWIDGET)— y exige que, si el
+# widget se pinta, su ayuda se pinte por la vía canónica O esté declarada aquí con su porqué.
+# Vacía hoy: medido (revisión 12), los 5 campos que el barrido alcanza están, los 5, con su ayuda
+# pintada por la vía canónica.
 _CAMPOS_DE_HELP_TEXT_PINTADOS_SIN_LA_VIA_CANONICA_FUERA_DE_FICHEROS = frozenset()
 
 
