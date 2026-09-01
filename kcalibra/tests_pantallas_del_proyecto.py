@@ -593,7 +593,7 @@ def _etiquetas_de_cierre_opcional_clasificadas(clasificadas=None, cierre_opciona
 
 
 class _ContadorDeAperturasYCierres(HTMLParser):
-    """H20/H23 — lleva una PILA de lo que está abierto, no un CONTEO. Un conteo (aperturas ==
+    """H20/H23/H25 — lleva una PILA de lo que está abierto, no un CONTEO. Un conteo (aperturas ==
     cierres) sólo caza el cierre OMITIDO (`<p>Uno<p>Dos</p>`: 2 aperturas, 1 cierre — descuadra):
     se queda ciego al cierre DESPLAZADO por un hijo que su modelo de contenido no admite
     (`<p>Resumen<dl>…</dl></p>`: el navegador cierra el `<p>` al ver el `<dl>` —regla de "implied
@@ -604,18 +604,38 @@ class _ContadorDeAperturasYCierres(HTMLParser):
     DESPLAZADA (`self.desplazadas`) en dos momentos, sin reimplementar el autocierre completo del
     HTML Living Standard — sólo el ANIDAMIENTO IMPOSIBLE para la población que este proyecto ya
     clasifica:
-    (1) se abre un `<p>` (el único caso hoy clasificado cuyo modelo de contenido no admite NINGÚN
-        hijo de bloque: `_ETIQUETAS_DE_BLOQUE`) mientras un `<p>` sigue en la cima de la pila sin
-        su propio cierre — esto caza, con el MISMO mecanismo, tanto el hermano (`<p>Uno<p>Dos`,
-        `p` ∈ `_ETIQUETAS_DE_BLOQUE`) como el hijo de bloque (`<p>Resumen<dl>`). No se generaliza
-        a `li`/`dt`/`dd`/`option`/`body`/`head`/`html`: su modelo de contenido SÍ admite hijos de
-        bloque sin autocerrarse (un `<li>` puede contener un `<div>` de sobra), así que aplicarles
-        esta misma regla abriría falsos rojos sobre marcado legítimo — para ellos basta (2);
+    (1) hay un `<p>` ABIERTO EN ALGÚN PUNTO DE LA PILA (no sólo en la cima: cualquier etiqueta
+        que el navegador SÍ cierra sola —una inline sin su propio cierre, `<span>x` sin
+        `</span>`— puede quedar por encima suyo) cuando se abre un hijo de bloque
+        (`_ETIQUETAS_DE_BLOQUE`: el único caso hoy clasificado cuyo modelo de contenido no
+        admite NINGÚN hijo de bloque es `<p>`) — se cierra el `<p>` Y todo lo que quedara
+        abierto por encima de él, que es lo que hace el navegador. Esto caza, con el MISMO
+        mecanismo, tanto el hermano (`<p>Uno<p>Dos`, `p` ∈ `_ETIQUETAS_DE_BLOQUE`) como el hijo
+        de bloque (`<p>Resumen<dl>`), y ya no lo tapa una etiqueta vacía de por medio
+        (`<p>Resumen<br><dl>` — H25, revisión 13: con la CIMA en vez de la pila entera, un
+        `<br>`/`<input>`/`<wbr>` sentado encima del `<p>` bloqueaba la comparación y el `</p>`
+        de después limpiaba la pila entera como si el cierre hubiera sido legítimo, `EXIT=0`
+        con la altura de `perfiles/ver.html` sin su `.cifra`). No se generaliza a
+        `li`/`dt`/`dd`/`option`/`body`/`head`/`html`: su modelo de contenido SÍ admite hijos de
+        bloque sin autocerrarse (un `<li>` puede contener un `<div>` de sobra), así que
+        aplicarles esta misma regla abriría falsos rojos sobre marcado legítimo (medido,
+        revisión 13, D4) — para ellos basta (2);
     (2) se cierra un ANCESTRO suyo (con su propio `</etiqueta>` explícito, o al terminar el
         documento) mientras ella sigue abierta por debajo, sin que su propio cierre haya llegado
         antes — cubre el hermano de cualquiera de las ocho clasificadas (`<li>A<li>B</li>`: el
         `<ul>` que las envuelve arrastra a la primera al cerrarse) y el caso general de "cierre
-        omitido" que el conteo ya cazaba, sin necesitar el conteo."""
+        omitido" que el conteo ya cazaba, sin necesitar el conteo.
+
+    Y una tercera cosa, que no es una regla de desplazamiento sino de POBLACIÓN de la pila
+    misma (H25): nunca se apila una etiqueta que HTML no cierra nunca
+    (`SIN_CIERRE | _VACIAS_DE_HTML` — la unión, no `SIN_CIERRE` sola: `wbr` está clasificada y
+    es vacía de HTML, pero hoy falta de `SIN_CIERRE`, ver `_es_el_hueco_h18_fuera_de_ficheros`
+    más arriba — si la regla (1) se apoyara sólo en `SIN_CIERRE`, `<wbr>` seguiría colándose
+    hasta que el padre aplique esa cura, fuera de `ficheros:` de esta unidad). Sin esto, una de
+    esas etiquetas ocupa la CIMA de la pila para siempre (nadie la desapila: no tiene cierre) y
+    tapa la regla (1) de arriba exactamente igual que la tapaba mirar sólo la cima — las dos
+    mitades del arreglo son necesarias, cada una por su lado (revisión 13, D2: ninguna de las
+    dos sola basta)."""
 
     def __init__(self, cierre_opcional=None):
         super().__init__(convert_charrefs=True)
@@ -626,13 +646,21 @@ class _ContadorDeAperturasYCierres(HTMLParser):
         self.desplazadas = []
 
     def handle_starttag(self, etiqueta, atributos_crudos):
-        # Regla (1): sólo `<p>` — ver el porqué en el docstring de la clase.
-        if (
-            etiqueta in _ETIQUETAS_DE_BLOQUE
-            and self.pila
-            and self.pila[-1] == "p"
-            and self.pila[-1] in self.cierre_opcional
-        ):
+        # H25: nunca apilar lo que HTML no cierra — si no, una de estas etiquetas ocupa la cima
+        # para siempre y tapa la regla (1) de abajo (`handle_startendtag`, la implementación por
+        # defecto de `html.parser`, llama a `handle_starttag` Y a `handle_endtag`: con el
+        # `return` de aquí, una etiqueta autocerrada como `<br/>` ya no se apila ni desapila —
+        # antes de esta vuelta hacía las dos cosas, con el mismo efecto neto pero por accidente).
+        if etiqueta in SIN_CIERRE or etiqueta in _VACIAS_DE_HTML:
+            return
+        # Regla (1): sólo `<p>` — ver el porqué en el docstring de la clase. Pregunta por la
+        # PILA ENTERA (¿hay algún `<p>` abierto por debajo, no sólo en la cima?), cerrando todo
+        # lo que quedara abierto por encima de él — lo que hace el navegador.
+        if etiqueta in _ETIQUETAS_DE_BLOQUE and "p" in self.cierre_opcional and "p" in self.pila:
+            while self.pila[-1] != "p":
+                cima = self.pila.pop()
+                if cima in self.cierre_opcional:
+                    self.desplazadas.append(cima)
             self.desplazadas.append(self.pila.pop())
         self.pila.append(etiqueta)
 
@@ -860,6 +888,31 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
             "un <p> cerrado ANTES del <dl> (HTML legítimo, mismo conteo que el caso de arriba) "
             "no debía aparecer como problema — si aparece, el trinquete está mirando conteos",
         )
+
+    def test_mutacion_un_cierre_desplazado_tapado_por_una_etiqueta_vacia_pone_la_suite_roja(self):
+        """H25 (revisión 13 de la 059, BLOQUEANTE) — el trinquete de arriba (H23) preguntaba por
+        la CIMA de la pila (`self.pila[-1] == "p"`), y `_ContadorDeAperturasYCierres` apilaba
+        TAMBIÉN las etiquetas vacías de HTML (no consultaba `SIN_CIERRE`, cosa que con un CONTEO
+        daba igual y con una PILA es el fallo): cualquier `<br>`, `<input>` o `<wbr>` entre el
+        texto del `<p>` y el hijo de bloque dejaba la CIMA ocupada por esa etiqueta vacía, la
+        regla (1) no disparaba, y el `</p>` explícito de después limpiaba la pila entera como si
+        el cierre hubiera sido legítimo. Medido en vivo (revisión 13, D2): exactamente la
+        mutación de H23 de arriba, con un `<br>` de por medio, sobre `perfiles/ver.html:98` —
+        `921 OK, EXIT=0`. Las tres etiquetas vacías medidas, una por una: ninguna debe tapar la
+        detección ahora."""
+        for vacia in ("<br>", "<input>", "<wbr>"):
+            with self.subTest(vacia=vacia):
+                desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+                    f'<div><p class="cifra">Resumen{vacia}<dl><dt>Altura</dt>'
+                    f'<dd>180 cm</dd></dl></p></div>',
+                    cierre_opcional={"p"},
+                )
+                self.assertEqual(
+                    desplazado, ["p"],
+                    f"un <p> desplazado por un <dl>, con {vacia} sentado en la cima de la pila "
+                    f"en el momento del desplazamiento, no apareció como desplazado: la regla "
+                    f"(1) sigue mirando sólo la cima, o {vacia} sigue apilándose",
+                )
 
     def test_un_hijo_de_bloque_legitimo_dentro_de_li_no_es_falso_rojo(self):
         """H23 — el control de que restringir la regla (1) del desplazamiento a `<p>` (ver el
@@ -2067,15 +2120,47 @@ def _campos_pintados_de_help_text(campos, contenido):
 _CAMPOS_DE_HELP_TEXT_PINTADOS_SIN_LA_VIA_CANONICA_FUERA_DE_FICHEROS = frozenset()
 
 
+def _nombres_de_name_que_el_widget_escribe(campo):
+    """H26 (revisión 13 de la 059, BLOQUEANTE) — el conjunto de `name=` que el WIDGET de `campo`
+    escribe de verdad, preguntándoselo al WIDGET (`get_context`) en vez de darlo por hecho. Un
+    widget COMPUESTO (`MultiWidget` y sus subclases —`SplitDateTimeWidget`, `SelectDateWidget`—,
+    dos de las CUATRO familias de Django con `use_fieldset=True`, las únicas para las que este
+    trinquete existe) nunca escribe `name="<html_name>"`: escribe un `name=` POR SUBWIDGET
+    (`get_context(...)["widget"]["subwidgets"]`, cada uno con el suyo — `SelectDateWidget` para
+    `campo="c"` escribe `c_day`/`c_month`/`c_year`, medido en vivo). Para el resto (incluidas
+    `CheckboxSelectMultiple`/`RadioSelect`, las otras dos familias con `use_fieldset=True`:
+    `get_context` no les añade `subwidgets`, sólo `optgroups`), el único `name=` es
+    `campo.html_name`, tal y como asumía H22 — la diferencia es que ahora se comprueba, no se
+    supone."""
+    contexto_widget = campo.field.widget.get_context(campo.html_name, campo.value(), {})["widget"]
+    subwidgets = contexto_widget.get("subwidgets")
+    if subwidgets:
+        return [subwidget["name"] for subwidget in subwidgets]
+    return [campo.html_name]
+
+
+_NOMBRE_DE_WIDGET_EN_HTML_RE = r'name\s*=\s*["\']?{}["\'\s>]'
+
+
 def _campo_esta_pintado_por_su_widget(campo, contenido):
-    """H22 — si el CAMPO se pinta de verdad en esta página: su `name="<html_name>"` aparece en el
-    HTML. A diferencia de `_campos_pintados_de_help_text` (que decide por el TEXTO del
-    `help_text`), esto decide por el WIDGET — lo que Django siempre escribe para CUALQUIER campo
-    visible (`BoundField.html_name`, `django/forms/boundfield.py`), tenga o no su `help_text`
-    pintado de la forma canónica. Para un `CheckboxSelectMultiple` (`comidas`), cada casilla
-    repite el MISMO `name="comidas"` — verificado en vivo—, así que basta una búsqueda de
-    subcadena, sin recorrer el árbol de widgets."""
-    return f'name="{campo.html_name}"' in contenido
+    """H22/H26 — si el CAMPO se pinta de verdad en esta página: ALGUNO de los `name=` que su
+    WIDGET escribe (arriba) aparece en el HTML. A diferencia de `_campos_pintados_de_help_text`
+    (que decide por el TEXTO del `help_text`), esto decide por el WIDGET — lo que Django siempre
+    escribe para CUALQUIER campo visible, tenga o no su `help_text` pintado de la forma canónica.
+
+    H26 (revisión 13, BLOQUEANTE) — la versión anterior era `f'name="{campo.html_name}"' in
+    contenido`: una igualdad de subcadena con las comillas DOBLES metidas a fuego (medido en vivo
+    sobre `/perfiles/`: el mismo campo pintado a mano con `name='…'` — HTML igual de válido, la
+    pantalla se ve igual — dejaba la ayuda visible, sin `id` y sin ningún `aria-describedby`, con
+    la suite entera en verde) y que además asumía que TODO widget escribe `name="<html_name>"`
+    (falso para los widgets compuestos, arriba). El patrón de aquí acepta comilla simple, doble o
+    ninguna, igual que tendría que haber aceptado siempre — es la misma familia de defecto que el
+    propio contrato de esta unidad ya trae documentada como falso rojo heredado de la 053
+    (`assertIn('role="menu"', contenido)` con comillas dobles fijas)."""
+    return any(
+        re.search(_NOMBRE_DE_WIDGET_EN_HTML_RE.format(re.escape(nombre)), contenido)
+        for nombre in _nombres_de_name_que_el_widget_escribe(campo)
+    )
 
 
 def _campos_con_widget_pintado_y_ayuda_no_canonica(campos, contenido):
@@ -2570,6 +2655,66 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "sin el name= del widget en el HTML, el campo no está pintado de verdad en esta "
             "rama — R6 no promete nada sobre un campo que nadie ve",
         )
+
+    def test_mutacion_un_name_con_comillas_simples_se_pone_rojo(self):
+        """H26 (revisión 13 de la 059, BLOQUEANTE) — la versión anterior de
+        `_campo_esta_pintado_por_su_widget` era `f'name="{campo.html_name}"' in contenido`: fija
+        las comillas DOBLES. Medido en vivo sobre `/perfiles/`: el mismo campo pintado a mano con
+        `name='…'` (HTML igual de válido, la pantalla se ve igual) dejaba la ayuda visible, sin
+        `id` y sin ningún `aria-describedby`, con la suite entera en verde. Comillas simples, sin
+        comillas y dobles tienen que detectar el mismo widget pintado."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="ayuda con una palabra clave")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        for apertura, cierre in (('"', '"'), ("'", "'"), ("", "")):
+            with self.subTest(comillas=repr(apertura)):
+                no_canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+                    campos,
+                    f"<input type={apertura}text{cierre} "
+                    f"name={apertura}{campo.html_name}{cierre}>"
+                    "<p>ayuda con una <strong>palabra</strong> clave</p>",
+                )
+                self.assertEqual(
+                    [c.name for _, c in no_canonico], ["campo"],
+                    f"un widget pintado con name={apertura}...{cierre} no se detectó como "
+                    f"pintado: el trinquete fija un tipo de comilla",
+                )
+
+    def test_mutacion_un_widget_compuesto_pintado_se_pone_rojo(self):
+        """H26 (revisión 13 de la 059, BLOQUEANTE) — la versión anterior también daba por hecho
+        que TODO widget con `use_fieldset=True` escribe `name="<html_name>"`. Django tiene CUATRO
+        familias con `use_fieldset=True` (las únicas para las que este trinquete existe, porque
+        son las únicas a las que Django no les pone `aria-describedby` automático):
+        `CheckboxSelectMultiple`/`RadioSelect` sí escriben `name="<html_name>"` (una copia por
+        opción) y ya estaban cubiertas; `SplitDateTimeField`/`SelectDateWidget` son COMPUESTOS —
+        cada subwidget escribe el suyo (`x_0`/`x_1`, `x_day`/`x_month`/`x_year`) y NUNCA
+        `name="<html_name>"` — y sin recorrer el árbol de widgets eran invisibles para las TRES
+        flechas de R6 a la vez, con o sin `help_text` canónico."""
+        class _FormularioConFechas(forms.Form):
+            cuando = forms.SplitDateTimeField(help_text="cuándo pasó")
+            fecha = forms.DateField(widget=forms.SelectDateWidget, help_text="qué día")
+
+        formulario = _FormularioConFechas()
+        for nombre_campo, html in (
+            ("cuando", '<input type="text" name="cuando_0"><input type="text" name="cuando_1">'),
+            ("fecha", '<select name="fecha_month"></select><select name="fecha_day">'
+                      '</select><select name="fecha_year"></select>'),
+        ):
+            with self.subTest(campo=nombre_campo):
+                campo = formulario[nombre_campo]
+                no_canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+                    [("_FormularioConFechas", campo)],
+                    html + "<p>ayuda pintada de otra forma</p>",
+                )
+                self.assertEqual(
+                    [c.name for _, c in no_canonico], [nombre_campo],
+                    f"un {campo.field.widget.__class__.__name__} pintado por Django, con su "
+                    f"ayuda no canónica, no se detectó como pintado — el predicado sigue "
+                    f"asumiendo que todo widget escribe name=\"<html_name>\" a secas",
+                )
 
 
 # ------------------------------------------------------------------------------------------ #
