@@ -31,6 +31,7 @@ demostrado en cada corrida futura de la suite, no solo en la evidencia pegada de
 """
 
 import re
+from collections import Counter
 from contextlib import contextmanager
 from datetime import timedelta
 from html.parser import HTMLParser
@@ -38,6 +39,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+from django import forms
 from django.conf import settings
 from django.template import engines
 from django.template import Context as ContextoDeDjango
@@ -46,6 +48,7 @@ from django.template.loader import get_template
 from django.template.utils import get_app_template_dirs
 from django.test import Client, SimpleTestCase
 from django.utils import timezone
+from django.utils.html import escape
 
 from cierres.logica import dia_pendiente_de_preguntar
 from cierres.models import CierreDeDia
@@ -554,6 +557,75 @@ def _es_el_hueco_h18_fuera_de_ficheros(etiqueta):
     return etiqueta == _LA_ETIQUETA_DEL_HUECO_H18_FUERA_DE_FICHEROS
 
 
+# H20 (revisión 11 de la 059, MEDIO) — el mismo mecanismo de H18, una familia de etiquetas más
+# allá. H18 cerró las VACÍAS: una etiqueta clasificada, vacía de HTML, ausente de `SIN_CIERRE`,
+# se apila y no se desapila nunca. Pero hay una SEGUNDA forma de dejar una etiqueta apilada para
+# siempre sin que sea "vacía": el HTML Living Standard permite dejar SIN cerrar `<p>`, `<li>`,
+# `<dt>`, `<dd>`, `<option>`… (cierre opcional — cualquier navegador la autocierra al abrir el
+# siguiente hermano o al cerrar el padre), y `html.parser` NO implementa ese autocierre: la
+# etiqueta se queda en la pila de `CadenaDeAncestros`/`_ElementosConTexto`/`_NumerosDeDatoEnEl
+# Texto` igual que `wbr`, regalando su `class="cifra"` a todo lo que la siga dentro de su padre.
+#
+# `_CIERRE_OPCIONAL_DE_HTML` es universo EXTERNO (igual que `_VACIAS_DE_HTML`, arriba): la lista
+# completa de etiquetas de cierre opcional del HTML Living Standard, no una lista de pantallas ni
+# de piezas de este proyecto. Lo que hace falta vigilar no es TODO ese universo (etiquetas de
+# tabla como `<tr>`/`<td>` no están clasificadas hoy, y clasificarlas no es parte de este hueco),
+# sino la INTERSECCIÓN con lo que el proyecto YA clasifica — el mismo patrón que
+# `_etiquetas_vacias_clasificadas_sin_sin_cierre` usa para H18.
+_CIERRE_OPCIONAL_DE_HTML = frozenset({
+    "html", "head", "body", "p", "li", "dt", "dd", "option",
+    "optgroup", "colgroup", "caption", "thead", "tbody", "tfoot", "tr", "td", "th", "rp", "rt",
+})
+
+
+def _etiquetas_de_cierre_opcional_clasificadas(clasificadas=None, cierre_opcional=None):
+    """H20: qué etiquetas CLASIFICADAS (`_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE`) son, además,
+    de cierre opcional en HTML — la población exacta que el trinquete de abajo vigila. Parámetros,
+    no los reales metidos a fuego, por la misma razón que en H18: para que la mutación los
+    sustituya por sintéticos."""
+    clasificadas = _ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE if clasificadas is None else clasificadas
+    cierre_opcional = _CIERRE_OPCIONAL_DE_HTML if cierre_opcional is None else cierre_opcional
+    return cierre_opcional & clasificadas
+
+
+class _ContadorDeAperturasYCierres(HTMLParser):
+    """H20 — cuenta CADA apertura y CADA cierre EXPLÍCITO, por nombre de etiqueta. Universo aparte
+    de `CadenaDeAncestros`/`_ElementosConTexto`/`_NumerosDeDatoEnElTexto` (no consulta `SIN_CIERRE`
+    ni ninguna otra lista de las de arriba): sirve solo para el trinquete de abajo, que no mira
+    NADA de cadena de ancestros — solo si cada apertura de una etiqueta de cierre opcional
+    encuentra su cierre exacto en el mismo documento."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.aperturas = Counter()
+        self.cierres = Counter()
+
+    def handle_starttag(self, etiqueta, atributos_crudos):
+        self.aperturas[etiqueta] += 1
+
+    def handle_endtag(self, etiqueta):
+        self.cierres[etiqueta] += 1
+
+
+def _etiquetas_de_cierre_opcional_sin_cerrar(contenido, cierre_opcional=None):
+    """H20: de las etiquetas de cierre opcional CLASIFICADAS, cuáles tienen un número de
+    aperturas distinto del de cierres explícitos en `contenido` — la señal de que al menos una
+    apertura se quedó sin su `</etiqueta>` y quedaría apilada para siempre en `html.parser`
+    (`<p>Uno<p>Dos</p>` es HTML válido —el navegador cierra el primer `<p>` al ver el segundo—
+    pero sólo trae UN `</p>`: dos aperturas, un cierre, desbalance de uno). Compara conteos, no
+    anidamiento: para la población de este proyecto (medido, cero desbalances hoy) es la misma
+    disciplina que R8 aplica a la lista de excepciones — exacta, no generosa."""
+    cierre_opcional = (
+        _etiquetas_de_cierre_opcional_clasificadas() if cierre_opcional is None else cierre_opcional
+    )
+    lector = _ContadorDeAperturasYCierres()
+    lector.feed(contenido)
+    return sorted(
+        etiqueta for etiqueta in cierre_opcional
+        if lector.aperturas[etiqueta] != lector.cierres[etiqueta]
+    )
+
+
 class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
     databases = set()
 
@@ -665,6 +737,58 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
         self.assertEqual(
             descuadradas_con_sin_cierre, [],
             "meter la misma etiqueta en SIN_CIERRE debía vaciar el barrido",
+        )
+
+    def test_las_etiquetas_de_cierre_opcional_clasificadas_son_las_medidas(self):
+        """H20 (revisión 11 de la 059, MEDIO) — guarda de rojo mudo del propio trinquete: si
+        `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` dejaran de clasificar alguna de estas ocho, o
+        clasificaran una novena de cierre opcional, el trinquete de abajo seguiría corriendo pero
+        sobre una población distinta sin que nadie lo dijera — igual que O26 puso primero la
+        población de H13 y la vuelta 12 la de H21."""
+        self.assertEqual(
+            _etiquetas_de_cierre_opcional_clasificadas(),
+            {"body", "dd", "dt", "head", "html", "li", "option", "p"},
+            "la población de etiquetas de cierre opcional clasificadas ha cambiado: revisa si "
+            "H20 sigue vigilando lo mismo que cuando se midió (revisión 11, D4)",
+        )
+
+    def test_ninguna_etiqueta_de_cierre_opcional_clasificada_se_queda_sin_cerrar_en_el_arbol(self):
+        """H20 — el mismo trinquete que H18, sobre la MISMA población del árbol propio
+        (`_plantillas_del_arbol_propio`, la definición de caso de R1): hoy, cero desbalances
+        (medido, revisión 11, D4: cero en las 32 plantillas propias). Si una etiqueta de cierre
+        opcional clasificada aparece SIN su cierre explícito en cualquier plantilla propia, esto
+        se pone rojo nombrándola."""
+        problemas = []
+        for ruta in _plantillas_del_arbol_propio():
+            texto = _ETIQUETAS_DE_BLOQUE_O_COMENTARIO_RE.sub("", _texto(ruta))
+            for etiqueta in _etiquetas_de_cierre_opcional_sin_cerrar(texto):
+                problemas.append(f"{ruta}: <{etiqueta}> sin cierre explícito que cuadre")
+        self.assertEqual(
+            problemas, [],
+            f"H20: etiquetas de cierre opcional clasificadas que el árbol deja sin cerrar "
+            f"explícitamente — se apilarían para siempre en html.parser: {problemas}",
+        )
+
+    def test_mutacion_una_etiqueta_de_cierre_opcional_sin_cerrar_pone_la_suite_roja(self):
+        """H20 — la mutación EN CÓDIGO, sobre HTML sintético (nunca sobre una plantilla real): un
+        `<p>` sin su `</p>` explícito, con un hermano `<p>` detrás — la forma exacta medida por
+        la revisión 11 (D4): HTML válido, que cualquier navegador autocierra, y que `html.parser`
+        deja apilado para siempre, regalando su `class` al hermano. Con los dos `</p>` puestos,
+        el barrido vuelve a estar vacío — el mismo patrón que las mutaciones de H16/H18."""
+        sin_cerrar = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<div><p>Uno<p>Dos</p></div>", cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            sin_cerrar, ["p"],
+            "un <p> sin cerrar, seguido de un hermano <p>, no apareció como descuadrado: el "
+            "trinquete no está vigilando de verdad",
+        )
+        cerradas_las_dos = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<div><p>Uno</p><p>Dos</p></div>", cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            cerradas_las_dos, [],
+            "cerrar el primer <p> explícitamente debía vaciar el barrido",
         )
 
 
@@ -952,18 +1076,15 @@ class _ConLaAppEnteraYSusDatos(PruebaConRegistroAbierto):
         )
 
 
-def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
-    """BFS con el cliente de test desde `arranque` (mismo mecanismo que `_recorrer_la_app` de
-    `kcalibra.tests_nada_escondido`, adaptado para devolver el HTML de cada página que renderiza
-    alguna pantalla REAL — `_rutas_enlazadas`, importada de allí, sigue cada `href`/`hx-get`, no
-    una lista de rutas escrita a mano). Devuelve `(encontradas, alcanzadas)`: la lista de
-    `(ruta, contenido)` de siempre, MÁS el conjunto de nombres de pantalla que de verdad se
-    vieron — O3 de la revisión: la guarda de rojo mudo de R5/R6 sólo contaba RUTAS, así que una
-    pantalla que el recorrido dejara de alcanzar (un estado que la fixture no crea) se quedaba
-    sin ninguna de las dos redes y nadie avisaba; comparar `alcanzadas` contra
-    `_nombres_de_pantallas_reales_hoy()` cierra esa familia sin nombrar ni una pantalla."""
-    encontradas = []
-    alcanzadas = set()
+def _visitar_pantallas_reales(cliente, nombres_de_pantallas, arranque):
+    """El recorrido común (BFS con el cliente de test desde `arranque`, mismo mecanismo que
+    `_recorrer_la_app` de `kcalibra.tests_nada_escondido`) que comparten
+    `_paginas_de_pantallas_reales` y `_formularios_y_paginas_de_pantallas_reales`, abajo — para
+    que las dos poblaciones (el HTML y los formularios del contexto) salgan de la MISMA visita, no
+    de dos renderizados distintos que podrían acabar viendo pantallas distintas. Cede
+    `(ruta, contenido, respuesta, coincidentes)` de cada página que renderiza alguna pantalla
+    REAL; `_rutas_enlazadas`, importada de `tests_nada_escondido`, sigue cada `href`/`hx-get`, no
+    una lista de rutas escrita a mano."""
     por_visitar = [arranque]
     visitadas = set()
     while por_visitar:
@@ -978,11 +1099,44 @@ def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
         contenido = respuesta.content.decode()
         coincidentes = usadas & nombres_de_pantallas
         if coincidentes:
-            encontradas.append((ruta, contenido))
-            alcanzadas |= coincidentes
+            yield ruta, contenido, respuesta, coincidentes
         for destino in _rutas_enlazadas(contenido):
             if destino not in visitadas:
                 por_visitar.append(destino)
+
+
+def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
+    """Devuelve `(encontradas, alcanzadas)`: la lista de `(ruta, contenido)` de siempre, MÁS el
+    conjunto de nombres de pantalla que de verdad se vieron — O3 de la revisión: la guarda de rojo
+    mudo de R5/R6 sólo contaba RUTAS, así que una pantalla que el recorrido dejara de alcanzar (un
+    estado que la fixture no crea) se quedaba sin ninguna de las dos redes y nadie avisaba;
+    comparar `alcanzadas` contra `_nombres_de_pantallas_reales_hoy()` cierra esa familia sin
+    nombrar ni una pantalla."""
+    encontradas = []
+    alcanzadas = set()
+    for ruta, contenido, _respuesta, coincidentes in _visitar_pantallas_reales(
+        cliente, nombres_de_pantallas, arranque
+    ):
+        encontradas.append((ruta, contenido))
+        alcanzadas |= coincidentes
+    return encontradas, alcanzadas
+
+
+def _formularios_y_paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
+    """H19 (revisión 11 de la 059, MEDIO) — la MISMA visita que `_paginas_de_pantallas_reales`,
+    pero conservando también los formularios del CONTEXTO de cada respuesta (`_campos_con_help_
+    text_del_contexto`, junto a R6 abajo): la población que H19 necesita —qué campos declaran
+    `help_text`— sale de la estructura que la vista monta, no de los atributos que la cura de R6
+    escribe en el HTML, así que `(ruta, contenido)` no basta. Devuelve `(encontradas, alcanzadas)`
+    con `encontradas = [(ruta, contenido, campos), ...]`."""
+    encontradas = []
+    alcanzadas = set()
+    for ruta, contenido, respuesta, coincidentes in _visitar_pantallas_reales(
+        cliente, nombres_de_pantallas, arranque
+    ):
+        campos = _campos_con_help_text_del_contexto(respuesta)
+        encontradas.append((ruta, contenido, campos))
+        alcanzadas |= coincidentes
     return encontradas, alcanzadas
 
 
@@ -1222,6 +1376,22 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             f"H13: etiquetas en HTML renderizado (no necesariamente en ningún .html del "
             f"repo) que `_ETIQUETAS_INLINE`/`_ETIQUETAS_DE_BLOQUE` todavía no clasifican: "
             f"{sin_clasificar_en_render}",
+        )
+        # H20 (revisión 11 de la 059, MEDIO) — el gemelo de H13, sobre la MISMA población
+        # (`_etiquetas_de_cierre_opcional_sin_cerrar`, junto a H18 arriba): el trinquete del árbol
+        # de `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests` sólo mira los `.html` propios; un
+        # widget de Django, `mark_safe` o `|safe` podrían dejar una etiqueta de cierre opcional
+        # sin cerrar en el HTML SERVIDO sin que ningún `.html` del repo lo muestre nunca. Cero
+        # renderizados extra: el mismo HTML que ya tiene en la mano el barrido de arriba.
+        sin_cerrar_en_render = [
+            f"{ruta}: <{etiqueta}> sin cierre explícito que cuadre"
+            for ruta, contenido in paginas_alejandro + paginas_carlos
+            for etiqueta in _etiquetas_de_cierre_opcional_sin_cerrar(contenido)
+        ]
+        self.assertEqual(
+            sin_cerrar_en_render, [],
+            f"H20: etiquetas de cierre opcional clasificadas, en HTML renderizado, que se "
+            f"quedan sin cerrar explícitamente: {sin_cerrar_en_render}",
         )
         # Guarda de rojo mudo (misma familia que `kcalibra.tests_nada_escondido`): si el
         # recorrido se rompiera y no alcanzara nada, el barrido de abajo compararía una lista
@@ -1623,6 +1793,81 @@ class _IdsYAriaDescribedby(HTMLParser):
             self.referencias.append(referenciado)
 
 
+# H19 (revisión 11 de la 059, MEDIO) — las dos flechas de abajo (`aria-describedby → id existe` /
+# `id_helptext → algún aria-describedby lo pide`) sacan su población de los ATRIBUTOS QUE LA CURA
+# ESCRIBIÓ en el HTML renderizado: revertir la cura ENTERA de una pantalla (las dos líneas a la
+# vez, el `help_text` pintado sin `id` y sin nada que lo asocie) borra el elemento de las DOS
+# poblaciones a la vez, y ninguna de las dos ve nada — el contrato promete "la red impide que
+# vuelva" y no lo impedía. La población de ESTE control no sale de lo que la cura escribió: sale
+# de la estructura que existe SIN la cura — el propio formulario, montado por la vista, del
+# contexto de la respuesta. `BoundField.aria_describedby` (django/forms/boundfield.py, la MISMA
+# propiedad que usa el `field.html` canónico de Django para decidir su id) ya calcula
+# `f"{auto_id}_helptext"` para todo campo visible con `help_text` — reutilizarla evita reinventar
+# la regla y sigue valiendo si el criterio de Django cambiara alguna vez.
+def _campos_con_help_text_del_contexto(respuesta):
+    """`[(nombre_de_la_clase_del_form, bound_field), ...]` de cada campo VISIBLE con `help_text`
+    de cada `django.forms.BaseForm` que aparezca en el contexto de `respuesta` — sin nombrar
+    ningún formulario ni ninguna pantalla: cualquier vista que meta un `Form`/`ModelForm` en su
+    contexto entra sola. `respuesta.context` es un solo `Context` o, si la petición renderizó más
+    de una plantilla, un `ContextList` (`django.test.utils.ContextList`) — en los dos casos,
+    `.flatten()` da el diccionario final de nombres que la plantilla vio; se recorren los
+    VALORES, no las claves, porque la clave ("form", "formulario"…) no es parte de ninguna
+    definición de caso de esta unidad."""
+    contexto = respuesta.context
+    if contexto is None:
+        return []
+    subcontextos = contexto if isinstance(contexto, list) else [contexto]
+    vistos = set()
+    campos = []
+    for sub in subcontextos:
+        plano = sub.flatten() if hasattr(sub, "flatten") else dict(sub)
+        for valor in plano.values():
+            if not isinstance(valor, forms.BaseForm) or id(valor) in vistos:
+                continue
+            vistos.add(id(valor))
+            for campo in valor.visible_fields():
+                if campo.help_text:
+                    campos.append((type(valor).__name__, campo))
+    return campos
+
+
+def _campos_pintados_de_help_text(campos, contenido):
+    """De `campos` (toda la población de `_campos_con_help_text_del_contexto`: CUALQUIER campo
+    visible con `help_text` de CUALQUIER formulario del contexto), cuáles tienen su `help_text`
+    REALMENTE PINTADO en `contenido` — el contrato de R6, letra a letra: "en toda pantalla
+    vigilada que PINTE `help_text`…". Un formulario que la vista mete en el contexto pero que
+    esta RAMA de la plantilla no muestra (p.ej. `entrenos/ver.html` con `puede_editar=False`:
+    Alejandro viendo los entrenos de Berta, otro adulto del mismo hogar, sin relación de
+    responsable) no pinta nada, y R6 no promete nada sobre un campo que nadie ve. Se mide
+    buscando el TEXTO auto-escapado de `help_text` (como lo escribe `{{ field.help_text }}`, sin
+    `|safe` en ninguna de las plantillas que lo pintan — verificado) en el HTML — no un atributo
+    que la cura de R6 escriba, así que sigue siendo cierto con la cura revertida entera (H19)."""
+    return [
+        (nombre_form, campo) for nombre_form, campo in campos
+        if escape(campo.help_text) in contenido
+    ]
+
+
+def _campos_de_help_text_sin_asociar(campos, contenido):
+    """El corazón de H19: de los campos REALMENTE PINTADOS (arriba), cuáles NO tienen su
+    `f"{auto_id}_helptext"` EXISTENTE en `contenido` Y PEDIDO por algún `aria-describedby` — las
+    dos cosas a la vez, así que quitar cualquiera de las dos mitades de la cura de R6 (o las dos
+    juntas, que es exactamente H19) lo pone en la lista. Devuelve
+    `[(nombre_form, nombre_campo, id_esperado, presente, referenciado), ...]`."""
+    lector = _IdsYAriaDescribedby()
+    lector.feed(contenido)
+    referenciados = set(lector.referencias)
+    problemas = []
+    for nombre_form, campo in _campos_pintados_de_help_text(campos, contenido):
+        id_esperado = f"{campo.auto_id}_helptext"
+        presente = id_esperado in lector.ids
+        referenciado = id_esperado in referenciados
+        if presente and referenciado:
+            continue
+        problemas.append((nombre_form, campo.name, id_esperado, presente, referenciado))
+    return problemas
+
+
 # Hueco MEDIDO durante esta unidad, fuera de `ficheros:` (no se puede tocar aquí — "Reglas del
 # constructor": lo que no está en `ficheros:` no se edita aunque el cambio se necesite; se
 # propone en hallazgos.md y lo aplica el padre): `entrenos/templates/entrenos/corregir.html:35`
@@ -1649,6 +1894,11 @@ class _IdsYAriaDescribedby(HTMLParser):
 # trinquete (a): la propia página tiene que SEGUIR pidiendo ese id exacto sin declararlo — el
 # día que el padre aplique el diff de hallazgos.md, la exención deja de encontrar nada que eximir
 # y el assert de abajo se pone ROJO pidiendo borrarla, en vez de quedarse muda para siempre.
+#
+# H19 (vuelta 13): la misma exención, SIN ensancharla ni un milímetro, cubre también la flecha
+# nueva de `test_todo_campo_con_help_text_del_formulario_tiene_su_id_asociado` — se llama con el
+# mismo `id_esperado` ("id_calorias_helptext") sobre la misma ruta, así que es la función de
+# siempre reutilizada, no una segunda exención que pudiera ensancharse por su cuenta.
 _ID_DEL_HUECO_R6_FUERA_DE_FICHEROS = "id_calorias_helptext"
 
 
@@ -1788,6 +2038,104 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             if id_.endswith("_helptext") and id_ not in set(lector_con_referencia.referencias)
         ]
         self.assertEqual(inertes_con_referencia, [])
+
+    def test_todo_campo_con_help_text_del_formulario_tiene_su_id_asociado(self):
+        """H19 (revisión 11 de la 059, MEDIO) — los dos tests de arriba sacan su población de los
+        ATRIBUTOS QUE LA CURA DE R6 ESCRIBIÓ (los `id` y los `aria-describedby` PRESENTES en el
+        HTML renderizado): revertir la cura ENTERA de una pantalla (las dos líneas a la vez, el
+        `<p>` de `help_text` pintado, sin `id` y sin nada que lo asocie — el estado exacto
+        anterior a esta unidad) borra el elemento de las DOS poblaciones a la vez, así que
+        NINGUNA de las dos ve nada — medido, revisión 11, D2: `EXIT=0` con la mutación doble
+        puesta, cuando el contrato promete "la red impide que vuelva".
+
+        La población de ESTE test no sale de la cura: sale del FORMULARIO que la vista monta,
+        que sigue existiendo pase lo que pase con el HTML (`_campos_con_help_text_del_contexto`,
+        arriba) — así que ve el caso conjunto que las dos flechas, cada una por su lado, no
+        podían ver."""
+        nombres = _nombres_de_pantallas_reales_hoy()
+        paginas_alejandro, alcanzadas_alejandro = _formularios_y_paginas_de_pantallas_reales(
+            self.client, nombres, "/"
+        )
+        paginas_carlos, alcanzadas_carlos = _formularios_y_paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        paginas = paginas_alejandro + paginas_carlos
+        self.assertGreaterEqual(len(paginas), 10, "el recorrido apenas alcanzó pantallas reales")
+        alcanzadas = alcanzadas_alejandro | alcanzadas_carlos
+        self.assertEqual(
+            alcanzadas, nombres,
+            f"pantallas reales que el recorrido no alcanzó, y H19 no las miró: {sorted(nombres - alcanzadas)}",
+        )
+        sin_asociar = []
+        total_campos = 0
+        vista_la_exencion_de_entrenos_corregir = False
+        for ruta, contenido, campos in paginas:
+            if not campos:
+                continue
+            total_campos += len(_campos_pintados_de_help_text(campos, contenido))
+            for nombre_form, nombre_campo, id_esperado, presente, referenciado in \
+                    _campos_de_help_text_sin_asociar(campos, contenido):
+                if _es_el_hueco_r6_fuera_de_ficheros(ruta, id_esperado):
+                    vista_la_exencion_de_entrenos_corregir = True
+                    continue  # ver el comentario de la exención, arriba de esta clase
+                sin_asociar.append(
+                    f"{ruta}: {nombre_form}.{nombre_campo} declara help_text pero "
+                    f"'{id_esperado}' no está asociado (presente={presente}, "
+                    f"referenciado={referenciado})"
+                )
+        self.assertGreater(
+            total_campos, 0,
+            "ningún formulario del contexto trajo un campo visible con help_text: la fixture "
+            "no está ejercitando ningún formulario — el test no probaría nada",
+        )
+        problemas = list(sin_asociar)
+        if not vista_la_exencion_de_entrenos_corregir:
+            problemas.append(
+                "la exención de `_es_el_hueco_r6_fuera_de_ficheros` ya no encontró su huérfano "
+                f"medido ({_ID_DEL_HUECO_R6_FUERA_DE_FICHEROS} en /entrenos/.../corregir/) por "
+                "esta vía: probablemente el padre ya aplicó la línea propuesta en hallazgos.md "
+                "— borra la exención, el trinquete acaba de cazarla"
+            )
+        self.assertEqual(problemas, [], f"H19: {problemas}")
+
+    def test_mutacion_revertir_la_cura_entera_de_help_text_se_pone_rojo(self):
+        """H19 — la mutación EN CÓDIGO que revierte la cura ENTERA (ni `id` ni
+        `aria-describedby`), sobre un formulario y un HTML sintéticos, nunca sobre una plantilla
+        real: la población de `_campos_de_help_text_sin_asociar` sale del FORMULARIO, que no
+        cambia con la cura, así que ve el caso conjunto que las dos flechas de arriba, juntas
+        (D2 de la revisión 11), no veían."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="ayuda")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+        id_esperado = f"{campo.auto_id}_helptext"
+
+        # la cura entera revertida: el <p> de help_text pintado, sin id y sin aria-describedby
+        sin_nada = _campos_de_help_text_sin_asociar(campos, "<div><p>ayuda</p></div>")
+        self.assertEqual(
+            [c for _, c, *_ in sin_nada], ["campo"],
+            f"la cura entera revertida (ni id ni aria-describedby) no se detectó: {sin_nada}",
+        )
+
+        # solo el id (falta el aria-describedby que lo pida)
+        solo_id = _campos_de_help_text_sin_asociar(
+            campos, f'<div><p id="{id_esperado}">ayuda</p></div>'
+        )
+        self.assertEqual([c for _, c, *_ in solo_id], ["campo"])
+
+        # solo el aria-describedby (falta el id al que apuntar)
+        solo_referencia = _campos_de_help_text_sin_asociar(
+            campos, f'<div aria-describedby="{id_esperado}"><p>ayuda</p></div>'
+        )
+        self.assertEqual([c for _, c, *_ in solo_referencia], ["campo"])
+
+        # las dos mitades de la cura, juntas: sin problemas
+        con_las_dos = _campos_de_help_text_sin_asociar(
+            campos,
+            f'<div aria-describedby="{id_esperado}"><p id="{id_esperado}">ayuda</p></div>',
+        )
+        self.assertEqual(con_las_dos, [])
 
 
 # ------------------------------------------------------------------------------------------ #
