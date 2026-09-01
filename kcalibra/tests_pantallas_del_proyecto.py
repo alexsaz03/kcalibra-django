@@ -35,11 +35,13 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import timedelta
 from html.parser import HTMLParser
+from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
 from django import forms
+from django.apps import apps
 from django.conf import settings
 from django.template import engines
 from django.template import Context as ContextoDeDjango
@@ -1868,6 +1870,51 @@ def _campos_de_help_text_sin_asociar(campos, contenido):
     return problemas
 
 
+# H19-POBLACIÓN (vuelta 14 de la 059) — la pregunta de la revisión 11, en la línea de lo que la
+# vuelta 12 hizo con H21: ¿cuántos campos con `help_text` hay DECLARADOS en los formularios
+# PROPIOS del proyecto (no los de Django ni de allauth, que traen los suyos), y cuántos ve
+# realmente el barrido de arriba en las 39 rutas? Medido (vuelta 14, `.runtime/v14/poblacion-
+# help-text.txt`): **7 declarados, 5 alcanzados**. La diferencia son, EXACTAMENTE, los dos campos
+# de `cuentas.forms.FormularioAlta` (`codigo_hogar`, `ajuste_pct`): es el formulario de ALTA de
+# allauth (`ACCOUNT_SIGNUP_FORM_CLASS`), que sólo se pinta SIN sesión iniciada — el barrido de
+# H19 corre con Alejandro y Carlos YA logueados, a propósito (vigila pantallas YA vigiladas, no
+# el flujo de alta), el mismo motivo por el que R1-R8 dejan fuera las diez pantallas de cuentas.
+# No es una fuga silenciosa: está declarada aquí, con trinquete, para que si un OCTAVO campo se
+# queda inalcanzable sin que nadie lo diga, el test de abajo se ponga rojo nombrándolo.
+_CAMPOS_DE_HELP_TEXT_INALCANZABLES_POR_SESION_FUERA_DE_FICHEROS = frozenset({
+    ("FormularioAlta", "codigo_hogar"),
+    ("FormularioAlta", "ajuste_pct"),
+})
+
+
+def _campos_con_help_text_declarados_en_los_formularios_propios():
+    """Universo DECLARADO de H19-POBLACIÓN: recorre los `AppConfig` del proyecto —excluye
+    `django.contrib.*` y `allauth.*`, que traen sus propios formularios internos (login, cambiar
+    contraseña…) ajenos a esta unidad—, importa `<app>.forms` si existe, y se queda con
+    `(NombreDeLaClase, nombre_del_campo)` de cada campo de CUALQUIER `django.forms.BaseForm`
+    DEFINIDO ahí (no importado: `obj.__module__ == modulo.__name__` descarta lo que un
+    `forms.py` importa de otro sitio) cuyo `help_text` no esté vacío. `base_fields` es de CLASE
+    (`FormularioReceta.base_fields`, no una instancia): no hace falta instanciar ningún
+    formulario, y varios exigen argumentos que este barrido no tiene (`FormularioPasarACargo`
+    pide `hogar`/`excluir`)."""
+    declarados = set()
+    for app_config in apps.get_app_configs():
+        if app_config.name.startswith("django.") or app_config.name.startswith("allauth"):
+            continue
+        try:
+            modulo = import_module(f"{app_config.name}.forms")
+        except ModuleNotFoundError:
+            continue
+        for obj in vars(modulo).values():
+            if not (isinstance(obj, type) and issubclass(obj, forms.BaseForm)
+                    and obj.__module__ == modulo.__name__):
+                continue
+            for nombre_campo, campo in obj.base_fields.items():
+                if campo.help_text:
+                    declarados.add((obj.__name__, nombre_campo))
+    return declarados
+
+
 # Hueco MEDIDO durante esta unidad, fuera de `ficheros:` (no se puede tocar aquí — "Reglas del
 # constructor": lo que no está en `ficheros:` no se edita aunque el cambio se necesite; se
 # propone en hallazgos.md y lo aplica el padre): `entrenos/templates/entrenos/corregir.html:35`
@@ -2136,6 +2183,60 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             f'<div aria-describedby="{id_esperado}"><p id="{id_esperado}">ayuda</p></div>',
         )
         self.assertEqual(con_las_dos, [])
+
+    def test_todo_campo_con_help_text_declarado_es_alcanzado_o_esta_eximido_por_sesion(self):
+        """H19-POBLACIÓN (vuelta 14 de la 059, MEDIO) — el control de POBLACIÓN que le faltaba a
+        H19, en la línea de lo que la vuelta 12 hizo con H21: los tests de arriba comprueban que
+        todo lo que el barrido SÍ ve está bien asociado, pero ninguno pregunta si el barrido está
+        viendo TODO lo que hay que ver. Medido (vuelta 14): 7 campos con `help_text` declarados
+        en los formularios propios, 5 alcanzados por el barrido de Alejandro+Carlos — la
+        diferencia son, EXACTAMENTE, los dos de `FormularioAlta` (el formulario de ALTA de
+        allauth, que sólo se pinta SIN sesión iniciada). Si un OCTAVO campo se queda fuera sin
+        que la excepción de arriba lo cubra, esto se pone rojo nombrándolo — la excepción es
+        exacta, no generosa, igual que R8 con la lista de pantallas."""
+        declarados = _campos_con_help_text_declarados_en_los_formularios_propios()
+        self.assertGreaterEqual(
+            len(declarados), 5,
+            "el universo DECLARADO se ha quedado sospechosamente pequeño: revisa si "
+            "`_campos_con_help_text_declarados_en_los_formularios_propios` sigue mirando los "
+            "formularios propios de verdad",
+        )
+
+        nombres = _nombres_de_pantallas_reales_hoy()
+        paginas_alejandro, _alcanzadas_alejandro = _formularios_y_paginas_de_pantallas_reales(
+            self.client, nombres, "/"
+        )
+        paginas_carlos, _alcanzadas_carlos = _formularios_y_paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        alcanzados = {
+            (nombre_form, campo.name)
+            for _ruta, _contenido, campos in paginas_alejandro + paginas_carlos
+            for nombre_form, campo in campos
+        }
+
+        problemas = []
+        vistas_las_dos_exenciones = set()
+        for clave in declarados:
+            if clave in alcanzados:
+                continue
+            if clave in _CAMPOS_DE_HELP_TEXT_INALCANZABLES_POR_SESION_FUERA_DE_FICHEROS:
+                vistas_las_dos_exenciones.add(clave)
+                continue  # ver el comentario de la excepción, arriba
+            problemas.append(
+                f"{clave[0]}.{clave[1]} declara help_text pero el barrido de H19 no lo alcanzó, "
+                "y no es ninguna de las dos exenciones conocidas de FormularioAlta"
+            )
+        exenciones_no_vistas = (
+            _CAMPOS_DE_HELP_TEXT_INALCANZABLES_POR_SESION_FUERA_DE_FICHEROS - vistas_las_dos_exenciones
+        )
+        if exenciones_no_vistas:
+            problemas.append(
+                f"la excepción de sesión ya no encontró su inalcanzable medido {sorted(exenciones_no_vistas)}: "
+                "o el barrido empezó a alcanzar `FormularioAlta` (borra la excepción, el "
+                "trinquete acaba de cazarla) o el campo dejó de declarar help_text"
+            )
+        self.assertEqual(problemas, [], f"H19-POBLACIÓN: {problemas}")
 
 
 # ------------------------------------------------------------------------------------------ #
