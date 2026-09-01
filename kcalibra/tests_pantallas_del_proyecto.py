@@ -2110,6 +2110,32 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             "con la rama tomada, el sitio ya se pinta y no debía quedar población perdida",
         )
 
+    def test_mutacion_un_sitio_de_cifra_en_la_segunda_linea_de_un_nodo_multilinea_se_localiza_bien(self):
+        """H37-R (vuelta 20 de la 059, MEDIO, encontrado en la 4ª ronda de barrido) —
+        `_sitio_del_nodo` suma los saltos de línea internos del propio `TextNode` (`nodo.s[
+        :desplazamiento].count("\\n")`) a la línea de apertura que Django ya escribió, porque
+        un `TextNode` puede abarcar varias líneas de la plantilla. Medido por mí, mismo método
+        del revisor: quitar esa suma deja los 205 tests de `kcalibra` en verde — la clave sigue
+        coincidiendo consigo misma en los dos lados de la comparación (declarado y renderizado
+        se calculan con la MISMA fórmula, acertada o no), así que ningún assert de POBLACIÓN lo
+        distingue. No es un falso VERDE sobre R5 (H21 sigue cazando el sitio perdido, esté bien
+        o mal numerada su línea), pero SÍ es la línea de diagnóstico que alguien va a leer para
+        arreglar un sitio perdido de verdad — y estaría mintiendo."""
+        motor = engines["django"].engine
+        fuente = 'línea 1 de texto\nlínea 2 con <p class="cifra">{{ n }}</p>'
+        plantilla = PlantillaDeDjango(
+            fuente,
+            origin=OrigenDeDjango("sintética_r", template_name="sintetica_r.html"),
+            engine=motor,
+        )
+        declarados = _sitios_de_cifra_de_una_plantilla(plantilla)
+        self.assertEqual(
+            sorted(declarados), ["sintetica_r.html:2"],
+            'un `class="cifra"` en la SEGUNDA línea de un `TextNode` que empieza en la '
+            "primera no se localizó en la línea 2: `_sitio_del_nodo` dejó de sumar los saltos "
+            "de línea internos del propio nodo",
+        )
+
     def test_la_excepcion_de_la_pieza_de_ui_sin_usar_sigue_siendo_exacta(self):
         """El trinquete de la única excepción del control de población (misma forma que R8 y que
         `_es_el_hueco_h18_fuera_de_ficheros`): lo que se comprueba NO es "ese sitio sigue sin
