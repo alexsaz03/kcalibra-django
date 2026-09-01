@@ -31,7 +31,6 @@ demostrado en cada corrida futura de la suite, no solo en la evidencia pegada de
 """
 
 import re
-from collections import Counter
 from contextlib import contextmanager
 from datetime import timedelta
 from html.parser import HTMLParser
@@ -563,10 +562,13 @@ def _es_el_hueco_h18_fuera_de_ficheros(etiqueta):
 # allá. H18 cerró las VACÍAS: una etiqueta clasificada, vacía de HTML, ausente de `SIN_CIERRE`,
 # se apila y no se desapila nunca. Pero hay una SEGUNDA forma de dejar una etiqueta apilada para
 # siempre sin que sea "vacía": el HTML Living Standard permite dejar SIN cerrar `<p>`, `<li>`,
-# `<dt>`, `<dd>`, `<option>`… (cierre opcional — cualquier navegador la autocierra al abrir el
-# siguiente hermano o al cerrar el padre), y `html.parser` NO implementa ese autocierre: la
-# etiqueta se queda en la pila de `CadenaDeAncestros`/`_ElementosConTexto`/`_NumerosDeDatoEnEl
-# Texto` igual que `wbr`, regalando su `class="cifra"` a todo lo que la siga dentro de su padre.
+# `<dt>`, `<dd>`, `<option>`… (cierre opcional), de TRES formas — cualquier navegador la
+# autocierra (a) al abrir el siguiente HERMANO del mismo tipo, (b) al abrirse dentro de ella un
+# HIJO que su modelo de contenido no admite (un `<p>` sólo admite contenido de frase: CUALQUIER
+# etiqueta de bloque que se abra dentro la cierra sola, `§13.1.2.4`), o (c) al cerrarse su PADRE
+# estando ella todavía abierta — y `html.parser` NO implementa ninguna de las tres: la etiqueta
+# se queda en la pila de `CadenaDeAncestros`/`_ElementosConTexto`/`_NumerosDeDatoEnElTexto` igual
+# que `wbr`, regalando su `class="cifra"` a todo lo que la siga dentro de su padre.
 #
 # `_CIERRE_OPCIONAL_DE_HTML` es universo EXTERNO (igual que `_VACIAS_DE_HTML`, arriba): la lista
 # completa de etiquetas de cierre opcional del HTML Living Standard, no una lista de pantallas ni
@@ -591,41 +593,77 @@ def _etiquetas_de_cierre_opcional_clasificadas(clasificadas=None, cierre_opciona
 
 
 class _ContadorDeAperturasYCierres(HTMLParser):
-    """H20 — cuenta CADA apertura y CADA cierre EXPLÍCITO, por nombre de etiqueta. Universo aparte
-    de `CadenaDeAncestros`/`_ElementosConTexto`/`_NumerosDeDatoEnElTexto` (no consulta `SIN_CIERRE`
-    ni ninguna otra lista de las de arriba): sirve solo para el trinquete de abajo, que no mira
-    NADA de cadena de ancestros — solo si cada apertura de una etiqueta de cierre opcional
-    encuentra su cierre exacto en el mismo documento."""
+    """H20/H23 — lleva una PILA de lo que está abierto, no un CONTEO. Un conteo (aperturas ==
+    cierres) sólo caza el cierre OMITIDO (`<p>Uno<p>Dos</p>`: 2 aperturas, 1 cierre — descuadra):
+    se queda ciego al cierre DESPLAZADO por un hijo que su modelo de contenido no admite
+    (`<p>Resumen<dl>…</dl></p>`: el navegador cierra el `<p>` al ver el `<dl>` —regla de "implied
+    end tag" de `§13.1.2.4`—, pero `html.parser` no, así que el `</p>` de después SÍ llega: 1
+    apertura, 1 cierre, el conteo CUADRA y no ve nada — medido, revisión 12: `perfiles/ver.html`
+    con la `.cifra` de la altura envuelta así, `<p class="cifra">` regalado al `<dl>` entero, y
+    las 915 en verde). Con la pila, una etiqueta de cierre opcional CLASIFICADA se marca
+    DESPLAZADA (`self.desplazadas`) en dos momentos, sin reimplementar el autocierre completo del
+    HTML Living Standard — sólo el ANIDAMIENTO IMPOSIBLE para la población que este proyecto ya
+    clasifica:
+    (1) se abre un `<p>` (el único caso hoy clasificado cuyo modelo de contenido no admite NINGÚN
+        hijo de bloque: `_ETIQUETAS_DE_BLOQUE`) mientras un `<p>` sigue en la cima de la pila sin
+        su propio cierre — esto caza, con el MISMO mecanismo, tanto el hermano (`<p>Uno<p>Dos`,
+        `p` ∈ `_ETIQUETAS_DE_BLOQUE`) como el hijo de bloque (`<p>Resumen<dl>`). No se generaliza
+        a `li`/`dt`/`dd`/`option`/`body`/`head`/`html`: su modelo de contenido SÍ admite hijos de
+        bloque sin autocerrarse (un `<li>` puede contener un `<div>` de sobra), así que aplicarles
+        esta misma regla abriría falsos rojos sobre marcado legítimo — para ellos basta (2);
+    (2) se cierra un ANCESTRO suyo (con su propio `</etiqueta>` explícito, o al terminar el
+        documento) mientras ella sigue abierta por debajo, sin que su propio cierre haya llegado
+        antes — cubre el hermano de cualquiera de las ocho clasificadas (`<li>A<li>B</li>`: el
+        `<ul>` que las envuelve arrastra a la primera al cerrarse) y el caso general de "cierre
+        omitido" que el conteo ya cazaba, sin necesitar el conteo."""
 
-    def __init__(self):
+    def __init__(self, cierre_opcional=None):
         super().__init__(convert_charrefs=True)
-        self.aperturas = Counter()
-        self.cierres = Counter()
+        self.cierre_opcional = (
+            _etiquetas_de_cierre_opcional_clasificadas() if cierre_opcional is None else cierre_opcional
+        )
+        self.pila = []
+        self.desplazadas = []
 
     def handle_starttag(self, etiqueta, atributos_crudos):
-        self.aperturas[etiqueta] += 1
+        # Regla (1): sólo `<p>` — ver el porqué en el docstring de la clase.
+        if (
+            etiqueta in _ETIQUETAS_DE_BLOQUE
+            and self.pila
+            and self.pila[-1] == "p"
+            and self.pila[-1] in self.cierre_opcional
+        ):
+            self.desplazadas.append(self.pila.pop())
+        self.pila.append(etiqueta)
 
     def handle_endtag(self, etiqueta):
-        self.cierres[etiqueta] += 1
+        # Regla (2): cualquier etiqueta de cierre opcional clasificada que quede POR DEBAJO de
+        # `etiqueta` en la pila se cierra sola al cerrarse ella — se marca desplazada; `etiqueta`
+        # misma, si aparece, se saca limpia (SÍ tuvo su propio cierre explícito).
+        if etiqueta not in self.pila:
+            return
+        while self.pila[-1] != etiqueta:
+            cima = self.pila.pop()
+            if cima in self.cierre_opcional:
+                self.desplazadas.append(cima)
+        self.pila.pop()
 
 
 def _etiquetas_de_cierre_opcional_sin_cerrar(contenido, cierre_opcional=None):
-    """H20: de las etiquetas de cierre opcional CLASIFICADAS, cuáles tienen un número de
-    aperturas distinto del de cierres explícitos en `contenido` — la señal de que al menos una
-    apertura se quedó sin su `</etiqueta>` y quedaría apilada para siempre en `html.parser`
-    (`<p>Uno<p>Dos</p>` es HTML válido —el navegador cierra el primer `<p>` al ver el segundo—
-    pero sólo trae UN `</p>`: dos aperturas, un cierre, desbalance de uno). Compara conteos, no
-    anidamiento: para la población de este proyecto (medido, cero desbalances hoy) es la misma
-    disciplina que R8 aplica a la lista de excepciones — exacta, no generosa."""
+    """H20/H23: de las etiquetas de cierre opcional CLASIFICADAS, cuáles se quedan ABIERTAS sin
+    su propio cierre explícito — por ANIDAMIENTO (`_ContadorDeAperturasYCierres`, arriba: las dos
+    reglas), no por conteo. Devuelve los NOMBRES afectados, ordenados y sin duplicar — mismo
+    contrato que antes de H23, así que quien ya lo llama con `cierre_opcional={"p"}` sigue
+    funcionando igual. Cubre las dos formas medidas de quedarse apilada para siempre en
+    `html.parser`: el cierre OMITIDO y el cierre DESPLAZADO por un hijo de bloque o por el cierre
+    de un ancestro."""
     cierre_opcional = (
         _etiquetas_de_cierre_opcional_clasificadas() if cierre_opcional is None else cierre_opcional
     )
-    lector = _ContadorDeAperturasYCierres()
+    lector = _ContadorDeAperturasYCierres(cierre_opcional)
     lector.feed(contenido)
-    return sorted(
-        etiqueta for etiqueta in cierre_opcional
-        if lector.aperturas[etiqueta] != lector.cierres[etiqueta]
-    )
+    sin_cerrar_al_final = (etiqueta for etiqueta in lector.pila if etiqueta in cierre_opcional)
+    return sorted(set(lector.desplazadas) | set(sin_cerrar_al_final))
 
 
 class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
@@ -791,6 +829,62 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
         self.assertEqual(
             cerradas_las_dos, [],
             "cerrar el primer <p> explícitamente debía vaciar el barrido",
+        )
+
+    def test_mutacion_un_cierre_desplazado_por_un_hijo_de_bloque_pone_la_suite_roja(self):
+        """H23 (revisión 12 de la 059, BLOQUEANTE) — la SEGUNDA forma, la que el conteo de antes
+        de esta vuelta no veía: un `<p>` que envuelve un `<dl>` (o cualquier hijo de
+        `_ETIQUETAS_DE_BLOQUE`) sin cerrarse ANTES de abrirlo. El navegador cierra el `<p>` solo
+        al ver el `<dl>` (`§13.1.2.4`), así que el `</p>` que llega DESPUÉS no cierra nada de
+        verdad — pero un CONTEO (1 apertura, 1 cierre) no lo distingue del caso legítimo. Medido
+        en vivo (revisión 12): exactamente la forma en que `perfiles/ver.html:98` se quedó sin su
+        `.cifra` con la suite entera en verde."""
+        desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            '<div><p class="cifra">Resumen<dl><dt>Altura</dt><dd>180 cm</dd></dl></p></div>',
+            cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            desplazado, ["p"],
+            "un <p> cerrado DESPUÉS de un <dl> que abre dentro no apareció como desplazado: el "
+            "trinquete sigue viendo sólo conteos, no anidamiento",
+        )
+        # La contraprueba, para que no quepa duda de que es el ANIDAMIENTO lo que decide y no el
+        # conteo (el mismo número de aperturas y cierres en los dos casos): el `</p>` puesto
+        # ANTES del `<dl>`, que es HTML legítimo, no debe aparecer como problema.
+        legitimo = _etiquetas_de_cierre_opcional_sin_cerrar(
+            '<div><p class="cifra">Resumen</p><dl><dt>Altura</dt><dd>180 cm</dd></dl></div>',
+            cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            legitimo, [],
+            "un <p> cerrado ANTES del <dl> (HTML legítimo, mismo conteo que el caso de arriba) "
+            "no debía aparecer como problema — si aparece, el trinquete está mirando conteos",
+        )
+
+    def test_un_hijo_de_bloque_legitimo_dentro_de_li_no_es_falso_rojo(self):
+        """H23 — el control de que restringir la regla (1) del desplazamiento a `<p>` (ver el
+        docstring de `_ContadorDeAperturasYCierres`) no abre un falso rojo sobre marcado
+        LEGÍTIMO: a diferencia de `<p>`, el modelo de contenido de `<li>` SÍ admite un `<div>`
+        dentro sin autocerrarse — sólo se cierra al abrirse un HERMANO `<li>` o al cerrarse su
+        `<ul>`. Las dos formas se comprueban aquí."""
+        con_div_dentro = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<ul><li><div>contenido de sobra</div></li><li>Otro</li></ul>",
+            cierre_opcional={"li"},
+        )
+        self.assertEqual(
+            con_div_dentro, [],
+            "un <div> LEGÍTIMO dentro de un <li> bien cerrado no debía marcar el <li> como "
+            "desplazado — <li> sí admite hijos de bloque sin autocerrarse",
+        )
+        # Y el caso que SÍ tiene que seguir cazado: el hermano sin cerrar explícito, atrapado por
+        # el cierre del <ul> — regla (2), no la (1) restringida a <p>.
+        hermano_sin_cerrar = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<ul><li>Uno<li>Dos</li></ul>", cierre_opcional={"li"},
+        )
+        self.assertEqual(
+            hermano_sin_cerrar, ["li"],
+            "un <li> sin cerrar seguido de un hermano <li> tenía que seguir cazado por la "
+            "regla (2), aunque la (1) no se generalice a <li>",
         )
 
 
@@ -1287,17 +1381,56 @@ _LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE = "barra_macro"
 _LA_PIEZA_INTERNA_QUE_SOLO_ESA_USA = "_barra_macro_interna"
 
 
-def _alguna_plantilla_incluye_la_pieza_de_ui(pieza, directorios=None):
-    """¿Incluye alguien `_ui.html#pieza`? Se busca en todas las plantillas propias MENOS en la
-    propia `_ui.html` (donde una pieza incluye a otra: eso no la hace alcanzable desde ninguna
-    página)."""
-    patron = re.compile(r"""\{%\s*include\s+["']_ui\.html#""" + re.escape(pieza) + r"""(?![\w-])""")
-    for ruta in _plantillas_del_arbol_propio(directorios):
-        if Path(ruta).name == "_ui.html":
+def _algun_modulo_python_propio_nombra_la_pieza_de_ui(pieza, base_dir=None):
+    """H24 (revisión 12) — la SEGUNDA vía, ciega para `_alguna_plantilla_incluye_la_pieza_de_ui`:
+    una VISTA puede pedir `"_ui.html#pieza"` como plantilla propia POR NOMBRE
+    (`render(request, "_ui.html#pieza", contexto)` — `django-template-partials` lo permite, y
+    este mismo repositorio ya usa el patrón: `cierres/views.py:68,82` renderiza
+    `_pregunta_pendiente.html#pregunta_pendiente` así, sin que exista NUNCA ningún
+    `{% include %}` en ninguna plantilla). Se busca la cadena LITERAL `"_ui.html#pieza"` en
+    cualquier `.py` propio del repositorio — fuera `.venv`/`site-packages`, el mismo filtro que
+    `_plantillas_del_arbol_propio` — sin exigir que sea un argumento de `render` concreto:
+    cualquier constante o llamada que la nombre por su cadena entra sola, igual que
+    `NOMBRE_DEL_PARTIAL_PREGUNTA` entraría si nombrara `barra_macro`.
+
+    Salvo ESTE MISMO fichero (`__file__`), cuando `base_dir` es el real: sus propias mutaciones
+    EN CÓDIGO (más abajo) escriben la cadena `"_ui.html#barra_macro"` dentro de un `.py` de
+    USAR Y TIRAR — pero el DOCSTRING/fuente de esa mutación, al vivir en este mismo módulo, es
+    también un `.py` bajo `BASE_DIR`. Mismo motivo por el que
+    `_ficheros_de_test_que_redefinen_piezas` excluye su propio `modulo_compartido`: el fichero
+    que hace la pregunta no puede contar su propia documentación como si fuera alguien
+    respondiendo que sí."""
+    base_dir = BASE_DIR if base_dir is None else Path(base_dir)
+    propio = Path(__file__).resolve()
+    patron = re.compile(r"""["']_ui\.html#""" + re.escape(pieza) + r"""(?![\w-])""")
+    for ruta in base_dir.rglob("*.py"):
+        resuelta = ruta.resolve()
+        if resuelta == propio:
             continue
-        if patron.search(_texto(Path(ruta))):
+        partes = resuelta.parts
+        if ".venv" in partes or "site-packages" in partes:
+            continue
+        if patron.search(_texto(ruta)):
             return True
     return False
+
+
+def _alguna_plantilla_incluye_la_pieza_de_ui(pieza, directorios=None, base_dir=None):
+    """¿Sigue siendo INALCANZABLE `_ui.html#pieza`? H24 (revisión 12) — la pregunta original
+    ("¿la incluye alguna plantilla, salvo la propia `_ui.html`?") era ciega por DOS vías medidas:
+    (a) una pieza de `_ui.html` que incluye a `pieza` DESDE DENTRO de `_ui.html` —si esa pieza
+    contenedora SÍ la usa alguna página, `pieza` es alcanzable igual, y excluir `_ui.html` entero
+    de la búsqueda lo escondía— y (b) una VISTA que la renderiza por NOMBRE
+    (`_algun_modulo_python_propio_nombra_la_pieza_de_ui`, arriba), sin ningún `{% include %}` en
+    ninguna plantilla. Se busca ahora en TODAS las plantillas propias, `_ui.html` incluida
+    (`barra_macro` no se autoincluye bajo su propio nombre — sólo incluye a
+    `_barra_macro_interna`, un nombre distinto — así que esto no crea un falso positivo con la
+    propia pieza), y también en los `.py` propios."""
+    patron = re.compile(r"""\{%\s*include\s+["']_ui\.html#""" + re.escape(pieza) + r"""(?![\w-])""")
+    for ruta in _plantillas_del_arbol_propio(directorios):
+        if patron.search(_texto(Path(ruta))):
+            return True
+    return _algun_modulo_python_propio_nombra_la_pieza_de_ui(pieza, base_dir)
 
 
 def _sitios_de_cifra_de_la_pieza_de_ui_sin_usar():
@@ -1509,6 +1642,65 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             len(_sitios_de_cifra_de_la_pieza_de_ui_sin_usar()), 1,
             "la excepción del control de población ha crecido: solo puede encoger",
         )
+
+    def test_mutacion_una_pieza_de_ui_que_incluye_a_otra_dentro_de_ui_se_pone_rojo(self):
+        """H24 (revisión 12 de la 059, MENOR) — la primera vía ciega: una pieza de `_ui.html` que
+        SÍ usa alguna página puede incluir a `barra_macro` DESDE DENTRO de `_ui.html`, y la
+        búsqueda de antes de esta vuelta excluía el fichero entero — no lo veía. Con un `_ui.html`
+        de usar y tirar (nunca el real), un `{% include "_ui.html#barra_macro" %}` dentro de OTRA
+        pieza tiene que aparecer como alcanzable; sin él, vuelve a ser inalcanzable — el mismo
+        patrón de mutación que el resto de este fichero. `base_dir` apunta al mismo directorio de
+        usar y tirar (sin ningún `.py`), para aislar esta mutación de la vía (b) —si no, la
+        segunda mitad de `_alguna_plantilla_incluye_la_pieza_de_ui` recorrería el `BASE_DIR` real
+        del proyecto entero, que es una cuestión aparte, ya cubierta por el test de abajo."""
+        with TemporaryDirectory() as tmp:
+            directorio = Path(tmp) / "templates"
+            directorio.mkdir(parents=True)
+            (directorio / "_ui.html").write_text(
+                '{% load partials %}\n'
+                '{% partialdef pildora_macro_interna %}\n'
+                '{% include "_ui.html#barra_macro" with tipo="ninguno" %}\n'
+                '{% endpartialdef %}\n'
+            )
+            self.assertTrue(
+                _alguna_plantilla_incluye_la_pieza_de_ui("barra_macro", [Path(tmp)], Path(tmp)),
+                "un {% include %} de barra_macro DENTRO de _ui.html (en otra pieza) no apareció "
+                "como alcanzable: la búsqueda sigue sin mirar dentro de _ui.html",
+            )
+            (directorio / "_ui.html").write_text(
+                '{% load partials %}\n'
+                '{% partialdef pildora_macro_interna %}sin incluir nada{% endpartialdef %}\n'
+            )
+            self.assertFalse(
+                _alguna_plantilla_incluye_la_pieza_de_ui("barra_macro", [Path(tmp)], Path(tmp)),
+                "quitar el único include debía volver a dejar la pieza inalcanzable",
+            )
+
+    def test_mutacion_una_vista_que_renderiza_la_pieza_por_nombre_se_pone_rojo(self):
+        """H24 — la segunda vía ciega: una VISTA puede pedir `_ui.html#barra_macro` por NOMBRE
+        (el mismo patrón que `cierres/views.py` ya usa con otra pieza), sin que exista ningún
+        `{% include %}` en ninguna plantilla — invisible para la búsqueda sobre plantillas.
+        Con un `.py` de usar y tirar (nunca uno real del repositorio), la cadena literal
+        `"_ui.html#barra_macro"` tiene que hacer que la pieza aparezca como alcanzable."""
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "vista_de_prueba_h24.py").write_text(
+                'from django.shortcuts import render\n\n'
+                'def una_vista(request):\n'
+                '    return render(request, "_ui.html#barra_macro", {"tipo": "ninguno"})\n'
+            )
+            self.assertTrue(
+                _algun_modulo_python_propio_nombra_la_pieza_de_ui("barra_macro", base),
+                "una vista que renderiza _ui.html#barra_macro por nombre, sin ningún "
+                "{% include %}, no apareció como alcanzable",
+            )
+            (base / "vista_de_prueba_h24.py").write_text(
+                'def una_vista(request):\n    return None\n'
+            )
+            self.assertFalse(
+                _algun_modulo_python_propio_nombra_la_pieza_de_ui("barra_macro", base),
+                "quitar la única referencia debía volver a dejar la pieza inalcanzable",
+            )
 
     def test_la_poblacion_declarada_no_sale_de_un_grep_sino_del_arbol_compilado(self):
         """Guarda de rojo mudo del propio control: si `_sitios_de_cifra_declarados` dejara de
@@ -1842,11 +2034,61 @@ def _campos_pintados_de_help_text(campos, contenido):
     Alejandro viendo los entrenos de Berta, otro adulto del mismo hogar, sin relación de
     responsable) no pinta nada, y R6 no promete nada sobre un campo que nadie ve. Se mide
     buscando el TEXTO auto-escapado de `help_text` (como lo escribe `{{ field.help_text }}`, sin
-    `|safe` en ninguna de las plantillas que lo pintan — verificado) en el HTML — no un atributo
-    que la cura de R6 escriba, así que sigue siendo cierto con la cura revertida entera (H19)."""
+    `|safe` en ninguna de las plantillas que lo pintan — verificado) en el HTML.
+
+    O34 (revisión 12) — esto es un filtro LEGÍTIMO (no todo campo del formulario se pinta en toda
+    plantilla) pero es un artefacto ACCIDENTAL de CÓMO la plantilla escribe hoy el texto: sólo ve
+    el campo si la plantilla lo imprime igual, letra a letra, que `{{ field.help_text }}` sin
+    filtros que lo transformen. Si algún día una plantilla pinta el MISMO help_text de otra forma
+    —a mano, con énfasis, por un filtro— este filtro deja de ver el campo, y las TRES flechas de
+    R6 (`_campos_de_help_text_sin_asociar`, más abajo, y sus dos tests) se quedan mudas para él —
+    medido, revisión 12: `<strong>` en el `help_text` de `comidas`, con la cura entera revertida,
+    da `EXIT=0`. La cura de ESE hueco no es quitar este filtro (seguiría siendo generoso: contaría
+    campos que ninguna rama pinta) — es
+    `_campos_con_widget_pintado_y_ayuda_no_canonica` (H22, más abajo), que decide "pintado" por el
+    WIDGET del campo, no por el texto de su ayuda, y vigila precisamente el hueco que este filtro
+    deja."""
     return [
         (nombre_form, campo) for nombre_form, campo in campos
         if escape(campo.help_text) in contenido
+    ]
+
+
+# H22 (revisión 12 de la 059, BLOQUEANTE) — el hueco que `_campos_pintados_de_help_text` deja
+# (O34, arriba): decide "pintado" por IGUALDAD DE TEXTO, así que una plantilla que pinte el MISMO
+# `help_text` de otra forma (a mano, con `<strong>`, por un filtro) saca al campo de la población
+# de R6 ENTERA, no sólo de este filtro — las tres flechas se quedan mudas a la vez. Este trinquete
+# de POBLACIÓN, hermano del de H21 (`.cifra`) y del de H19-POBLACIÓN, no cambia el filtro de
+# arriba (sigue siendo el correcto para decidir SOBRE QUÉ CAMPO exigir R6): decide "pintado" por
+# el WIDGET —lo que Django SIEMPRE escribe para cualquier campo visible, con o sin `help_text`
+# canónico— y exige que, si el widget se pinta, su ayuda se pinte por la vía canónica O esté
+# declarada aquí con su porqué. Vacía hoy: medido (revisión 12), los 5 campos que el barrido
+# alcanza están, los 5, con su ayuda pintada por la vía canónica.
+_CAMPOS_DE_HELP_TEXT_PINTADOS_SIN_LA_VIA_CANONICA_FUERA_DE_FICHEROS = frozenset()
+
+
+def _campo_esta_pintado_por_su_widget(campo, contenido):
+    """H22 — si el CAMPO se pinta de verdad en esta página: su `name="<html_name>"` aparece en el
+    HTML. A diferencia de `_campos_pintados_de_help_text` (que decide por el TEXTO del
+    `help_text`), esto decide por el WIDGET — lo que Django siempre escribe para CUALQUIER campo
+    visible (`BoundField.html_name`, `django/forms/boundfield.py`), tenga o no su `help_text`
+    pintado de la forma canónica. Para un `CheckboxSelectMultiple` (`comidas`), cada casilla
+    repite el MISMO `name="comidas"` — verificado en vivo—, así que basta una búsqueda de
+    subcadena, sin recorrer el árbol de widgets."""
+    return f'name="{campo.html_name}"' in contenido
+
+
+def _campos_con_widget_pintado_y_ayuda_no_canonica(campos, contenido):
+    """H22 — de TODOS los campos con `help_text` del contexto (sin pasar por el filtro de
+    `_campos_pintados_de_help_text`: aquí la población es la ESENCIAL, el campo entero, no el
+    subconjunto que ya se pinta por texto), cuáles tienen su WIDGET pintado (el campo está de
+    verdad en esta página, lo confirme o no el texto de su ayuda) pero su `help_text` NO aparece
+    por la vía canónica. Devuelve `(nombre_form, campo)` de cada uno — la firma exacta que el
+    test de abajo declara como excepción."""
+    return [
+        (nombre_form, campo) for nombre_form, campo in campos
+        if _campo_esta_pintado_por_su_widget(campo, contenido)
+        and escape(campo.help_text) not in contenido
     ]
 
 
@@ -2237,6 +2479,97 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
                 "trinquete acaba de cazarla) o el campo dejó de declarar help_text"
             )
         self.assertEqual(problemas, [], f"H19-POBLACIÓN: {problemas}")
+
+    def test_todo_campo_con_widget_pintado_pinta_su_ayuda_por_la_via_canonica_o_esta_eximido(self):
+        """H22 (revisión 12 de la 059, BLOQUEANTE) — el trinquete de POBLACIÓN que le faltaba al
+        filtro `_campos_pintados_de_help_text` (O34, ver su docstring): decide "pintado" por el
+        WIDGET del campo (su `name=` en el HTML), no por el TEXTO de su ayuda, así que sigue
+        viendo el campo aunque su `help_text` se pinte de otra forma — a mano, con énfasis, por
+        un filtro. Si el widget se pinta y la ayuda NO aparece por la vía canónica, y no está
+        eximido con su porqué, esto se pone rojo nombrándolo — es la POBLACIÓN correcta, no una
+        tercera flecha que compita con las de `_campos_de_help_text_sin_asociar`: esas siguen
+        siendo las que deciden si un campo cuya ayuda SÍ es canónica está bien asociada (`id`
+        y `aria-describedby`); ésta decide si algún campo se le está escapando ENTERO a las dos.
+
+        Hoy sale verde con CERO excepciones: los 5 campos que el barrido alcanza tienen, los 5,
+        su ayuda pintada por la vía canónica. Mutación (revisión 12,
+        `.runtime/rev12/m1-help-text-en-linea.diff`): revertir la cura entera de
+        `recetas/templates/recetas/formulario.html` Y pintar el `help_text` de `comidas` a mano
+        con un `<strong>` en una palabra deja su `<input>` pintado (`name="comidas"` sigue en el
+        HTML) pero su ayuda ya no coincide letra a letra — este trinquete lo caza aunque las dos
+        flechas de arriba (que ya no ven el campo, filtrado por `_campos_pintados_de_help_text`)
+        se queden mudas."""
+        nombres = _nombres_de_pantallas_reales_hoy()
+        paginas_alejandro, _alcanzadas_alejandro = _formularios_y_paginas_de_pantallas_reales(
+            self.client, nombres, "/"
+        )
+        paginas_carlos, _alcanzadas_carlos = _formularios_y_paginas_de_pantallas_reales(
+            self.client_carlos, nombres, "/hogares/mi-hogar/"
+        )
+        paginas = paginas_alejandro + paginas_carlos
+        self.assertGreaterEqual(len(paginas), 10, "el recorrido apenas alcanzó pantallas reales")
+        problemas = []
+        total_widgets_pintados = 0
+        for ruta, contenido, campos in paginas:
+            if not campos:
+                continue
+            no_canonicos = _campos_con_widget_pintado_y_ayuda_no_canonica(campos, contenido)
+            total_widgets_pintados += len(
+                [c for _, c in campos if _campo_esta_pintado_por_su_widget(c, contenido)]
+            )
+            for nombre_form, campo in no_canonicos:
+                clave = (nombre_form, campo.name)
+                if clave in _CAMPOS_DE_HELP_TEXT_PINTADOS_SIN_LA_VIA_CANONICA_FUERA_DE_FICHEROS:
+                    continue
+                problemas.append(
+                    f"{ruta}: {nombre_form}.{campo.name} pinta su widget "
+                    f"(name=\"{campo.html_name}\") pero su help_text no aparece por la vía "
+                    f"canónica, y no está eximido"
+                )
+        self.assertGreater(
+            total_widgets_pintados, 0,
+            "ningún campo con help_text tuvo su widget pintado en ninguna página: la fixture "
+            "no está ejercitando ningún formulario — el test no probaría nada",
+        )
+        self.assertEqual(problemas, [], f"H22: {problemas}")
+
+    def test_mutacion_una_ayuda_pintada_de_otra_forma_se_pone_rojo(self):
+        """H22 — la mutación EN CÓDIGO, sobre un formulario y un HTML sintéticos (nunca sobre una
+        plantilla real): el widget pintado con su `name=` de siempre, pero el `help_text` escrito
+        con un `<strong>` en vez de letra a letra — el defecto exacto que
+        `_campos_pintados_de_help_text` no ve (O34) y que este trinquete sí."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="ayuda con una palabra clave")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        con_strong = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos,
+            f'<input type="text" name="{campo.html_name}">'
+            '<p>ayuda con una <strong>palabra</strong> clave</p>',
+        )
+        self.assertEqual(
+            [c.name for _, c in con_strong], ["campo"],
+            "un help_text pintado con <strong> en vez de letra a letra no apareció como "
+            "no-canónico: el trinquete no está vigilando de verdad",
+        )
+
+        canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos,
+            f'<input type="text" name="{campo.html_name}">'
+            '<p>ayuda con una palabra clave</p>',
+        )
+        self.assertEqual(canonico, [], "con el texto canónico, el barrido debía vaciarse")
+
+        widget_no_pintado = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos, "<p>ayuda con una <strong>palabra</strong> clave</p>",
+        )
+        self.assertEqual(
+            widget_no_pintado, [],
+            "sin el name= del widget en el HTML, el campo no está pintado de verdad en esta "
+            "rama — R6 no promete nada sobre un campo que nadie ve",
+        )
 
 
 # ------------------------------------------------------------------------------------------ #
