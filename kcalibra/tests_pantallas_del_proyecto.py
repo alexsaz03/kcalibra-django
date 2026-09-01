@@ -307,6 +307,27 @@ class R1_LaListaDePantallasSaleDelArbolTests(SimpleTestCase):
                 "la red no la está vigilando de verdad, solo la está contando",
             )
 
+    def test_mutacion_extends_con_variantes_de_espacio_y_comillas_sigue_siendo_pantalla(self):
+        """H37-L (vuelta 20 de la 059, BLOQUEANTE) — `_es_pantalla` decide con un REGEX
+        (`_EXTENDS_BASE_RE`), no comparando una subcadena fija: Django acepta cualquier
+        cantidad de espacio alrededor de `{%`/`extends`/`%}` y comillas simples o dobles —
+        las dos formas de abajo son `{% extends %}` igual de válido. Medido por el revisor
+        (Revisión 16, D3): sustituir el regex por
+        `'{% extends "base.html" %}' in texto` (subcadena FIJA, un único espacio y comilla
+        doble) deja los 205 tests de `kcalibra` en verde — porque ninguna de las 25 pantallas
+        reales de hoy usa una variante distinta, no porque el defecto no exista."""
+        with TemporaryDirectory() as tmp:
+            for variante in ("{%extends 'base.html'%}", '{%  extends  "base.html"  %}'):
+                with self.subTest(variante=variante):
+                    ruta = Path(tmp) / "pantalla_de_prueba_h37l.html"
+                    ruta.write_text(variante)
+                    self.assertTrue(
+                        _es_pantalla(ruta),
+                        f"«{variante}» (HTML/Django igualmente válido, distinto espaciado o "
+                        f"tipo de comilla) no se reconoció como pantalla: `_es_pantalla` "
+                        f"volvió a comparar una subcadena fija en vez de un regex",
+                    )
+
     def test_borrar_una_pantalla_existente_la_saca_del_barrido_sola(self):
         """R1 al revés: nadie mantiene una lista de la que haya que TACHAR una pantalla borrada
         — desaparece del barrido sin tocar ningún código, porque el barrido nunca la memorizó."""
@@ -670,6 +691,60 @@ _CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR = frozenset(
         "video", "bdi", "bdo", "big", "strike", "tt", "marquee", "nobr", "noembed",
     }
 )
+
+
+class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
+    """H35 (Revisión 16 de la 059, MEDIO) — `_ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_
+    FAMILIA` es una VÁLVULA sin vigilar: se resta de la unión de las cinco listas que construyen
+    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR` —incluida `_CIERRAN_UN_PARRAFO_DE_HTML`, la propia
+    constante que H31 acredita— y nada comprobaba que esa resta no se tragara un miembro suyo. El
+    revisor midió (D1/H35, hallazgos.md): revertir H31 (sacar `li`/`dd`/`dt` de
+    `_CIERRAN_UN_PARRAFO_DE_HTML`) Y meterlas en las descartadas, A LA VEZ, deja los 933 tests en
+    verde — la mutación exacta de H31 vuelve a entrar por esta puerta trasera, porque las tres
+    etiquetas dejan de formar parte del universo que la sonda ejercita contra el navegador.
+
+    Este trinquete, sin depender de Playwright (compara dos `frozenset` en tiempo de import, no
+    lanza ningún navegador), exige que `_CIERRAN_UN_PARRAFO_DE_HTML` sea SIEMPRE subconjunto de
+    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`: si una etiqueta de la constante cae en las
+    descartadas (o se quita de la unión de las cinco listas de origen), deja de ejercitarse
+    contra el navegador y H31 se puede reabrir en verde por esta vía, aunque el test que SÍ
+    lanza Chromium (`LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`, abajo) siga
+    en verde para las etiquetas que le quedan."""
+
+    databases = set()
+
+    def test_ninguna_etiqueta_de_cierran_un_parrafo_esta_descartada_de_la_sonda(self):
+        self.assertLessEqual(
+            _CIERRAN_UN_PARRAFO_DE_HTML, _CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR,
+            f"etiquetas de `_CIERRAN_UN_PARRAFO_DE_HTML` que la sonda del navegador YA NO "
+            f"ejercita — la lista de descartadas se ha tragado un miembro de la propia "
+            f"constante que H31 acredita: "
+            f"{sorted(_CIERRAN_UN_PARRAFO_DE_HTML - _CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR)}",
+        )
+
+    def test_mutacion_meter_una_etiqueta_de_la_constante_en_las_descartadas_se_pone_rojo(self):
+        """La mutación EXACTA de H35, en código: `li` (miembro real de
+        `_CIERRAN_UN_PARRAFO_DE_HTML` desde H31) metido a mano en las descartadas — la
+        maniobra que un desarrollador haría para "apagar un rojo raro de la sonda", el mismo
+        motivo por el que el propio código ya mete ahí catorce etiquetas legítimas."""
+        descartadas_con_la_valvula_abierta = (
+            _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA | {"li"}
+        )
+        candidatos_con_la_valvula_abierta = frozenset(
+            (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
+             | _CIERRAN_UN_PARRAFO_DE_HTML)
+            - descartadas_con_la_valvula_abierta
+        )
+        self.assertNotIn(
+            "li", candidatos_con_la_valvula_abierta,
+            "control: la mutación debía sacar «li» del universo de la sonda",
+        )
+        self.assertFalse(
+            _CIERRAN_UN_PARRAFO_DE_HTML <= candidatos_con_la_valvula_abierta,
+            "meter «li» (miembro real de `_CIERRAN_UN_PARRAFO_DE_HTML`) en las descartadas "
+            "debía romper el trinquete de subconjunto — si esto no se pone rojo, la válvula "
+            "sigue sin vigilar",
+        )
 
 
 def _cierra_un_parrafo_segun_el_navegador(navegador, etiqueta):
@@ -1388,6 +1463,34 @@ class R4_NingunaPiezaCopiadaAManoTests(SimpleTestCase):
             return
         self.fail("el regex no encontró ningún class= en la copia de prueba")
 
+    def test_mutacion_una_copia_con_una_etiqueta_de_django_dentro_del_class_dispara_la_firma(self):
+        """H37-K (vuelta 20 de la 059, BLOQUEANTE) — `_piezas_copiadas` normaliza `{% … %}`/
+        `{# … #}` ANTES de tokenizar el `class="…"` (el mismo mecanismo que
+        `kcalibra/tests_pantallas.py` endureció en su revisión 7ª/8ª vuelta, importado aquí,
+        nunca copiado). Sin esa normalización, un `{% if %}…{% endif %}` DENTRO del atributo
+        `class` de una copia real —lo que Django renderiza como texto plano, byte a byte
+        igual— rompe uno de sus tokens fijos en fragmentos que ya no casan con la firma.
+        Medido por el revisor (Revisión 16, D3): quitar la normalización previa deja los 205
+        tests de `kcalibra` en verde — una copia real de `chip`, con un `{% if %}` de Django
+        envolviendo dos de sus tres tokens fijos, deja de dispararse."""
+        with TemporaryDirectory() as tmp:
+            ruta = Path(tmp) / "pantalla_de_prueba_h37k.html"
+            ruta.write_text(
+                '{% extends "base.html" %}\n'
+                '<label class="inline-flex cursor-pointer items-center gap-1.5 '
+                'rounded-pastilla bg-lienzo px-4 py-2 text-[14px] font-semibold '
+                "text-tinta-media transition-colors {% if tono == 'racha' %}"
+                "has-[:checked]:bg-tinta has-[:checked]:text-white{% endif %}\">"
+                '<input type="checkbox">comida</label>\n'
+            )
+            piezas = _piezas_copiadas(ruta)
+        self.assertIn(
+            "chip", piezas,
+            "una copia real de `chip`, con un {% if %} de Django envolviendo dos de sus tres "
+            'tokens fijos dentro del propio class="…", no disparó la firma: la normalización '
+            "de `{% … %}`/`{# … #}` antes de tokenizar se ha perdido",
+        )
+
 
 # ------------------------------------------------------------------------------------------ #
 # Fixture de integración (R5, R6): una casa completa, con datos en despensa, receta, plan,
@@ -2063,6 +2166,50 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
                 "quitar el único include debía volver a dejar la pieza inalcanzable",
             )
 
+    def test_mutacion_una_pieza_con_nombre_prefijo_de_otra_no_la_confunde_por_modulo_python(self):
+        """H37-N (vuelta 20 de la 059, BLOQUEANTE, encontrado en la 2ª ronda de barrido) —
+        `_algun_modulo_python_propio_nombra_la_pieza_de_ui` ancla el nombre de la pieza con
+        `(?![\\w-])` para que buscar «barra_macro» no case DENTRO de una referencia a OTRA
+        pieza cuyo nombre lo tiene como prefijo (`barra_macro_2`, un nombre perfectamente
+        legítimo que una unidad futura podría añadir a `_ui.html`). Medido por mí, mismo
+        método del revisor: quitar esa frontera deja los 205 tests de `kcalibra` en verde —
+        nada del árbol de hoy tiene una pieza con ese prefijo, así que el hueco no muerde
+        todavía, pero sí en cuanto exista una."""
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "vista_de_prueba_h37n.py").write_text(
+                'from django.shortcuts import render\n\n'
+                'def una_vista(request):\n'
+                '    return render(request, "_ui.html#barra_macro_2", {})\n'
+            )
+            self.assertFalse(
+                _algun_modulo_python_propio_nombra_la_pieza_de_ui("barra_macro", base),
+                'una vista que sólo nombra "_ui.html#barra_macro_2" (OTRA pieza, con '
+                '"barra_macro" como prefijo de su nombre) hizo aparecer "barra_macro" como '
+                'alcanzable: la frontera `(?![\\w-])` se ha perdido',
+            )
+
+    def test_mutacion_una_pieza_con_nombre_prefijo_de_otra_no_la_confunde_en_plantillas(self):
+        """H37-O (vuelta 20 de la 059, BLOQUEANTE, encontrado en la 2ª ronda de barrido) — el
+        gemelo de H37-N un piso más arriba: `_alguna_plantilla_incluye_la_pieza_de_ui` también
+        ancla el nombre con `(?![\\w-])`, para que un `{% include "_ui.html#barra_macro_2" %}`
+        (OTRA pieza, con «barra_macro» como prefijo de su nombre) no haga aparecer
+        «barra_macro» como alcanzable. Medido por mí, mismo método del revisor: quitar esa
+        frontera deja los 205 tests de `kcalibra` en verde."""
+        with TemporaryDirectory() as tmp:
+            directorio = Path(tmp) / "templates"
+            directorio.mkdir(parents=True)
+            (directorio / "otra_pantalla.html").write_text(
+                '{% extends "base.html" %}\n'
+                '{% include "_ui.html#barra_macro_2" %}\n'
+            )
+            self.assertFalse(
+                _alguna_plantilla_incluye_la_pieza_de_ui("barra_macro", [Path(tmp)], Path(tmp)),
+                'un {% include "_ui.html#barra_macro_2" %} (OTRA pieza, con "barra_macro" como '
+                'prefijo de su nombre) hizo aparecer "barra_macro" como alcanzable: la '
+                'frontera `(?![\\w-])` se ha perdido',
+            )
+
     def test_mutacion_una_vista_que_renderiza_la_pieza_por_nombre_se_pone_rojo(self):
         """H24 — la segunda vía ciega: una VISTA puede pedir `_ui.html#barra_macro` por NOMBRE
         (el mismo patrón que `cierres/views.py` ya usa con otra pieza), sin que exista ningún
@@ -2107,6 +2254,33 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             f"la población declarada solo cubre {sorted(plantillas)}: no está saliendo del árbol",
         )
 
+    def test_mutacion_la_clase_cifra_exige_frontera_de_token(self):
+        """H37-A (vuelta 20 de la 059, BLOQUEANTE, generalización de H30/H32/H33/H34) — es la
+        cura LITERAL de H9 (revisión 4 de esta unidad, hallazgos.md: un código de hogar al azar
+        como `…KMN3G` casaba como «3 gramos»), mudada de piso: aquí es `_CLASE_CON_CIFRA_RE`
+        —quien decide qué sitios de `class="…"` CUENTAN como `.cifra` para el control de
+        población de H21— la que lleva las mismas fronteras `(?<![\\w-])`/`(?![\\w-])`. Medido
+        por el revisor (Revisión 16, D3): quitar CUALQUIERA de las dos fronteras deja los 205
+        tests de `kcalibra` en verde — quince vueltas después, la cura se puede quitar sin que
+        nada chille. Sin frontera, cualquier clase que sólo CONTENGA «cifra» como subcadena
+        (`descifrado`, `cifra-vieja`) contaría como sitio de `.cifra`."""
+        self.assertTrue(
+            bool(_CLASE_CON_CIFRA_RE.search('<p class="cifra">')),
+            "la clase EXACTA `cifra` tenía que seguir detectándose",
+        )
+        self.assertTrue(
+            bool(_CLASE_CON_CIFRA_RE.search('<p class="numero cifra grande">')),
+            "`cifra` como un token más, entre otros, tenía que seguir detectándose",
+        )
+        for clase_ajena in ("descifrado", "cifra-vieja", "unacifraespecial", "cifrado"):
+            with self.subTest(clase=clase_ajena):
+                self.assertFalse(
+                    bool(_CLASE_CON_CIFRA_RE.search(f'<p class="{clase_ajena}">')),
+                    f"«{clase_ajena}» contiene «cifra» como subcadena pero NO es la clase "
+                    f"`cifra`: no debía detectarse sin frontera de token — la cura de H9, "
+                    f"mudada aquí, se ha perdido",
+                )
+
     @staticmethod
     @contextmanager
     def _vocabulario_ancho():
@@ -2123,6 +2297,29 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             yield
         finally:
             _tests_pantallas._NUMERO_CON_UNIDAD_RE = original
+
+    def test_mutacion_un_digito_pegado_a_una_letra_por_la_izquierda_no_es_un_numero_de_dato(self):
+        """H37-C (vuelta 20 de la 059, BLOQUEANTE) — la cura LITERAL de H9 (revisión 4 de esta
+        misma unidad, hallazgos.md): un código de hogar al azar como `…KMN3G` casaba como
+        «3 gramos» y abría un falso rojo. `_NUMERO_CON_UNIDAD_DEL_PROYECTO_RE` (el vocabulario
+        ANCHO de este fichero) lleva la misma frontera izquierda `(?<!\\w)` que
+        `_NUMERO_CON_UNIDAD_RE` en `kcalibra/tests_pantallas.py` — pero es una constante
+        DISTINTA, con su propio regex compilado, y nada la ejercitaba por este lado. Medido
+        por el revisor (Revisión 16, D3): quitar `(?<!\\w)` de aquí deja los 205 tests de
+        `kcalibra` en verde — quince vueltas después, la cura se puede quitar sin que nada
+        chille."""
+        for texto in ("ABCKMN3G", "XYZ9kg", "HOGAR42kcal", "COD7Litros"):
+            with self.subTest(texto=texto):
+                self.assertFalse(
+                    bool(_NUMERO_CON_UNIDAD_DEL_PROYECTO_RE.search(texto)),
+                    f"«{texto}» (un dígito pegado a una letra por la IZQUIERDA, la forma de un "
+                    f"código de hogar al azar) casó como número de dato: la frontera izquierda "
+                    f"`(?<!\\w)` de H9 se ha perdido en el vocabulario ancho",
+                )
+        # Y el control: el mismo número, con espacio de verdad delante (no pegado), sigue
+        # detectándose igual — la frontera no rompe ningún número de dato real.
+        self.assertTrue(bool(_NUMERO_CON_UNIDAD_DEL_PROYECTO_RE.search("KMN 3G")))
+        self.assertTrue(bool(_NUMERO_CON_UNIDAD_DEL_PROYECTO_RE.search("42 kg")))
 
     def test_mutacion_vocabulario_reconoce_gramos_mililitros_y_raciones(self):
         """R9 en código: el vocabulario ancho tiene que casar justo las palabras que el
@@ -2778,6 +2975,31 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
         ]
         self.assertEqual(inertes_con_referencia, [])
 
+    def test_mutacion_el_help_text_pintado_escapado_no_se_confunde_con_el_texto_crudo(self):
+        """H37-P (vuelta 20 de la 059, BLOQUEANTE, encontrado en la 2ª ronda de barrido) —
+        `_campos_pintados_de_help_text` (el filtro que O34 documenta, la población de
+        `_campos_de_help_text_sin_asociar`) busca el TEXTO auto-escapado de `help_text` —
+        `escape(campo.help_text)`, lo que `{{ field.help_text }}` escribe de verdad, sin
+        `|safe` en ninguna plantilla (verificado)— no el texto crudo. Medido por mí, mismo
+        método del revisor: quitar `escape(...)` deja los 205 tests de `kcalibra` en verde,
+        porque ninguno de los `help_text` reales de hoy lleva un carácter que el escapado
+        transforme. Con un `help_text` que lleva un `&`, comparar contra el texto crudo deja
+        de ver el campo como pintado: R6 dejaría de exigirle su `id`/`aria-describedby` sobre
+        un campo que SÍ se ve en la pantalla — falso VERDE."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="Sal & pimienta, a tu gusto")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        pintados = _campos_pintados_de_help_text(campos, f"<p>{escape(campo.help_text)}</p>")
+        self.assertEqual(
+            [c.name for _, c in pintados], ["campo"],
+            "un help_text con un carácter especial (&), pintado ESCAPADO — la forma en la que "
+            "Django lo escribe de verdad — no se detectó como pintado: la comparación dejó de "
+            "escapar el help_text antes de buscarlo en el HTML",
+        )
+
     def test_todo_campo_con_help_text_del_formulario_tiene_su_id_asociado(self):
         """H19 (revisión 11 de la 059, MEDIO) — los dos tests de arriba sacan su población de los
         ATRIBUTOS QUE LA CURA DE R6 ESCRIBIÓ (los `id` y los `aria-describedby` PRESENTES en el
@@ -2930,6 +3152,44 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             )
         self.assertEqual(problemas, [], f"H19-POBLACIÓN: {problemas}")
 
+    def test_mutacion_un_formulario_importado_de_otra_app_no_se_cuenta_como_propio(self):
+        """H37-Q (vuelta 20 de la 059, BLOQUEANTE, encontrado en la 3ª ronda de barrido) —
+        `_campos_con_help_text_declarados_en_los_formularios_propios` exige `obj.__module__ ==
+        modulo.__name__` para quedarse sólo con los formularios DEFINIDOS en `<app>.forms`, no
+        los que ese módulo IMPORTA de otra app (`from otra_app.forms import FormularioX`): sin
+        el filtro, un formulario importado por DOS apps distintas se contaría dos veces en la
+        población DECLARADA de H19, y el trinquete de arriba dejaría de ser exacto. Medido por
+        mí, mismo método del revisor (mockeando `apps.get_app_configs`/`import_module`, nunca
+        tocando el registro real de Django): ningún `forms.py` propio de hoy importa un
+        formulario de otra app (verificado con grep), así que quitar el filtro deja los 205
+        tests de `kcalibra` en verde — el hueco no muerde en el árbol real todavía."""
+        class _FormularioDefinidoEnOtroSitio(forms.Form):
+            campo_ajeno = forms.CharField(help_text="ayuda de un formulario de OTRA app")
+
+        _FormularioDefinidoEnOtroSitio.__module__ = "app_h37q_definidora.forms"
+
+        modulo_que_lo_importa = mock.Mock()
+        modulo_que_lo_importa.__name__ = "app_h37q_importadora.forms"
+        modulo_que_lo_importa.FormularioImportado = _FormularioDefinidoEnOtroSitio
+
+        app_config_de_prueba = mock.Mock()
+        app_config_de_prueba.name = "app_h37q_importadora"
+
+        with mock.patch(
+            "kcalibra.tests_pantallas_del_proyecto.apps.get_app_configs",
+            return_value=[app_config_de_prueba],
+        ), mock.patch(
+            "kcalibra.tests_pantallas_del_proyecto.import_module",
+            return_value=modulo_que_lo_importa,
+        ):
+            declarados = _campos_con_help_text_declarados_en_los_formularios_propios()
+        self.assertEqual(
+            declarados, set(),
+            "un formulario IMPORTADO (definido en `app_h37q_definidora.forms`, no en el "
+            "módulo que lo importa) se contó como propio de `app_h37q_importadora`: el "
+            "filtro `obj.__module__ == modulo.__name__` se ha perdido",
+        )
+
     def test_todo_campo_con_widget_pintado_pinta_su_ayuda_por_la_via_canonica_o_esta_eximido(self):
         """H22 (revisión 12 de la 059, BLOQUEANTE) — el trinquete de POBLACIÓN que le faltaba al
         filtro `_campos_pintados_de_help_text` (O34, ver su docstring): decide "pintado" por el
@@ -3021,6 +3281,35 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "rama — R6 no promete nada sobre un campo que nadie ve",
         )
 
+    def test_mutacion_el_help_text_escapado_no_se_confunde_con_el_texto_crudo(self):
+        """H37-J (vuelta 20 de la 059, BLOQUEANTE) —
+        `_campos_con_widget_pintado_y_ayuda_no_canonica` compara `escape(campo.help_text)`
+        contra el HTML, no el texto crudo: lo que `{{ field.help_text }}` escribe de verdad es
+        auto-escapado (sin `|safe` en ninguna plantilla, verificado). Medido por el revisor
+        (Revisión 16, D3): quitar `escape(...)` deja los 205 tests de `kcalibra` en verde —
+        porque ninguna plantilla real de hoy tiene un `help_text` con un carácter que el
+        escapado transforme. Con un `help_text` que lleva un `&` (HTML válido, cualquiera lo
+        escribiría), el HTML renderizado trae `&amp;`, no `&` a secas: comparar contra el
+        texto crudo declara la ayuda «no pintada por la vía canónica» cuando SÍ lo está —
+        falso ROJO sobre marcado legítimo."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="Sal & pimienta, a tu gusto")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        pintado_por_la_via_canonica = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos,
+            f'<input type="text" name="{campo.html_name}">'
+            f"<p>{escape(campo.help_text)}</p>",
+        )
+        self.assertEqual(
+            pintado_por_la_via_canonica, [],
+            "un help_text con un carácter especial (&), pintado ESCAPADO — la vía canónica de "
+            "verdad, letra a letra — se marcó como NO canónico: la comparación dejó de "
+            "escapar el help_text antes de buscarlo en el HTML",
+        )
+
     def test_mutacion_un_name_con_comillas_simples_se_pone_rojo(self):
         """H26 (revisión 13 de la 059, BLOQUEANTE) — la versión anterior de
         `_campo_esta_pintado_por_su_widget` era `f'name="{campo.html_name}"' in contenido`: fija
@@ -3073,6 +3362,29 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
             "un widget pintado con name=x/> (sin comillas, sin espacio antes de la barra de "
             "autocierre) no se detectó como pintado: el delimitador de "
             "`_NOMBRE_DE_WIDGET_EN_HTML_RE` volvió a excluir `/`",
+        )
+
+    def test_mutacion_un_name_con_espacios_alrededor_del_igual_se_pone_rojo(self):
+        """H37-B (vuelta 20 de la 059, BLOQUEANTE) — H26 cerró las comillas (`name='…'`) y O44
+        cerró la barra de autocierre pegada (`name=x/>`), pero ninguna de las dos cerró el
+        ESPACIO alrededor del `=` (`name = "x"`, HTML igualmente válido: el navegador lo
+        interpreta exactamente igual que `name="x"`). Medido por el revisor (Revisión 16, D3):
+        revertir `name\\s*=\\s*` a `name=` deja los 205 tests de `kcalibra` en verde."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="ayuda con una palabra clave")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        no_canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos,
+            f'<input type="text" name = "{campo.html_name}">'
+            "<p>ayuda con una <strong>palabra</strong> clave</p>",
+        )
+        self.assertEqual(
+            [c.name for _, c in no_canonico], ["campo"],
+            'un widget pintado con espacios alrededor del `=` (name = "x") no se detectó como '
+            "pintado: `_NOMBRE_DE_WIDGET_EN_HTML_RE` volvió a exigir `name=` pegado, sin espacio",
         )
 
     def test_mutacion_un_widget_compuesto_pintado_se_pone_rojo(self):
@@ -3468,6 +3780,67 @@ class R7_LosBotonesRedondosLlevanAAlgunSitioTests(_ConLaAppEnteraYSusDatos):
                 self, html_con_x_data_renombrado, _es_disparador_de_menu_redondo,
                 _es_menu_redondo_abierto, "abierto",
             )
+
+    def test_mutacion_el_role_de_menu_se_normaliza_antes_de_comparar(self):
+        """H37-E/F (vuelta 20 de la 059, BLOQUEANTE) — `_es_boton_o_menu_redondo` tiene un
+        docstring de once líneas explicando que un token accidental no puede ser PUERTA DE
+        ENTRADA al barrido de R7… y sus dos hermanas, `_es_menu_redondo_abierto` e
+        `_es_item_de_menu`, deciden la pertenencia al barrido con una comparación EXACTA de
+        cadena —sin `.strip().lower()`— que nadie ejercitaba. Medido por el revisor
+        (Revisión 16, D3): revertir cualquiera de las dos normalizaciones deja los 205 tests
+        de `kcalibra` en verde. Con `role="Menu"` (mayúscula) o `role=" menu "` (espacio
+        suelto) —los dos HTML igual de válidos, el navegador los trata idénticos— el menú
+        entero desaparecía del barrido de R7 en silencio."""
+        for role_de_menu in ("Menu", " menu ", "MENU", "menu"):
+            with self.subTest(role=repr(role_de_menu)):
+                self.assertTrue(
+                    _es_menu_redondo_abierto("div", {"role": role_de_menu}),
+                    f"role={role_de_menu!r} no se reconoció como el menú abierto: la "
+                    f"normalización `.strip().lower()` de `_es_menu_redondo_abierto` se ha "
+                    f"perdido",
+                )
+        for role_de_item in ("MenuItem", " menuitem ", "MENUITEM", "menuitem"):
+            with self.subTest(role=repr(role_de_item)):
+                self.assertTrue(
+                    _es_item_de_menu("a", {"role": role_de_item}),
+                    f"role={role_de_item!r} no se reconoció como opción de menú: la "
+                    f"normalización `.strip().lower()` de `_es_item_de_menu` se ha perdido",
+                )
+
+    def test_mutacion_un_data_id_no_se_confunde_con_el_id_real_del_destino(self):
+        """H37-G (vuelta 20 de la 059, BLOQUEANTE) — H26 sin terminar, la mitad que quedaba: la
+        lectura del destino de un ancla interna tiene que preguntar por el ATRIBUTO `id`
+        parseado (`elementos_con_texto(...).get("id") == destino`), no por una SUBCADENA
+        fija (`f'id="{destino}"' in contenido`) — un `data-id="destino"` (atributo legítimo y
+        distinto, no el `id` del elemento) CONTIENE esa subcadena entera. Medido por el
+        revisor (Revisión 16, D3): revertir a la lectura por subcadena deja los 205 tests de
+        `kcalibra` en verde — falso VERDE sobre un botón que en realidad no lleva a ningún
+        sitio."""
+        html_con_data_id_ajeno = (
+            '<a href="#destino" aria-label="x" class="pointer-events-auto flex h-14 w-14 '
+            'items-center justify-center rounded-pastilla bg-tinta text-white shadow-lg '
+            'active:scale-95">x</a>'
+            '<div data-id="destino">esto NO es el id del destino, es otro atributo</div>'
+        )
+        encontrados = elementos_con_texto(html_con_data_id_ajeno, _es_boton_o_menu_redondo)
+        self.assertEqual(
+            len(encontrados), 1,
+            "la firma no reconoció el marcado REAL de boton_redondo: el mutante no probaría nada",
+        )
+        attrs, _texto_visible = encontrados[0]
+        self.assertEqual(
+            _destino_de_ancla_interna_no_existe(html_con_data_id_ajeno, attrs),
+            "destino",
+            'un `data-id="destino"` (no el `id` real de ningún elemento) hizo pasar el ancla '
+            "«#destino» como existente: la lectura del destino volvió a ser una subcadena, no "
+            "el atributo `id` parseado",
+        )
+        # Y el control: con un `id="destino"` DE VERDAD en la página, el ancla sí existe.
+        html_con_id_real = html_con_data_id_ajeno + '<div id="destino"></div>'
+        self.assertEqual(
+            _destino_de_ancla_interna_no_existe(html_con_id_real, attrs), "",
+            "con un id=\"destino\" real en la página, el ancla debía darse por existente",
+        )
 
 
 # ------------------------------------------------------------------------------------------ #
