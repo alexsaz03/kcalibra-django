@@ -607,17 +607,171 @@ def _etiquetas_de_cierre_opcional_clasificadas(clasificadas=None, cierre_opciona
 # BLOQUEANTE: la altura de `perfiles/ver.html` se quedaba fuera de su `<p class="cifra">` con la
 # suite entera en verde).
 #
-# `_CIERRAN_UN_PARRAFO_DE_HTML` es el universo EXTERNO correcto: la lista LITERAL del HTML Living
-# Standard §13.2.6.4.7 ("A start tag whose tag name is one of…"), hermana de `_VACIAS_DE_HTML` y
-# `_CIERRE_OPCIONAL_DE_HTML` — no una lista que le convino a otro trinquete. Incluye los
-# obsoletos que el estándar sigue tratando igual (`center`, `dir`, `listing`, `plaintext`, `xmp`).
+# `_CIERRAN_UN_PARRAFO_DE_HTML` es el universo EXTERNO correcto: hermana de `_VACIAS_DE_HTML` y
+# `_CIERRE_OPCIONAL_DE_HTML` — no una lista que le convino a otro trinquete.
+#
+# H31 (revisión 15 de la 059, BLOQUEANTE) — esta constante se declaró, TRES veces y con esas
+# palabras, "la lista LITERAL del HTML Living Standard §13.2.6.4.7". No lo era: quien la escribió
+# transcribió a mano el bloque grande del estándar (`address…ul`) y dio por transcritas las demás
+# reglas de *close a p element*, que están en párrafos aparte — faltaban `li`, `dd`, `dt` y
+# `search`, y las tres primeras estaban en `_ETIQUETAS_DE_BLOQUE` hasta la vuelta anterior a ésta,
+# así que fue además una REGRESIÓN (se cazaban antes de que naciera esta constante). El defecto de
+# fondo no era "faltan cuatro etiquetas": era que el conjunto colgaba de que un humano recordara
+# bien el estándar, sin nada que lo comprobara. Por eso esta constante YA NO se declara "literal
+# del estándar" de palabra: se ACREDITA, con un test permanente
+# (`LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`, más abajo), contra un navegador
+# de verdad (Chromium vía Playwright) — para cada etiqueta candidata, la verdad es lo que el DOM
+# hace con `<p>x<ETIQUETA>y</p>`, no lo que alguien recuerde. Ese test es el que impide que esta
+# lista se vuelva a desviar del estándar en silencio; el comentario de aquí ya no es la autoridad.
+# Incluye los obsoletos que el estándar sigue tratando igual (`center`, `dir`, `listing`,
+# `plaintext`, `xmp`).
 _CIERRAN_UN_PARRAFO_DE_HTML = frozenset({
-    "address", "article", "aside", "blockquote", "center", "details", "dialog", "dir", "div",
-    "dl", "fieldset", "figcaption", "figure", "footer", "form",
+    "address", "article", "aside", "blockquote", "center", "dd", "details", "dialog", "dir",
+    "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
     "h1", "h2", "h3", "h4", "h5", "h6",
-    "header", "hgroup", "hr", "listing", "main", "menu", "nav", "ol", "p", "plaintext", "pre",
-    "section", "summary", "table", "ul", "xmp",
+    "header", "hgroup", "hr", "li", "listing", "main", "menu", "nav", "ol", "p", "plaintext",
+    "pre", "search", "section", "summary", "table", "ul", "xmp",
 })
+
+
+# H31 (revisión 15 de la 059, BLOQUEANTE) — la sonda contra el navegador de abajo necesita un
+# UNIVERSO de etiquetas candidatas a comprobar, y construirlo escribiendo una lista nueva a mano
+# sería repetir exactamente el error que abrió H31 (un conjunto que sale de lo que alguien
+# recuerda). En vez de eso: la base es la UNIÓN de las cinco listas que el proyecto YA mantiene
+# (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`, `_VACIAS_DE_HTML`, `_CIERRE_OPCIONAL_DE_HTML`,
+# `_CIERRAN_UN_PARRAFO_DE_HTML`) — así el propio caso de H31 (`li`/`dd`/`dt`, ya clasificadas en
+# otra lista) queda cubierto sin transcribir nada nuevo. Y como esa unión sólo trae lo que el
+# ÁRBOL DE HOY usa (H12: ninguna plantilla usa `search` todavía), se amplía a mano con el resto
+# de "contenido de flujo" del HTML Living Standard — `search`, el elemento concreto de H31,
+# incluido. Que esta ampliación no sea perfectamente exhaustiva es un riesgo ACOTADO y no la
+# misma clase de fallo que H31: una etiqueta que falte aquí queda SIN EJERCITAR (igual que hoy,
+# ni mejor ni peor), nunca produce un veredicto INCORRECTO sobre lo que sí se ejercita — al
+# contrario que `_CIERRAN_UN_PARRAFO_DE_HTML` antes de este arreglo, donde faltar de la lista
+# significaba "el código actúa como si no cerrara, y nada lo comprueba nunca".
+_ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA = frozenset({
+    # Singletons de la estructura del documento: sueltas dentro de un `<p>`, el parser FUSIONA
+    # sus atributos con el `<html>`/`<head>`/`<body>` implícito que ya existe, o las descarta
+    # (`frameset`/`frame`, obsoletas fuera de un documento de frames) — la sonda las vería "fuera
+    # del párrafo" por ese motivo, no por §13.2.6.4.7. Medido con Playwright, `.runtime/v19/`.
+    "html", "head", "body", "frameset", "frame",
+    # Sub-estructura de `<table>`: sueltas fuera de una tabla, el parser las DESCARTA enteras (ni
+    # quedan en el documento) — la sonda las vería igual de "fuera del párrafo" sin que eso diga
+    # nada sobre si cierran un `<p>`. Medido con Playwright, `.runtime/v19/`.
+    "col", "colgroup", "caption", "thead", "tbody", "tfoot", "tr", "td", "th",
+})
+_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR = frozenset(
+    (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
+     | _CIERRAN_UN_PARRAFO_DE_HTML)
+    - _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA
+    | {
+        "search", "math", "audio", "canvas", "cite", "data", "datalist", "del", "iframe", "ins",
+        "kbd", "legend", "map", "mark", "meter", "noscript", "object", "output", "picture",
+        "progress", "q", "ruby", "s", "samp", "slot", "style", "time", "title", "u", "var",
+        "video", "bdi", "bdo", "big", "strike", "tt", "marquee", "nobr", "noembed",
+    }
+)
+
+
+def _cierra_un_parrafo_segun_el_navegador(navegador, etiqueta):
+    """H31 — le pregunta a un Chromium DE VERDAD (Playwright) si abrir `etiqueta` mientras hay un
+    `<p>` abierto lo cierra: mete la etiqueta candidata dentro de un `<p>`, con un hijo marcado
+    por `id`, y comprueba si ese hijo sigue siendo descendiente del `<p>` una vez que el navegador
+    ha terminado de parsear. Si el navegador lo sacó fuera (autocierre del `<p>`), `etiqueta`
+    cierra un párrafo; si lo dejó dentro, no. Sin HTML a mano de una plantilla real: la pregunta
+    es sobre la etiqueta sola, aislada, que es justo lo que `_CIERRAN_UN_PARRAFO_DE_HTML`
+    necesita responder.
+
+    **El `<!DOCTYPE html>` no es decorativo aquí**: sin él, `set_content` renderiza en modo
+    QUIRKS (medido, `.runtime/v19/table-sin-doctype-vs-con-doctype.txt`) y `<table>` dejó de
+    cerrar el `<p>` — el estándar hace esa regla CONDICIONAL a que el documento no esté en modo
+    quirks (§13.2.6.4.7: "if the Document is not set to quirks mode"). Toda plantilla real del
+    proyecto lleva `<!DOCTYPE html>` (`templates/base.html:2`), así que probar sin él habría sido
+    exactamente el defecto de esta unidad otra vez: medir una condición que no es la real."""
+    pagina = navegador.new_page()
+    try:
+        pagina.set_content(
+            f'<!DOCTYPE html><div><p class="sonda">antes<{etiqueta} id="marca">x</{etiqueta}>'
+            f'despues</p></div>',
+            timeout=5000,
+        )
+        dentro_del_parrafo = pagina.eval_on_selector(
+            "body",
+            "b => { const p = b.querySelector('p.sonda'); "
+            "return p ? !!p.querySelector('#marca') : null; }",
+        )
+    finally:
+        pagina.close()
+    return not dentro_del_parrafo
+
+
+class LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests(SimpleTestCase):
+    """H31 (revisión 15 de la 059, BLOQUEANTE) — `_CIERRAN_UN_PARRAFO_DE_HTML` se declaró TRES
+    veces "la lista LITERAL del HTML Living Standard §13.2.6.4.7" sin serlo: faltaban `li`, `dd`,
+    `dt` y `search` (las tres primeras, además, una REGRESIÓN — se cazaban antes de que naciera
+    esta constante, vía `_ETIQUETAS_DE_BLOQUE`). El defecto de fondo no era la lista incompleta:
+    era que el conjunto colgaba de lo que un humano recordara del estándar, sin nada que lo
+    comprobara — y "añadir las cuatro que faltan" habría cerrado el CASO sin cerrar la FAMILIA.
+
+    Este test cierra la familia: para cada etiqueta candidata
+    (`_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`, arriba) le pregunta a un Chromium de verdad si
+    cierra un `<p>` abierto, y compara la respuesta con la constante. La autoridad deja de ser la
+    memoria de quien la escribió — es lo que el navegador hace.
+
+    **Deliberado**: si Playwright no está instalado, o lo está pero no hay Chromium descargado
+    (`playwright install chromium`), este test NO se salta en silencio — `setUpClass` revienta
+    con un mensaje que lo dice, y la suite se pone ROJA. Un test que dependa de un navegador y se
+    limite a `skipTest` en su ausencia es la 24ª cara de esta misma casa
+    (docs/conocimiento/tests-que-no-fallan-cuando-deben.md — una red inmedible dada por buena):
+    aquí la ausencia del navegador es, ella misma, un fallo del entorno que hay que arreglar, no
+    un motivo para callar. Que sea lento (lanza un Chromium y abre ~100 páginas) es aceptable;
+    que mienta por ausencia no."""
+
+    databases = set()
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "Playwright no está instalado en este entorno (`pip install playwright`). H31, "
+                "R5 y R9 exigen acreditar `_CIERRAN_UN_PARRAFO_DE_HTML` contra un navegador de "
+                "verdad — este test no puede pasar en verde por no tener con qué comprobarlo. "
+                "Instala Playwright y su Chromium (`playwright install chromium`); no lo saltes."
+            ) from exc
+        cls._playwright = sync_playwright().start()
+        try:
+            cls._navegador = cls._playwright.chromium.launch()
+        except Exception as exc:
+            cls._playwright.stop()
+            raise RuntimeError(
+                "Playwright está instalado pero no pudo lanzar Chromium — probablemente falta "
+                "`playwright install chromium` en este entorno. Mismo motivo que arriba: este "
+                "test no puede pasar en verde sin comprobar nada de verdad."
+            ) from exc
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._navegador.close()
+        cls._playwright.stop()
+        super().tearDownClass()
+
+    def test_la_constante_coincide_elemento_a_elemento_con_el_navegador(self):
+        descuadres = []
+        for etiqueta in sorted(_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR):
+            cierra_en_navegador = _cierra_un_parrafo_segun_el_navegador(self._navegador, etiqueta)
+            cierra_en_la_constante = etiqueta in _CIERRAN_UN_PARRAFO_DE_HTML
+            if cierra_en_navegador != cierra_en_la_constante:
+                descuadres.append(
+                    f"<{etiqueta}>: el navegador dice cierra_un_parrafo={cierra_en_navegador}, "
+                    f"la constante dice {cierra_en_la_constante}"
+                )
+        self.assertEqual(
+            descuadres, [],
+            f"`_CIERRAN_UN_PARRAFO_DE_HTML` no coincide con lo que un Chromium de verdad hace "
+            f"— la lista no está acreditada: {descuadres}",
+        )
 
 
 class _ContadorDeAperturasYCierres(HTMLParser):
@@ -636,10 +790,11 @@ class _ContadorDeAperturasYCierres(HTMLParser):
         que el navegador SÍ cierra sola —una inline sin su propio cierre, `<span>x` sin
         `</span>`— puede quedar por encima suyo, y también una etiqueta VACÍA como `<hr>`: H28,
         vuelta 18) cuando se abre una etiqueta que provoca el *implied end tag* de `<p>`
-        (`_CIERRAN_UN_PARRAFO_DE_HTML`, la lista LITERAL del HTML Living Standard §13.2.6.4.7 —
-        universo externo, no `_ETIQUETAS_DE_BLOQUE`: esa lista nació para clasificar "qué usa el
-        árbol", no "qué cierra un `<p>`", y se cruzan mal por los dos lados — H27/H28, vuelta 18,
-        revisión 14) — se cierra el `<p>` Y todo lo que quedara abierto por encima de él, que es
+        (`_CIERRAN_UN_PARRAFO_DE_HTML`, acreditada contra un navegador de verdad — ver su
+        comentario más arriba y H31, revisión 15 — universo externo, no `_ETIQUETAS_DE_BLOQUE`:
+        esa lista nació para clasificar "qué usa el árbol", no "qué cierra un `<p>`", y se cruzan
+        mal por los dos lados — H27/H28, vuelta 18, revisión 14) — se cierra el `<p>` Y todo lo
+        que quedara abierto por encima de él, que es
         lo que hace el navegador. Esto caza, con el MISMO mecanismo, el hermano (`<p>Uno<p>Dos`),
         el hijo de bloque (`<p>Resumen<dl>`) y el hijo VACÍO que además cierra por sí mismo
         (`<p>Resumen<hr>` — H28: `<hr>` está en `_CIERRAN_UN_PARRAFO_DE_HTML` Y en
@@ -970,6 +1125,76 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
             "sólo mirar la PILA ENTERA (no la cima) sigue cazando este caso",
         )
 
+    def test_mutacion_un_hr_suelto_dentro_de_un_parrafo_lo_desplaza_pone_la_suite_roja(self):
+        """H32 (revisión 15 de la 059, BLOQUEANTE) — H30 cerró el caso X, pero la propia vuelta
+        que lo cerró (18ª) midió los casos L/M/O/P/S del arreglo de H27/H28 en una SONDA de usar
+        y tirar (`.runtime/v18/probe-despues-del-arreglo.txt`) y no los convirtió en test: el
+        enunciado exacto de H30, cometido otra vez sobre el arreglo nuevo. Medido por el revisor
+        (Revisión 15, D2): revertir el ORDEN entre la higiene de la pila y la regla (1) —volver a
+        hacer `return` antes de evaluar si `etiqueta` cierra un `<p>`, el defecto EXACTO de
+        H28— deja las 926 en VERDE, porque nada ejercitaba ya ese orden. Éste es el caso L de la
+        sonda, hecho permanente: un `<hr>` SOLO (sin otro hijo de bloque detrás) tiene que
+        desplazar el `<p>` — si el `return` vuelve delante, `<hr>` nunca llega a la regla (1) y
+        este test se pone rojo."""
+        desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            '<div><p class="cifra">Resumen<hr>Altura: <span>180</span> cm</p></div>',
+            cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            desplazado, ["p"],
+            "un <p> con un <hr> suelto dentro (sin otro hijo de bloque) no apareció como "
+            "desplazado: o `_CIERRAN_UN_PARRAFO_DE_HTML` dejó de traer `hr`, o la higiene de la "
+            "pila vuelve a evaluarse ANTES que la regla (1) — el defecto exacto de H28",
+        )
+
+    def test_mutacion_una_etiqueta_de_solo_cierran_un_parrafo_desplaza_aunque_no_sea_de_bloque(self):
+        """H32 (revisión 15 de la 059, BLOQUEANTE) — el caso I de la sonda de la vuelta 18, hecho
+        permanente: `<table>` está en `_CIERRAN_UN_PARRAFO_DE_HTML` pero NUNCA estuvo en
+        `_ETIQUETAS_DE_BLOQUE` (H12 la clasifica para "qué usa el árbol", no para "qué cierra un
+        `<p>`" — ninguna plantilla propia usa `<table>` hoy). Medido por el revisor: revertir la
+        regla (1) de `etiqueta in _CIERRAN_UN_PARRAFO_DE_HTML` a `etiqueta in
+        _ETIQUETAS_DE_BLOQUE` —el cambio ENTERO de H27/H28, el corazón de la 18ª vuelta— deja las
+        926 en VERDE, porque ningún test distinguía las dos listas por el lado de lo que SÓLO
+        está en la nueva. Este test sí: si la regla (1) vuelve a mirar `_ETIQUETAS_DE_BLOQUE`,
+        `<table>` deja de disparar la regla y este test se pone rojo."""
+        desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            '<div><p class="cifra">Resumen<table><tr><td>180 cm</td></tr></table></p></div>',
+            cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            desplazado, ["p"],
+            "un <p> con un <table> dentro no apareció como desplazado: la regla (1) volvió a "
+            "mirar `_ETIQUETAS_DE_BLOQUE` (que nunca trajo `table`) en vez de "
+            "`_CIERRAN_UN_PARRAFO_DE_HTML`",
+        )
+
+    def test_svg_script_y_template_legitimos_dentro_de_un_parrafo_no_son_falso_rojo(self):
+        """H32 (revisión 15 de la 059, BLOQUEANTE) — los casos M/O/P de la sonda de la vuelta 18,
+        hechos permanentes, por el lado CONTRARIO al test de arriba: `svg`/`script`/`template`
+        están en `_ETIQUETAS_DE_BLOQUE` (H14: ahí se quedan, los necesita el mecanismo de
+        "pega/separa" texto) pero NO en `_CIERRAN_UN_PARRAFO_DE_HTML` — son contenido de
+        frase/metadatos LEGAL dentro de un `<p>` (H27). Si la regla (1) vuelve a mirar
+        `_ETIQUETAS_DE_BLOQUE`, las tres pasan a desplazar el `<p>` de golpe: un falso ROJO sobre
+        marcado legítimo como el de `despensa/ver.html:27` (un icono `{% include
+        "_iconos.html#…" %}` dentro de un `<p>` real)."""
+        for etiqueta, contenido in (
+            ("svg", '<svg viewBox="0 0 8 8"><path d="M0 0"></path></svg>'),
+            ("script", '<script type="application/json">{}</script>'),
+            ("template", "<template><span>x</span></template>"),
+        ):
+            with self.subTest(etiqueta=etiqueta):
+                desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+                    f'<div><p class="cifra">Resumen{contenido}Altura: '
+                    f'<span>180</span> cm</p></div>',
+                    cierre_opcional={"p"},
+                )
+                self.assertEqual(
+                    desplazado, [],
+                    f"un <p> con un <{etiqueta}> LEGÍTIMO dentro apareció como desplazado: la "
+                    f"regla (1) volvió a mirar `_ETIQUETAS_DE_BLOQUE` (que sí trae {etiqueta}) "
+                    f"en vez de `_CIERRAN_UN_PARRAFO_DE_HTML`",
+                )
+
     def test_un_hijo_de_bloque_legitimo_dentro_de_li_no_es_falso_rojo(self):
         """H23 — el control de que restringir la regla (1) del desplazamiento a `<p>` (ver el
         docstring de `_ContadorDeAperturasYCierres`) no abre un falso rojo sobre marcado
@@ -994,6 +1219,59 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
             hermano_sin_cerrar, ["li"],
             "un <li> sin cerrar seguido de un hermano <li> tenía que seguir cazado por la "
             "regla (2), aunque la (1) no se generalice a <li>",
+        )
+
+    def test_mutacion_un_p_ajeno_a_la_llamada_no_contamina_el_barrido_de_otra_etiqueta(self):
+        """H33 (vuelta 19 de la 059, descubierto al buscar OTRO predicado revertible con la
+        suite en verde — el mismo encargo de H32). `"p" in self.cierre_opcional` (ver el
+        docstring de `_ContadorDeAperturasYCierres`, guarda de la regla (1)) no está para evitar
+        un falso ROJO sobre `<li>`: los 203 tests del módulo siguen en verde si se quita
+        (medido). Está para que la regla (1) no CONTAMINE una llamada que no pidió vigilar `<p>`
+        en absoluto: sin la guarda, un `<p>` abierto y sin cerrar en el documento (algo que a
+        ESTA llamada no le importa: sólo le pidieron `<li>`) dispara igual la regla (1) en cuanto
+        se abre cualquier etiqueta de `_CIERRAN_UN_PARRAFO_DE_HTML` (aquí, el `<div>` LEGÍTIMO
+        dentro del `<li>`, el mismo del test de arriba) y el `self.pila.pop()` final de la regla
+        (1) mete `"p"` en `self.desplazadas` SIN comprobar si `"p"` está en `cierre_opcional` —
+        `_etiquetas_de_cierre_opcional_sin_cerrar` no vuelve a filtrar por `cierre_opcional` al
+        devolver, así que `"p"` sale en el resultado de una llamada que sólo preguntaba por
+        `<li>`. Ninguna llamada real de hoy mezcla un `<p>` sin cerrar con `cierre_opcional`
+        distinto de `{"p", ...}` (el único sitio que usa un subconjunto propio es el test de
+        arriba, y no tiene ningún `<p>` en su HTML), así que esto no muerde en el árbol real
+        todavía — pero es exactamente la misma familia de fallo que H23/H25/H30/H32: un
+        predicado portante sin su rojo."""
+        contaminado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<p>Resumen<li><div>contenido de sobra</div></li></p>",
+            cierre_opcional={"li"},
+        )
+        self.assertEqual(
+            contaminado, [],
+            "una llamada que sólo pidió vigilar <li> devolvió <p> como desplazado: la regla (1) "
+            "se disparó para una etiqueta (<p>) ajena a `cierre_opcional`, o la guarda "
+            "`\"p\" in self.cierre_opcional` se ha perdido",
+        )
+
+    def test_mutacion_un_inline_ajeno_a_la_llamada_no_contamina_el_barrido_de_otra_etiqueta(self):
+        """H34 (vuelta 19 de la 059, descubierto con el MISMO método que H33: revertir a mano
+        cada predicado portante y mirar si las 203/204 siguen en verde). `handle_endtag` (regla
+        (2)) filtra `if cima in self.cierre_opcional` antes de marcar `cima` como desplazada —
+        sin ese filtro, los 204 tests del módulo siguen en verde (medido). El filtro evita que
+        el cierre de un ANCESTRO arrastre a `self.desplazadas` cualquier etiqueta que quedara
+        sin cerrar por debajo, aunque esa etiqueta no sea de las que `cierre_opcional` pidió
+        vigilar — aquí, un `<span>` sin su `</span>`, atrapado por el `</ul>` que cierra el `<li>`
+        de verdad. `_etiquetas_de_cierre_opcional_sin_cerrar` no vuelve a filtrar por
+        `cierre_opcional` al devolver (mismo mecanismo que H33), así que sin el filtro un
+        `<span>` sin cerrar se coló en el barrido de `<li>`. Ningún caso real de hoy deja un
+        INLINE sin cerrar justo antes de que se cierre su `<ul>`/`<ol>`/`<dl>`, así que no muerde
+        en el árbol todavía — misma familia que H23/H25/H30/H32/H33: un predicado portante sin
+        su rojo."""
+        contaminado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            "<ul><li>Uno<span>sin cerrar</ul>", cierre_opcional={"li"},
+        )
+        self.assertEqual(
+            contaminado, ["li"],
+            "un <span> sin cerrar, atrapado por el cierre del <ul>, apareció en el barrido de "
+            "<li>: la regla (2) se disparó para una etiqueta (<span>) ajena a `cierre_opcional`, "
+            "o el filtro `cima in self.cierre_opcional` de `handle_endtag` se ha perdido",
         )
 
 
@@ -2769,6 +3047,33 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
                     f"un widget pintado con name={apertura}...{cierre} no se detectó como "
                     f"pintado: el trinquete fija un tipo de comilla",
                 )
+
+    def test_mutacion_un_name_sin_comillas_con_autocierre_pegado_se_pone_rojo(self):
+        """H32/O44 (revisión 14 de la 059, MENOR; permanente desde la revisión 15) — el patrón
+        original no reconocía `name=x/>`: sin comillas Y con la barra de autocierre pegada al
+        valor, sin espacio delante. La vuelta 18 amplió el delimitador de cierre de
+        `["\\'\\s>]` a `["\\'\\s/>]` y lo midió en una sonda de usar y tirar
+        (`.runtime/v18/probe-*`) sin dejar test permanente — exactamente el enunciado de H30,
+        repetido sobre este arreglo (H32, revisión 15): revertir el delimitador deja las 926 en
+        verde. Este test lo fija: un `<input name=campo/>` sin comillas y sin espacio antes de la
+        `/` tiene que seguir detectándose como pintado."""
+        class _FormularioDePrueba(forms.Form):
+            campo = forms.CharField(help_text="ayuda con una palabra clave")
+
+        campo = _FormularioDePrueba()["campo"]
+        campos = [("_FormularioDePrueba", campo)]
+
+        no_canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            campos,
+            f"<input type=text name={campo.html_name}/>"
+            "<p>ayuda con una <strong>palabra</strong> clave</p>",
+        )
+        self.assertEqual(
+            [c.name for _, c in no_canonico], ["campo"],
+            "un widget pintado con name=x/> (sin comillas, sin espacio antes de la barra de "
+            "autocierre) no se detectó como pintado: el delimitador de "
+            "`_NOMBRE_DE_WIDGET_EN_HTML_RE` volvió a excluir `/`",
+        )
 
     def test_mutacion_un_widget_compuesto_pintado_se_pone_rojo(self):
         """H26 (revisión 13 de la 059, BLOQUEANTE) — la versión anterior también daba por hecho
