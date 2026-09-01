@@ -593,6 +593,33 @@ def _etiquetas_de_cierre_opcional_clasificadas(clasificadas=None, cierre_opciona
     return cierre_opcional & clasificadas
 
 
+# H27/H28 (vuelta 18 de la 059, revisión 14) — hasta esta vuelta, la regla (1) de
+# `_ContadorDeAperturasYCierres` preguntaba `etiqueta in _ETIQUETAS_DE_BLOQUE`
+# (`kcalibra/tests_pantallas.py`). Esa lista NO es el universo de lo que pregunta la regla: nació
+# para clasificar "qué etiquetas usa el árbol como bloque" (H12), no "qué etiquetas provocan el
+# *implied end tag* de `<p>`" — y las dos preguntas se cruzan mal por los dos lados. Trae `svg`,
+# `script` y `template`, que son contenido de frase/metadatos LEGAL dentro de un `<p>` y que
+# ningún navegador usa para cerrarlo (H27, falso ROJO: un `{% include "_iconos.html#…" %}` dentro
+# de un `<p>` real ponía la suite roja con el mensaje equivocado). Y le falta `hr`, que SÍ cierra
+# un `<p>` (§13.2.6.4.7) y que además es una etiqueta VACÍA: como la regla (1) sólo se evaluaba
+# tras el `return` de "no apilar lo que HTML no cierra", clasificar `hr` como bloque no bastaba
+# para que la regla (1) llegara a verla — indetectable por construcción (H28, falso VERDE
+# BLOQUEANTE: la altura de `perfiles/ver.html` se quedaba fuera de su `<p class="cifra">` con la
+# suite entera en verde).
+#
+# `_CIERRAN_UN_PARRAFO_DE_HTML` es el universo EXTERNO correcto: la lista LITERAL del HTML Living
+# Standard §13.2.6.4.7 ("A start tag whose tag name is one of…"), hermana de `_VACIAS_DE_HTML` y
+# `_CIERRE_OPCIONAL_DE_HTML` — no una lista que le convino a otro trinquete. Incluye los
+# obsoletos que el estándar sigue tratando igual (`center`, `dir`, `listing`, `plaintext`, `xmp`).
+_CIERRAN_UN_PARRAFO_DE_HTML = frozenset({
+    "address", "article", "aside", "blockquote", "center", "details", "dialog", "dir", "div",
+    "dl", "fieldset", "figcaption", "figure", "footer", "form",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "header", "hgroup", "hr", "listing", "main", "menu", "nav", "ol", "p", "plaintext", "pre",
+    "section", "summary", "table", "ul", "xmp",
+})
+
+
 class _ContadorDeAperturasYCierres(HTMLParser):
     """H20/H23/H25 — lleva una PILA de lo que está abierto, no un CONTEO. Un conteo (aperturas ==
     cierres) sólo caza el cierre OMITIDO (`<p>Uno<p>Dos</p>`: 2 aperturas, 1 cierre — descuadra):
@@ -607,16 +634,17 @@ class _ContadorDeAperturasYCierres(HTMLParser):
     clasifica:
     (1) hay un `<p>` ABIERTO EN ALGÚN PUNTO DE LA PILA (no sólo en la cima: cualquier etiqueta
         que el navegador SÍ cierra sola —una inline sin su propio cierre, `<span>x` sin
-        `</span>`— puede quedar por encima suyo) cuando se abre un hijo de bloque
-        (`_ETIQUETAS_DE_BLOQUE`: de las ocho clasificadas, `<p>` NO es el único cuyo modelo de
-        contenido no admite ningún hijo de bloque —`option`, `head` y `html` tampoco lo admiten,
-        revisión 13 D2—, pero SÍ es el único que aparece con `class="cifra"` en marcado real y
-        cuyo hijo de bloque el navegador RE-PARENTA en vez de descartar; generalizar esta regla
-        a las otras siete abre falsos rojos reales sobre el árbol, medido en revisión 13 D4) —
-        se cierra el `<p>` Y todo lo que quedara abierto por encima de él, que es lo que hace el
-        navegador. Esto caza, con el MISMO
-        mecanismo, tanto el hermano (`<p>Uno<p>Dos`, `p` ∈ `_ETIQUETAS_DE_BLOQUE`) como el hijo
-        de bloque (`<p>Resumen<dl>`), y ya no lo tapa una etiqueta vacía de por medio
+        `</span>`— puede quedar por encima suyo, y también una etiqueta VACÍA como `<hr>`: H28,
+        vuelta 18) cuando se abre una etiqueta que provoca el *implied end tag* de `<p>`
+        (`_CIERRAN_UN_PARRAFO_DE_HTML`, la lista LITERAL del HTML Living Standard §13.2.6.4.7 —
+        universo externo, no `_ETIQUETAS_DE_BLOQUE`: esa lista nació para clasificar "qué usa el
+        árbol", no "qué cierra un `<p>`", y se cruzan mal por los dos lados — H27/H28, vuelta 18,
+        revisión 14) — se cierra el `<p>` Y todo lo que quedara abierto por encima de él, que es
+        lo que hace el navegador. Esto caza, con el MISMO mecanismo, el hermano (`<p>Uno<p>Dos`),
+        el hijo de bloque (`<p>Resumen<dl>`) y el hijo VACÍO que además cierra por sí mismo
+        (`<p>Resumen<hr>` — H28: `<hr>` está en `_CIERRAN_UN_PARRAFO_DE_HTML` Y en
+        `_VACIAS_DE_HTML` a la vez, así que la regla (1) tiene que evaluarse SIEMPRE, apile o no
+        apile luego la etiqueta que la disparó), y ya no lo tapa una etiqueta vacía de por medio
         (`<p>Resumen<br><dl>` — H25, revisión 13: con la CIMA en vez de la pila entera, un
         `<br>`/`<input>`/`<wbr>` sentado encima del `<p>` bloqueaba la comparación y el `</p>`
         de después limpiaba la pila entera como si el cierre hubiera sido legítimo, `EXIT=0`
@@ -624,7 +652,8 @@ class _ContadorDeAperturasYCierres(HTMLParser):
         `li`/`dt`/`dd`/`option`/`body`/`head`/`html`: su modelo de contenido SÍ admite hijos de
         bloque sin autocerrarse (un `<li>` puede contener un `<div>` de sobra), así que
         aplicarles esta misma regla abriría falsos rojos sobre marcado legítimo (medido,
-        revisión 13, D4) — para ellos basta (2);
+        revisión 13, D4) — para ellos basta (2); y `_CIERRAN_UN_PARRAFO_DE_HTML` sólo se consulta
+        cuando `"p" in self.cierre_opcional`, así que sigue sin afectarlos;
     (2) se cierra un ANCESTRO suyo (con su propio `</etiqueta>` explícito, o al terminar el
         documento) mientras ella sigue abierta por debajo, sin que su propio cierre haya llegado
         antes — cubre el hermano de cualquiera de las ocho clasificadas (`<li>A<li>B</li>`: el
@@ -632,15 +661,14 @@ class _ContadorDeAperturasYCierres(HTMLParser):
         omitido" que el conteo ya cazaba, sin necesitar el conteo.
 
     Y una tercera cosa, que no es una regla de desplazamiento sino de POBLACIÓN de la pila
-    misma (H25): nunca se apila una etiqueta que HTML no cierra nunca
-    (`SIN_CIERRE | _VACIAS_DE_HTML` — la unión, no `SIN_CIERRE` sola: `wbr` está clasificada y
-    es vacía de HTML, pero hoy falta de `SIN_CIERRE`, ver `_es_el_hueco_h18_fuera_de_ficheros`
-    más arriba — si la regla (1) se apoyara sólo en `SIN_CIERRE`, `<wbr>` seguiría colándose
-    hasta que el padre aplique esa cura, fuera de `ficheros:` de esta unidad). Sin esto, una de
-    esas etiquetas ocupa la CIMA de la pila para siempre (nadie la desapila: no tiene cierre) y
-    tapa la regla (1) de arriba exactamente igual que la tapaba mirar sólo la cima — las dos
-    mitades del arreglo son necesarias, cada una por su lado (revisión 13, D2: ninguna de las
-    dos sola basta)."""
+    misma: una etiqueta que HTML no cierra nunca (`SIN_CIERRE | _VACIAS_DE_HTML` — la unión, no
+    `SIN_CIERRE` sola: `wbr` está clasificada y es vacía de HTML, pero hoy falta de `SIN_CIERRE`,
+    ver `_es_el_hueco_h18_fuera_de_ficheros` más arriba) no se apila. **Esto NO es necesario para
+    que la regla (1) vea el desplazamiento** (medido, revisión 14 D4 y D9: quitarlo del todo deja
+    los diez casos de control idénticos, porque la regla (1) mira la PILA ENTERA, no la cima, así
+    que una etiqueta vacía sentada encima de un `<p>` no le tapa nada) — es sólo higiene de la
+    pila, para no dejar basura sin cierre acumulándose sin motivo (una etiqueta vacía nunca es de
+    cierre opcional, así que nunca puede aparecer en `self.desplazadas` ni en el barrido final)."""
 
     def __init__(self, cierre_opcional=None):
         super().__init__(convert_charrefs=True)
@@ -651,23 +679,22 @@ class _ContadorDeAperturasYCierres(HTMLParser):
         self.desplazadas = []
 
     def handle_starttag(self, etiqueta, atributos_crudos):
-        # H25: nunca apilar lo que HTML no cierra — si no, una de estas etiquetas ocupa la cima
-        # para siempre y tapa la regla (1) de abajo (`handle_startendtag`, la implementación por
-        # defecto de `html.parser`, llama a `handle_starttag` Y a `handle_endtag`: con el
-        # `return` de aquí, una etiqueta autocerrada como `<br/>` ya no se apila ni desapila —
-        # antes de esta vuelta hacía las dos cosas, con el mismo efecto neto pero por accidente).
-        if etiqueta in SIN_CIERRE or etiqueta in _VACIAS_DE_HTML:
-            return
-        # Regla (1): sólo `<p>` — ver el porqué en el docstring de la clase. Pregunta por la
-        # PILA ENTERA (¿hay algún `<p>` abierto por debajo, no sólo en la cima?), cerrando todo
-        # lo que quedara abierto por encima de él — lo que hace el navegador.
-        if etiqueta in _ETIQUETAS_DE_BLOQUE and "p" in self.cierre_opcional and "p" in self.pila:
+        # Regla (1): ¿esta etiqueta provoca el *implied end tag* de `<p>`? (§13.2.6.4.7, ver el
+        # docstring de la clase). SIEMPRE se evalúa, apile o no apile luego `etiqueta` — `<hr>`
+        # cierra un `<p>` Y es una etiqueta vacía a la vez (H28): evaluar esto DESPUÉS de decidir
+        # si apilar dejaba a `<hr>` estructuralmente indetectable. Pregunta por la PILA ENTERA
+        # (¿hay algún `<p>` abierto por debajo, no sólo en la cima?), cerrando todo lo que
+        # quedara abierto por encima de él — lo que hace el navegador.
+        if etiqueta in _CIERRAN_UN_PARRAFO_DE_HTML and "p" in self.cierre_opcional and "p" in self.pila:
             while self.pila[-1] != "p":
                 cima = self.pila.pop()
                 if cima in self.cierre_opcional:
                     self.desplazadas.append(cima)
             self.desplazadas.append(self.pila.pop())
-        self.pila.append(etiqueta)
+        # Higiene de la pila (ver la "tercera cosa" del docstring): nunca apilar lo que HTML no
+        # cierra — si no, una de estas etiquetas ocupa la cima para siempre (nadie la desapila).
+        if etiqueta not in SIN_CIERRE and etiqueta not in _VACIAS_DE_HTML:
+            self.pila.append(etiqueta)
 
     def handle_endtag(self, etiqueta):
         # Regla (2): cualquier etiqueta de cierre opcional clasificada que quede POR DEBAJO de
@@ -918,6 +945,30 @@ class TodaEtiquetaUsadaEnElArbolEstaClasificadaTests(SimpleTestCase):
                     f"en el momento del desplazamiento, no apareció como desplazado: la regla "
                     f"(1) sigue mirando sólo la cima, o {vacia} sigue apilándose",
                 )
+
+    def test_mutacion_un_inline_sin_cerrar_entre_la_vacia_y_el_hijo_de_bloque_pone_la_suite_roja(self):
+        """H30 (revisión 14 de la 059, MEDIO) — el caso X, escrito porque NINGÚN test anterior lo
+        cubría: con `<br>`/`<input>`/`<wbr>` puestos DIRECTAMENTE sobre la cima del `<p>` (el test
+        de arriba), cualquiera de las dos mitades del arreglo de H25 —"no apilar lo vacío" o "la
+        pila ENTERA, no sólo la cima"— basta por sí sola para verlo, y por eso ningún test las
+        distinguía: se puede revertir cualquiera de las dos y las 55 del módulo siguen en verde
+        (medido, revisión 14 D4). Aquí, entre medias, se cuela un INLINE SIN CERRAR (`<span>x`,
+        sin `</span>`): con "no apilar lo vacío" puesta pero la pila entera revertida a
+        `self.pila[-1] == "p"`, la cima en el momento del `<dl>` es el `<span>` sin cerrar, no el
+        `<br>` — la regla (1) mirando sólo la cima ya no ve el `<p>` por debajo, y el desplazamiento
+        se pierde. Sólo la pila ENTERA lo sigue viendo. Éste es el caso que de verdad separa las
+        dos mitades; el de arriba no distinguía nada."""
+        desplazado = _etiquetas_de_cierre_opcional_sin_cerrar(
+            '<div><p class="cifra">Resumen<br><span>x<dl><dt>Altura</dt>'
+            '<dd>180 cm</dd></dl></p></div>',
+            cierre_opcional={"p"},
+        )
+        self.assertEqual(
+            desplazado, ["p"],
+            "un <p> desplazado por un <dl>, con un <br> y luego un <span> SIN CERRAR entre medias, "
+            "no apareció como desplazado: la regla (1) ya no ve el <p> por debajo del <span> — "
+            "sólo mirar la PILA ENTERA (no la cima) sigue cazando este caso",
+        )
 
     def test_un_hijo_de_bloque_legitimo_dentro_de_li_no_es_falso_rojo(self):
         """H23 — el control de que restringir la regla (1) del desplazamiento a `<p>` (ver el

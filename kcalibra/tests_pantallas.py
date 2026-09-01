@@ -785,6 +785,13 @@ _ETIQUETAS_INLINE = frozenset({
 # (barrido de las 39 rutas, cero diferencias contra antes de esta vuelta — hallazgos.md).
 _ETIQUETAS_DE_BLOQUE = frozenset({
     "body", "dd", "div", "dl", "dt", "form", "h1", "h2", "h3", "head", "header", "html",
+    # H28 (vuelta 18 de la 059, revisión 14) — `<hr>` es una regla horizontal: separa el texto de
+    # un lado del otro para el lector igual que cualquier otra etiqueta de esta lista (no va
+    # "pegada" a la frase, al contrario que `<br>`/`<input>`, que sí están en `_ETIQUETAS_INLINE`
+    # porque no cortan la lectura). Esta clasificación es del trinquete H12 (qué etiqueta usa el
+    # árbol); no es de aquí de donde sale si `<hr>` cierra un `<p>` — eso lo decide, aparte,
+    # `_CIERRAN_UN_PARRAFO_DE_HTML` en `kcalibra/tests_pantallas_del_proyecto.py`.
+    "hr",
     "li", "link", "main", "meta", "nav", "p", "script", "section", "svg", "template", "title",
     "ul",
 })
