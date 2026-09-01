@@ -658,17 +658,38 @@ _CIERRAN_UN_PARRAFO_DE_HTML = frozenset({
 # H31 (revisión 15 de la 059, BLOQUEANTE) — la sonda contra el navegador de abajo necesita un
 # UNIVERSO de etiquetas candidatas a comprobar, y construirlo escribiendo una lista nueva a mano
 # sería repetir exactamente el error que abrió H31 (un conjunto que sale de lo que alguien
-# recuerda). En vez de eso: la base es la UNIÓN de las cinco listas que el proyecto YA mantiene
-# (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`, `_VACIAS_DE_HTML`, `_CIERRE_OPCIONAL_DE_HTML`,
-# `_CIERRAN_UN_PARRAFO_DE_HTML`) — así el propio caso de H31 (`li`/`dd`/`dt`, ya clasificadas en
-# otra lista) queda cubierto sin transcribir nada nuevo. Y como esa unión sólo trae lo que el
-# ÁRBOL DE HOY usa (H12: ninguna plantilla usa `search` todavía), se amplía a mano con el resto
-# de "contenido de flujo" del HTML Living Standard — `search`, el elemento concreto de H31,
-# incluido. Que esta ampliación no sea perfectamente exhaustiva es un riesgo ACOTADO y no la
-# misma clase de fallo que H31: una etiqueta que falte aquí queda SIN EJERCITAR (igual que hoy,
-# ni mejor ni peor), nunca produce un veredicto INCORRECTO sobre lo que sí se ejercita — al
-# contrario que `_CIERRAN_UN_PARRAFO_DE_HTML` antes de este arreglo, donde faltar de la lista
-# significaba "el código actúa como si no cerrara, y nada lo comprueba nunca".
+# recuerda). En vez de eso: la base es la UNIÓN de las CUATRO listas de clasificación que el
+# proyecto YA mantiene (`_ETIQUETAS_INLINE`, `_ETIQUETAS_DE_BLOQUE`, `_VACIAS_DE_HTML`,
+# `_CIERRE_OPCIONAL_DE_HTML`) — así el propio caso de H31 (`li`/`dd`/`dt`, ya clasificadas en otra
+# lista) queda cubierto sin transcribir nada nuevo. Y como esa unión sólo trae lo que el ÁRBOL DE
+# HOY usa (H12: ninguna plantilla usa `search` todavía), se amplía a mano con el resto de
+# "contenido de flujo" del HTML Living Standard — `search`, el elemento concreto de H31, incluido.
+# Que esta ampliación no sea perfectamente exhaustiva es un riesgo ACOTADO y no la misma clase de
+# fallo que H31: una etiqueta que falte aquí queda SIN EJERCITAR (igual que hoy, ni mejor ni
+# peor), nunca produce un veredicto INCORRECTO sobre lo que sí se ejercita.
+#
+# H39 (revisión 17, BLOQUEANTE) — deliberadamente, `_CIERRAN_UN_PARRAFO_DE_HTML` NO entra en esa
+# unión, aunque sea la constante que H31 acredita. Hasta esta vuelta sí entraba, y eso abría una
+# SEGUNDA puerta distinta de la de H35: si una etiqueta se borra de la CONSTANTE (no de las
+# descartadas), desaparecía TAMBIÉN del universo por el mismo movimiento — el trinquete de H35
+# (`_CIERRAN_UN_PARRAFO_DE_HTML <= _CANDIDATOS…`, más abajo) se quedaba mudo porque los DOS lados
+# encogían a la vez, y el test que pregunta al navegador dejaba de examinar la etiqueta borrada,
+# así que tampoco la cazaba él. Medido (`.runtime/v21/h39/`): 24 de las 41 etiquetas de la
+# constante — «address», «article», «aside»… — no están clasificadas en ninguna de las cuatro
+# listas de arriba ni en la ampliación de contenido de flujo, así que hasta esta vuelta SOLO
+# entraban al universo por la constante que se está acreditando.
+#
+# El universo tiene que salir de fuentes que NO sean la constante que audita: de ahí esta segunda
+# ampliación a mano, con justo esas 24 etiquetas, hermana de la de contenido de flujo. Con esto,
+# borrar un miembro de `_CIERRAN_UN_PARRAFO_DE_HTML` lo deja HUÉRFANO: sigue en el universo (por
+# esta lista, que no depende de la constante), ya no está en la constante, y
+# `LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests` (más abajo) lo nota solo: el
+# navegador dice que cierra, la constante dice que no.
+_ETIQUETAS_QUE_CIERRAN_UN_PARRAFO_SIN_OTRA_CLASIFICACION = frozenset({
+    "address", "article", "aside", "blockquote", "center", "details", "dialog", "dir",
+    "fieldset", "figcaption", "figure", "footer", "h4", "h5", "h6", "hgroup", "listing", "menu",
+    "ol", "plaintext", "pre", "summary", "table", "xmp",
+})
 _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA = frozenset({
     # Singletons de la estructura del documento: sueltas dentro de un `<p>`, el parser FUSIONA
     # sus atributos con el `<html>`/`<head>`/`<body>` implícito que ya existe, o las descarta
@@ -682,7 +703,7 @@ _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA = frozenset({
 })
 _CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR = frozenset(
     (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
-     | _CIERRAN_UN_PARRAFO_DE_HTML)
+     | _ETIQUETAS_QUE_CIERRAN_UN_PARRAFO_SIN_OTRA_CLASIFICACION)
     - _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA
     | {
         "search", "math", "audio", "canvas", "cite", "data", "datalist", "del", "iframe", "ins",
@@ -695,21 +716,31 @@ _CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR = frozenset(
 
 class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
     """H35 (Revisión 16 de la 059, MEDIO) — `_ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_
-    FAMILIA` es una VÁLVULA sin vigilar: se resta de la unión de las cinco listas que construyen
-    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR` —incluida `_CIERRAN_UN_PARRAFO_DE_HTML`, la propia
-    constante que H31 acredita— y nada comprobaba que esa resta no se tragara un miembro suyo. El
-    revisor midió (D1/H35, hallazgos.md): revertir H31 (sacar `li`/`dd`/`dt` de
+    FAMILIA` es una VÁLVULA sin vigilar: se resta de la unión de listas que construyen
+    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR` y nada comprobaba que esa resta no se tragara un
+    miembro de `_CIERRAN_UN_PARRAFO_DE_HTML`, la propia constante que H31 acredita. El revisor
+    midió (D1/H35, hallazgos.md): revertir H31 (sacar `li`/`dd`/`dt` de
     `_CIERRAN_UN_PARRAFO_DE_HTML`) Y meterlas en las descartadas, A LA VEZ, deja los 933 tests en
     verde — la mutación exacta de H31 vuelve a entrar por esta puerta trasera, porque las tres
     etiquetas dejan de formar parte del universo que la sonda ejercita contra el navegador.
 
     Este trinquete, sin depender de Playwright (compara dos `frozenset` en tiempo de import, no
     lanza ningún navegador), exige que `_CIERRAN_UN_PARRAFO_DE_HTML` sea SIEMPRE subconjunto de
-    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`: si una etiqueta de la constante cae en las
-    descartadas (o se quita de la unión de las cinco listas de origen), deja de ejercitarse
-    contra el navegador y H31 se puede reabrir en verde por esta vía, aunque el test que SÍ
-    lanza Chromium (`LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`, abajo) siga
-    en verde para las etiquetas que le quedan."""
+    `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`: vigila la puerta de las descartadas.
+
+    **Lo que este trinquete NO puede vigilar, por construcción matemática de un subconjunto**
+    (H39, revisión 17, BLOQUEANTE — el docstring de esta clase lo prometía hasta la vuelta
+    anterior, entre paréntesis, y era falso): borrar un miembro de `_CIERRAN_UN_PARRAFO_DE_HTML`
+    sólo puede encoger el lado IZQUIERDO del `<=`, nunca romperlo, pase lo que pase con el
+    universo. Hasta la vuelta anterior, además, ese borrado encogía TAMBIÉN el lado derecho —
+    porque la propia constante entraba en la unión que construye el universo—, así que el
+    navegador tampoco llegaba a examinar la etiqueta borrada. El arreglo de H39 no está en este
+    trinquete: está en que `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR` ya NO depende de
+    `_CIERRAN_UN_PARRAFO_DE_HTML` (ver su comentario, arriba) — así que un miembro borrado de la
+    constante queda HUÉRFANO en el universo, y es
+    `LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests` (el que SÍ lanza Chromium,
+    abajo) quien lo caza: el navegador sigue diciendo que esa etiqueta cierra un párrafo, la
+    constante ya dice que no."""
 
     databases = set()
 
@@ -732,7 +763,7 @@ class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
         )
         candidatos_con_la_valvula_abierta = frozenset(
             (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
-             | _CIERRAN_UN_PARRAFO_DE_HTML)
+             | _ETIQUETAS_QUE_CIERRAN_UN_PARRAFO_SIN_OTRA_CLASIFICACION)
             - descartadas_con_la_valvula_abierta
         )
         self.assertNotIn(
@@ -744,6 +775,38 @@ class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
             "meter «li» (miembro real de `_CIERRAN_UN_PARRAFO_DE_HTML`) en las descartadas "
             "debía romper el trinquete de subconjunto — si esto no se pone rojo, la válvula "
             "sigue sin vigilar",
+        )
+
+    def test_mutacion_borrar_un_miembro_de_la_constante_no_lo_saca_del_universo(self):
+        """H39 (revisión 17 de la 059, BLOQUEANTE) — la SEGUNDA puerta del trinquete de arriba:
+        hasta la vuelta anterior, `_CIERRAN_UN_PARRAFO_DE_HTML` entraba en la propia unión que
+        construye `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`, así que borrar un miembro de la
+        constante lo sacaba TAMBIÉN del universo por el mismo movimiento: el navegador dejaba de
+        examinarlo y el trinquete de arriba se quedaba mudo, porque los dos lados del `<=`
+        encogían a la vez. Medido por el revisor: 24 de las 41 etiquetas —«address» y «summary»
+        entre ellas— se podían borrar de la constante con los 221 tests en verde. Esta es la
+        mitad ESTRUCTURAL del arreglo, sin Playwright: una constante mutada, con «address» y
+        «summary» borrados, deja esas dos etiquetas DENTRO del universo — huérfanas, no
+        desaparecidas — porque el universo ya no depende de la constante que audita; la mitad
+        que sí necesita el navegador la cierra
+        `LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`, abajo."""
+        constante_mutada = _CIERRAN_UN_PARRAFO_DE_HTML - {"address", "summary"}
+        universo_con_la_constante_mutada = frozenset(
+            (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
+             | _ETIQUETAS_QUE_CIERRAN_UN_PARRAFO_SIN_OTRA_CLASIFICACION)
+            - _ETIQUETAS_DESCARTADAS_DE_LA_SONDA_POR_SER_OTRA_FAMILIA
+        )
+        self.assertNotIn("address", constante_mutada)  # control: sí se borró de la constante
+        self.assertNotIn("summary", constante_mutada)
+        self.assertIn(
+            "address", universo_con_la_constante_mutada,
+            "«address» desapareció del universo de la sonda al borrarse de la constante: la "
+            "segunda puerta de H39 sigue abierta",
+        )
+        self.assertIn(
+            "summary", universo_con_la_constante_mutada,
+            "«summary» desapareció del universo de la sonda al borrarse de la constante: la "
+            "segunda puerta de H39 sigue abierta",
         )
 
 
@@ -1375,6 +1438,40 @@ class R2_TituloGrandeConHEnCualquierRamaTests(SimpleTestCase):
             '{% if algo %}<h1>Con título</h1>{% else %}<h1>También con título</h1>{% endif %}'
         )
         self.assertTrue(_todo_lo_que_titulo_grande_puede_pintar_lleva_un_h1(cuerpo_con_las_dos_ramas))
+
+    def test_mutacion_incumple_r2_no_pasa_por_una_busqueda_de_subcadena(self):
+        """H38-a (revisión 17, BLOQUEANTE) — el test de arriba prueba el ayudante importado de
+        la 054 (`_todo_lo_que_titulo_grande_puede_pintar_lleva_un_h1`), nunca `_incumple_r2` —
+        la única puerta por la que pasan las quince pantallas reales. Si `_incumple_r2` se
+        redujera a `"<h1" not in cuerpo` (una búsqueda de subcadena sobre el bloque entero, en
+        vez del parser de ramas), una rama `{% else %}` sin su propio `<h1>` seguiría dando
+        "cumple" por estar el `<h1>` de la rama `{% if %}` en el mismo texto — el hueco H3 de la
+        054 que el contrato de esta unidad nombra con todas sus letras — y este es el único test
+        que lo notaría."""
+        with TemporaryDirectory() as tmp:
+            directorio = Path(tmp) / "paginas" / "templates" / "paginas"
+            directorio.mkdir(parents=True)
+            con_una_rama_sin_h1 = directorio / "rama_sin_h1.html"
+            con_una_rama_sin_h1.write_text(
+                '{% block titulo_grande %}'
+                '{% if algo %}<h1>Con título</h1>{% else %}<div>Sin título de verdad</div>{% endif %}'
+                '{% endblock %}'
+            )
+            con_las_dos_ramas = directorio / "dos_ramas_con_h1.html"
+            con_las_dos_ramas.write_text(
+                '{% block titulo_grande %}'
+                '{% if algo %}<h1>Con título</h1>{% else %}<h1>También con título</h1>{% endif %}'
+                '{% endblock %}'
+            )
+            self.assertTrue(
+                _incumple_r2(con_una_rama_sin_h1),
+                "una rama sin <h1> escondida detrás de otra que sí lo trae debía incumplir R2 "
+                "y no lo hizo: `_incumple_r2` se ha reducido a una búsqueda de subcadena",
+            )
+            self.assertFalse(
+                _incumple_r2(con_las_dos_ramas),
+                "las dos ramas con su propio <h1> no debían incumplir R2",
+            )
 
 
 class R3_SinPaletaViejaTests(SimpleTestCase):
