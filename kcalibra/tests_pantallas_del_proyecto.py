@@ -2178,6 +2178,25 @@ def _campos_pintados_de_help_text(campos, contenido):
 _CAMPOS_DE_HELP_TEXT_PINTADOS_SIN_LA_VIA_CANONICA_FUERA_DE_FICHEROS = frozenset()
 
 
+def _nombres_de_name_de_subwidgets(contexto_widget):
+    """H29 (revisión 14 de la 059, MEDIO) — un `subwidget` del contexto de un `MultiWidget` es él
+    mismo el contexto que SU widget devolvió (`MultiWidget.get_context`: cada subwidget sale de
+    `widget.get_context(...)["widget"]`), así que si ESE widget es a su vez compuesto —un rango
+    "entre estas dos fechas-hora", dos `SplitDateTimeWidget`— trae su PROPIO `subwidgets` anidado.
+    `_nombres_de_name_que_el_widget_escribe` (abajo) bajaba UN solo nivel y se quedaba con
+    `entre_0`/`entre_1` cuando el HTML de verdad lleva `entre_0_0`/`entre_0_1`/`entre_1_0`/
+    `entre_1_1` — devolvía "no pintado" sobre el HTML que el propio widget acababa de escribir.
+    Recursiva: se expande cualquier nivel de anidamiento, no sólo uno."""
+    subwidgets = contexto_widget.get("subwidgets")
+    if not subwidgets:
+        return [contexto_widget["name"]]
+    return [
+        nombre
+        for subwidget in subwidgets
+        for nombre in _nombres_de_name_de_subwidgets(subwidget)
+    ]
+
+
 def _nombres_de_name_que_el_widget_escribe(campo):
     """H26 (revisión 13 de la 059, BLOQUEANTE) — el conjunto de `name=` que el WIDGET de `campo`
     escribe de verdad, preguntándoselo al WIDGET (`get_context`) en vez de darlo por hecho. Un
@@ -2185,26 +2204,36 @@ def _nombres_de_name_que_el_widget_escribe(campo):
     dos de las CUATRO familias de Django con `use_fieldset=True`, las únicas para las que este
     trinquete existe) nunca escribe `name="<html_name>"`: escribe un `name=` POR SUBWIDGET
     (`get_context(...)["widget"]["subwidgets"]`, cada uno con el suyo — `SelectDateWidget` para
-    `campo="c"` escribe `c_day`/`c_month`/`c_year`, medido en vivo). Para el resto (incluidas
-    `CheckboxSelectMultiple`/`RadioSelect`, las otras dos familias con `use_fieldset=True`:
-    `get_context` no les añade `subwidgets`, sólo `optgroups`), el único `name=` es
-    `campo.html_name`, tal y como asumía H22 — la diferencia es que ahora se comprueba, no se
-    supone."""
+    `campo="c"` escribe `c_day`/`c_month`/`c_year`, medido en vivo), y ese subwidget puede a su vez
+    ser compuesto (H29: `_nombres_de_name_de_subwidgets`, arriba, baja TODOS los niveles, no sólo
+    uno). Para el resto (incluidas `CheckboxSelectMultiple`/`RadioSelect`, las otras dos familias
+    con `use_fieldset=True`: `get_context` no les añade `subwidgets`, sólo `optgroups`), el único
+    `name=` es `campo.html_name`, tal y como asumía H22."""
     contexto_widget = campo.field.widget.get_context(campo.html_name, campo.value(), {})["widget"]
-    subwidgets = contexto_widget.get("subwidgets")
-    if subwidgets:
-        return [subwidget["name"] for subwidget in subwidgets]
-    return [campo.html_name]
+    return _nombres_de_name_de_subwidgets(contexto_widget)
 
 
-_NOMBRE_DE_WIDGET_EN_HTML_RE = r'name\s*=\s*["\']?{}["\'\s>]'
+# O44 (revisión 14 de la 059, MENOR) — el patrón original no reconocía `name=x/>` (sin comillas
+# y con la barra de autocierre pegada al valor, sin espacio delante): el delimitador de cierre no
+# incluía `/`. Ampliado. La otra mitad de O44 —el patrón busca en la página ENTERA, no en la
+# región del formulario, así que un `name=` de otro origen (`<meta name="viewport">`,
+# `base.html:6`; o un segundo formulario con un campo del mismo nombre) puede marcar como
+# "pintado" un campo que no lo está— sigue abierta: acotar la búsqueda a la región del formulario
+# exigiría pasar qué HTML pertenece a qué `<form>`, algo que esta función no recibe hoy y que
+# ningún caso real dispara todavía (ningún campo se llama "viewport", medido). Queda en
+# `hallazgos.md` como deuda, no como bloqueo.
+_NOMBRE_DE_WIDGET_EN_HTML_RE = r'name\s*=\s*["\']?{}["\'\s/>]'
 
 
 def _campo_esta_pintado_por_su_widget(campo, contenido):
     """H22/H26 — si el CAMPO se pinta de verdad en esta página: ALGUNO de los `name=` que su
     WIDGET escribe (arriba) aparece en el HTML. A diferencia de `_campos_pintados_de_help_text`
-    (que decide por el TEXTO del `help_text`), esto decide por el WIDGET — lo que Django siempre
-    escribe para CUALQUIER campo visible, tenga o no su `help_text` pintado de la forma canónica.
+    (que decide por el TEXTO del `help_text`), esto decide por el WIDGET — lo que Django escribe
+    para CUALQUIER campo visible, tenga o no su `help_text` pintado de la forma canónica. "Lo que
+    Django siempre escribe" era, hasta H29 (revisión 14), una promesa que la función NO cumplía
+    para un `MultiWidget` con subwidgets compuestos (devolvía "no pintado" sobre el HTML que el
+    propio widget acababa de escribir) — `_nombres_de_name_de_subwidgets` ahora baja TODOS los
+    niveles de anidamiento, no sólo uno.
 
     H26 (revisión 13, BLOQUEANTE) — la versión anterior era `f'name="{campo.html_name}"' in
     contenido`: una igualdad de subcadena con las comillas DOBLES metidas a fuego (medido en vivo
@@ -2773,6 +2802,41 @@ class R6_AyudaAsociadaASuCampoTests(_ConLaAppEnteraYSusDatos):
                     f"ayuda no canónica, no se detectó como pintado — el predicado sigue "
                     f"asumiendo que todo widget escribe name=\"<html_name>\" a secas",
                 )
+
+    def test_mutacion_un_widget_compuesto_anidado_pintado_se_pone_rojo(self):
+        """H29 (revisión 14 de la 059, MEDIO) — el gemelo de H26 un piso más abajo: un
+        `MultiWidget` cuyos SUBWIDGETS sean a su vez compuestos (un rango "entre estas dos
+        fechas-hora", dos `SplitDateTimeWidget`) escribe `entre_0_0`/`entre_0_1`/`entre_1_0`/
+        `entre_1_1` — CUATRO `name=`, ninguno igual a lo que `_nombres_de_name_que_el_widget_escribe`
+        calculaba antes de H29 (`entre_0`/`entre_1`, un solo nivel de profundidad). Medido en vivo
+        (`str(campo)`, sin plantilla ni HTML a mano): Django pinta exactamente los cuatro `name=`
+        de abajo."""
+        class _WidgetDeRangoDeFechaHora(forms.MultiWidget):
+            def __init__(self, attrs=None):
+                super().__init__([forms.SplitDateTimeWidget(), forms.SplitDateTimeWidget()], attrs)
+
+            def decompress(self, value):
+                return [None, None]
+
+        class _FormularioConRango(forms.Form):
+            entre = forms.CharField(
+                widget=_WidgetDeRangoDeFechaHora(), help_text="entre estas dos fechas",
+            )
+
+        campo = _FormularioConRango()["entre"]
+        html = (
+            '<input type="text" name="entre_0_0"><input type="text" name="entre_0_1">'
+            '<input type="text" name="entre_1_0"><input type="text" name="entre_1_1">'
+        )
+        no_canonico = _campos_con_widget_pintado_y_ayuda_no_canonica(
+            [("_FormularioConRango", campo)], html + "<p>ayuda pintada de otra forma</p>",
+        )
+        self.assertEqual(
+            [c.name for _, c in no_canonico], ["entre"],
+            "un MultiWidget con subwidgets COMPUESTOS, pintado por Django, con su ayuda no "
+            "canónica, no se detectó como pintado — el predicado sigue bajando un solo nivel "
+            "de subwidgets",
+        )
 
 
 # ------------------------------------------------------------------------------------------ #
