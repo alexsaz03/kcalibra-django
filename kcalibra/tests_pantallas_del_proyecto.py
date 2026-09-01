@@ -32,19 +32,28 @@ demostrado en cada corrida futura de la suite, no solo en la evidencia pegada de
 
 import re
 from contextlib import contextmanager
+from datetime import timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from django.conf import settings
 from django.template import engines
+from django.template import Context as ContextoDeDjango
+from django.template.base import Origin as OrigenDeDjango, Template as PlantillaDeDjango, TextNode
+from django.template.loader import get_template
 from django.template.utils import get_app_template_dirs
 from django.test import Client, SimpleTestCase
+from django.utils import timezone
 
+from cierres.logica import dia_pendiente_de_preguntar
+from cierres.models import CierreDeDia
 from cuentas.ayuda_pruebas import PruebaConRegistroAbierto
 from despensa.logica import _PALABRA_DE_UNIDAD, _PLURAL_SI_NO_ES_UNA
 from despensa.models import UNIDADES
 from hogares.models import Persona, SolicitudEntrada
+from planes.models import PlanDeDia
 from recetas.models import Receta
 
 import kcalibra.tests_pantallas as _tests_pantallas
@@ -849,8 +858,6 @@ class _ConLaAppEnteraYSusDatos(PruebaConRegistroAbierto):
         assert respuesta_receta.status_code == 200
         self.receta = Receta.objects.get(nombre="Crema de champiñones")
 
-        from django.utils import timezone
-
         hoy = timezone.localdate().isoformat()
         respuesta_plan = self.client.post(
             f"/planes/{self.alejandro.id}/apuntar/",
@@ -870,11 +877,79 @@ class _ConLaAppEnteraYSusDatos(PruebaConRegistroAbierto):
 
         self.entreno = Entreno.objects.get(persona=self.alejandro)
 
+        # H21 (revisión 11 de la 059, BLOQUEANTE) — `grasa_pct`/`cintura_cm` van CON VALOR, no
+        # en blanco: `perfiles/peso.html:156-157` las pinta dentro de `{% if … != None %}`, así
+        # que apuntarlas vacías dejaba esos dos `<span class="cifra">` FUERA de la población de
+        # todos los barridos de este fichero. Ver el bloque de POBLACIÓN al final de este
+        # `setUp` y el trinquete `test_el_barrido_renderiza_todos_los_sitios_de_cifra_del_arbol`.
         respuesta_peso = self.client.post(
             f"/perfiles/{self.alejandro.id}/peso/apuntar/",
-            {"fecha": hoy, "peso_kg": "80", "grasa_pct": "", "cintura_cm": ""},
+            {"fecha": hoy, "peso_kg": "80", "grasa_pct": "18", "cintura_cm": "84"},
         )
         assert respuesta_peso.status_code == 200
+
+        # ------------------------------------------------------------------------------------ #
+        # H21 (revisión 11 de la 059, BLOQUEANTE) — LA POBLACIÓN. El barrido de `.cifra` de R5
+        # vivía en `kcalibra/tests_pantallas.py`, cuya clase tiene un `setUp` que CIERRA EL DÍA
+        # a propósito (su comentario lo dice: sin ningún `CierreDeDia`, `progreso/ver.html`
+        # nunca llega a pintar la `<p class="cifra …">{{ cumplimiento.porcentaje }}%</p>` de la
+        # l.178). Esta unidad MUDÓ el barrido aquí y la fixture nueva no cerraba ningún día: el
+        # elemento se quedó fuera de la población de TODOS los barridos, y quitarle la `.cifra`
+        # pasaba con las 906 en verde — una protección que `main` SÍ tenía. El inventario por
+        # AST no puede ver ese hueco, porque el test mudado tiene MÁS asserts: lo que perdió no
+        # son asserts, es POBLACIÓN.
+        #
+        # Lo de abajo NO es "los tres datos que le faltaban a esta fixture": es lo que hace
+        # falta para que las 39 páginas del barrido pinten TODOS los sitios de `.cifra` que el
+        # árbol declara — la lista salió de medirlo
+        # (`test_el_barrido_renderiza_todos_los_sitios_de_cifra_del_arbol`, más abajo, que a
+        # partir de ahora se pone ROJO si vuelve a encogerse).
+        #
+        # Cada POST lleva su control de ROJO MUDO (misma familia que el resto de este `setUp`):
+        # si mañana algo rompe uno de estos caminos, la fixture deja de pintar su elemento y el
+        # barrido encogería EN SILENCIO — que es exactamente el defecto que cierra H21.
+        # ------------------------------------------------------------------------------------ #
+
+        # (a) El día de HOY, cerrado y CON calorías: `progreso/ver.html:178` (el porcentaje de
+        #     cumplimiento) y `cierres/cerrar.html:108` (`{% if cierre.calorias_comidas %}`).
+        #     `status_code` NO sirve de control aquí — `cierres/views.py:cerrar` nunca redirige:
+        #     con el formulario inválido vuelve a renderizar la MISMA plantilla con los errores,
+        #     así que un POST roto sigue devolviendo 200 (medido en la 8ª vuelta de revisión,
+        #     `kcalibra/tests_pantallas.py`). El control real es que la fila exista.
+        fecha_de_hoy = timezone.localdate()
+        self.client.post(
+            f"/cierres/{self.alejandro.id}/",
+            {
+                "fecha": fecha_de_hoy.isoformat(),
+                "respuesta": "lo_segui",
+                "calorias_comidas": "1850",
+                "nota": "",
+            },
+        )
+        assert CierreDeDia.objects.filter(
+            persona=self.alejandro, fecha=fecha_de_hoy, calorias_comidas=1850
+        ).exists()  # control: el día se cerró de verdad, y con sus calorías
+
+        # (b) El plan de AYER: `cierres/_pregunta_pendiente.html:36` pinta las comidas del plan
+        #     del día PENDIENTE, y el pendiente es SIEMPRE ayer (`servicios/cierres.py:
+        #     calcular_dia_pendiente`) — un plan de hoy no lo alcanza jamás. No hay ninguna ruta
+        #     HTTP que apunte una comida a un día pasado (`planes/logica.py:apuntar_comida` usa
+        #     `timezone.localdate()` a fuego), así que este es el único dato de este `setUp` que
+        #     se crea por ORM, y a propósito: inventar una ruta para poder crearlo sería cambiar
+        #     la aplicación para que quepa el test.
+        ayer = fecha_de_hoy - timedelta(days=1)
+        plan_de_ayer = PlanDeDia.objects.create(
+            persona=self.alejandro, fecha=ayer, hogar=self.alejandro.hogar
+        )
+        plan_de_ayer.comidas.create(
+            nombre="Lentejas", momento_del_dia="comida",
+            calorias=600, proteina_g=30, grasa_g=10, carbos_g=80,
+        )
+        assert dia_pendiente_de_preguntar(self.alejandro) == ayer, (
+            "control: la pregunta pendiente tiene que seguir siendo la de AYER — si dejara de "
+            "serlo, `_pregunta_pendiente.html` no pintaría el plan y su `.cifra` saldría del "
+            "barrido"
+        )
 
 
 def _paginas_de_pantallas_reales(cliente, nombres_de_pantallas, arranque):
@@ -954,6 +1029,147 @@ _NUMERO_CON_UNIDAD_DEL_PROYECTO_RE = re.compile(
 )
 
 
+# ------------------------------------------------------------------------------------------ #
+# H21 (revisión 11 de la 059, BLOQUEANTE) — EL CONTROL DE POBLACIÓN del barrido de R5.
+#
+# Los once huecos de esta unidad son el mismo defecto mudándose de piso: la detección cuelga de
+# algo ACCIDENTAL en vez de de lo que hace que la cosa sea esa cosa (H12 etiquetas → H13 ficheros
+# → H16 eventos → H18 listas → H21 LA POBLACIÓN). Aquí el accidente era: *qué hace renderizar
+# ESTA fixture*. `progreso/ver.html:178` pinta el porcentaje de cumplimiento sólo si hay algún
+# día cerrado; la fixture no cerraba ninguno, así que ese `<p class="cifra">` no estaba en la
+# población de NINGÚN barrido y quitarle la `.cifra` pasaba en verde — con `main` en rojo.
+#
+# La cura no es "cerrar un día" (eso es tapar el caso), es **hacer que el barrido sepa cuál es su
+# población y diga en ROJO cuando encoge**. La población DECLARADA sale de la esencia —lo que las
+# plantillas PUEDEN pintar—: cada sitio del árbol propio donde se escribe un `class="… cifra …"`,
+# recorriendo el `nodelist` COMPILADO de cada plantilla (los `TextNode` de Django), con la clave
+# `(origin.template_name, token.lineno)` que el propio `Parser.extend_nodelist` de Django ya pone
+# en cada nodo. La población RENDERIZADA sale de registrar ESOS MISMOS nodos mientras el barrido
+# de R5 renderiza sus páginas (parcheando `TextNode.render_annotated`, el mismo mecanismo que ya
+# usa `_con_procedencia_marcada`). Las dos derivaciones salen de la MISMA estructura, así que
+# compararlas no puede desajustarse por la forma de la clave (medido: `vistos − declarados` es
+# vacío, `.runtime/v12/poblacion-cifra.json`).
+#
+# Medido con esto el día que se escribió: 31 sitios declarados, 25 renderizados — H21 no estaba
+# solo, eran SEIS. Cinco se han metido en la población arreglando la fixture (ver `setUp`); el
+# sexto es inalcanzable de verdad y se declara abajo, con su trinquete.
+# ------------------------------------------------------------------------------------------ #
+
+_CLASE_CON_CIFRA_RE = re.compile(r"""class\s*=\s*["'][^"']*(?<![\w-])cifra(?![\w-])""")
+
+
+def _desplazamientos_de_cifra(texto):
+    return [c.start() for c in _CLASE_CON_CIFRA_RE.finditer(texto)]
+
+
+def _sitio_del_nodo(nodo, desplazamiento):
+    """La clave de un sitio de `.cifra`: plantilla y línea, LEÍDAS DE LO QUE DJANGO YA ESCRIBIÓ
+    en el nodo al compilarlo (`node.origin`/`node.token`, que pone `Parser.extend_nodelist`) — no
+    de un `grep` sobre el fichero ni de una lista. Un `TextNode` puede abarcar varias líneas, así
+    que a la línea del token se le suman los saltos que haya ANTES del `class="…cifra…"`."""
+    origen = getattr(nodo, "origin", None)
+    token = getattr(nodo, "token", None)
+    linea = getattr(token, "lineno", None)
+    if linea is not None:
+        linea += nodo.s[:desplazamiento].count("\n")
+    return f"{getattr(origen, 'template_name', None)}:{linea}"
+
+
+def _sitios_de_cifra_de_una_plantilla(plantilla):
+    """Los sitios de `.cifra` de UNA plantilla ya compilada. `get_nodes_by_type` recorre también
+    los `nodelist` de las ramas (`{% if %}`/`{% else %}`, `{% for %}`), que es justo lo que hace
+    falta: el sitio de H21 vive dentro de un `{% if cumplimiento.cerrados %}`."""
+    sitios = set()
+    for nodo in plantilla.nodelist.get_nodes_by_type(TextNode):
+        for desplazamiento in _desplazamientos_de_cifra(nodo.s):
+            sitios.add(_sitio_del_nodo(nodo, desplazamiento))
+    return sitios
+
+
+def _sitios_de_cifra_declarados(directorios=None):
+    """Toda la población: los sitios de `.cifra` de las plantillas PROPIAS del árbol, menos las
+    diez `EXCEPCIONES` (que R8 vigila al revés y el barrido de R5 no recorre). Se compila cada
+    plantilla por su nombre de Django, así que lo que se mide es lo que Django ve — la misma
+    definición de caso que R1, no un `os.walk` con una regla aparte."""
+    excepciones_absolutas = {(BASE_DIR / e).resolve() for e in EXCEPCIONES}
+    sitios = set()
+    for ruta in _plantillas_del_arbol_propio(directorios):
+        if Path(ruta).resolve() in excepciones_absolutas:
+            continue
+        nombre = _nombre_de_plantilla(Path(ruta))
+        if nombre is None:
+            continue
+        sitios |= _sitios_de_cifra_de_una_plantilla(get_template(nombre).template)
+    return sitios
+
+
+@contextmanager
+def _registrando_los_sitios_de_cifra_que_se_pintan(vistos):
+    """Anota en `vistos` cada sitio de `.cifra` que se RENDERIZA de verdad mientras dura el
+    `with`. Mismo mecanismo (y mismas precauciones) que `_con_procedencia_marcada`, con el que se
+    anida sin estorbarse: éste no cambia lo que devuelve el nodo, sólo lo apunta."""
+    original = TextNode.render_annotated
+
+    def envuelto(self, context):
+        for desplazamiento in _desplazamientos_de_cifra(self.s):
+            vistos.add(_sitio_del_nodo(self, desplazamiento))
+        return original(self, context)
+
+    with mock.patch.object(TextNode, "render_annotated", envuelto):
+        yield
+
+
+# La única pieza de `_ui.html` cuyo `.cifra` no puede pintar NINGUNA página: `barra_macro` no la
+# incluye ninguna plantilla del árbol (medido), y `_barra_macro_interna` —donde vive el
+# `<span class="cifra">`— sólo la incluye `barra_macro`. Se declara como las `EXCEPCIONES` de R8
+# —por NOMBRE de pieza, no por número de línea, para que mover el fichero no la rompa— y con su
+# TRINQUETE: lo que se comprueba en cada corrida no es "este sitio sigue sin pintarse" (eso sería
+# generoso: valdría también si la pieza se empezara a usar y el barrido no la alcanzara), sino
+# que **la pieza sigue sin usarla nadie**. El día que una plantilla la incluya, esto se pone ROJO
+# pidiendo borrar la excepción, y el sitio entra en la población como los otros treinta.
+_LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE = "barra_macro"
+_LA_PIEZA_INTERNA_QUE_SOLO_ESA_USA = "_barra_macro_interna"
+
+
+def _alguna_plantilla_incluye_la_pieza_de_ui(pieza, directorios=None):
+    """¿Incluye alguien `_ui.html#pieza`? Se busca en todas las plantillas propias MENOS en la
+    propia `_ui.html` (donde una pieza incluye a otra: eso no la hace alcanzable desde ninguna
+    página)."""
+    patron = re.compile(r"""\{%\s*include\s+["']_ui\.html#""" + re.escape(pieza) + r"""(?![\w-])""")
+    for ruta in _plantillas_del_arbol_propio(directorios):
+        if Path(ruta).name == "_ui.html":
+            continue
+        if patron.search(_texto(Path(ruta))):
+            return True
+    return False
+
+
+def _sitios_de_cifra_de_la_pieza_de_ui_sin_usar():
+    """Los sitios de la pieza inalcanzable, sacados de COMPILARLA (django-template-partials deja
+    pedir `"_ui.html#pieza"` como plantilla propia, igual que hace `cierres/views.py`) — así la
+    excepción no nombra ninguna línea y sigue valiendo si el fichero se reordena."""
+    return _sitios_de_cifra_de_una_plantilla(
+        get_template(f"_ui.html#{_LA_PIEZA_INTERNA_QUE_SOLO_ESA_USA}").template
+    )
+
+
+def _poblacion_de_cifra_que_el_barrido_no_pinto(vistos, directorios=None):
+    """El corazón de H21: qué sitios de `.cifra` DECLARA el árbol que el barrido NO renderizó.
+    Devuelve `(sitios_perdidos, problemas_del_trinquete)`."""
+    perdidos = sorted(_sitios_de_cifra_declarados(directorios) - set(vistos))
+    exentos = _sitios_de_cifra_de_la_pieza_de_ui_sin_usar()
+    problemas = []
+    if _alguna_plantilla_incluye_la_pieza_de_ui(_LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE, directorios):
+        problemas.append(
+            f"alguna plantilla ya incluye `_ui.html#{_LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE}`: la "
+            f"excepción de `_sitios_de_cifra_de_la_pieza_de_ui_sin_usar` ya no vale — bórrala, y "
+            f"haz que el barrido pinte también sus sitios de `.cifra`"
+        )
+    else:
+        perdidos = [s for s in perdidos if s not in exentos]
+    return perdidos, problemas
+
+
 class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
     def test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra(self):
         """El barrido universal (H2 de la revisión de la 054, hallazgos.md: "el código de hoy
@@ -1023,7 +1239,13 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
             f"pantallas reales que el recorrido no alcanzó, y R5 no las miró: {sorted(nombres - alcanzadas)}",
         )
         sin_cifra = []
-        with _con_procedencia_marcada(), self._vocabulario_ancho():
+        # H21 (revisión 11, BLOQUEANTE) — el control de POBLACIÓN se registra DENTRO de este
+        # mismo `with` y sobre estas mismas páginas, no en un test aparte: un test aparte
+        # volvería a recorrer la app y podría acabar mirando una población distinta de la que
+        # este barrido examina, que es justo el error que H21 castiga.
+        sitios_de_cifra_pintados = set()
+        with _con_procedencia_marcada(), self._vocabulario_ancho(), \
+                _registrando_los_sitios_de_cifra_que_se_pintan(sitios_de_cifra_pintados):
             for cliente, ruta in objetivos:
                 # Se vuelve a pedir la página DENTRO de los dos `with`: `_con_procedencia_marcada`
                 # parchea el motor de plantillas, así que hace falta renderizar DE NUEVO bajo el
@@ -1040,8 +1262,98 @@ class R5_VocabularioDeUnidadesYCifraTests(_ConLaAppEnteraYSusDatos):
                     if _es_la_excepcion_de_perfiles_sobre_r6(ruta, cadena):
                         continue
                     sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
+        # H21 — la POBLACIÓN, ANTES que el resultado del barrido y por el mismo motivo que O26
+        # pone el trinquete de H13 el primero: un `sin_cifra` VACÍO sobre una población que ha
+        # encogido no dice nada (es literalmente lo que pasó con `progreso/ver.html:178`, verde
+        # con las 906 mientras `main` lo cazaba). Si esto cae, el resultado de abajo no vale y
+        # hay que arreglar la fixture antes de mirarlo.
+        perdidos, trinquete = _poblacion_de_cifra_que_el_barrido_no_pinto(sitios_de_cifra_pintados)
+        self.assertEqual(
+            perdidos + trinquete, [],
+            f"H21: el árbol declara sitios de `class=\"cifra\"` que este barrido NO llegó a "
+            f"pintar — su población ha encogido y ahí ya no vigila nadie (arregla la fixture "
+            f"para que la página los pinte, no el barrido para que no los mire): "
+            f"{perdidos + trinquete}",
+        )
         self.assertEqual(
             sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
+        )
+
+    def test_mutacion_un_sitio_de_cifra_que_no_se_renderiza_pone_la_suite_roja(self):
+        """H21 — el control de población demostrado EN CÓDIGO, sobre una plantilla SINTÉTICA
+        (nunca sobre el árbol real): un `class="cifra"` dentro de una rama que no se toma queda
+        DECLARADO y no VISTO; con la rama tomada, desaparece de la diferencia. Es exactamente lo
+        que le pasaba a `progreso/ver.html:178` con una fixture que no cerraba ningún día."""
+        motor = engines["django"].engine
+        fuente = (
+            "{% if hay_datos %}<p class=\"cifra\">{{ n }} kcal</p>"
+            "{% else %}<p>Todavía nada</p>{% endif %}"
+        )
+        plantilla = PlantillaDeDjango(
+            fuente, origin=OrigenDeDjango("sintética", template_name="sintetica.html"), engine=motor
+        )
+        declarados = _sitios_de_cifra_de_una_plantilla(plantilla)
+        self.assertEqual(
+            sorted(declarados), ["sintetica.html:1"],
+            "la población DECLARADA no salió del nodelist compilado: el control no mide nada",
+        )
+
+        vistos_sin_datos = set()
+        with _registrando_los_sitios_de_cifra_que_se_pintan(vistos_sin_datos):
+            plantilla.render(ContextoDeDjango({"hay_datos": False, "n": 0}))
+        self.assertEqual(
+            sorted(declarados - vistos_sin_datos), ["sintetica.html:1"],
+            "un `class=\"cifra\"` cuya rama no se renderiza tenía que aparecer como población "
+            "PERDIDA: el control no está vigilando de verdad",
+        )
+
+        vistos_con_datos = set()
+        with _registrando_los_sitios_de_cifra_que_se_pintan(vistos_con_datos):
+            plantilla.render(ContextoDeDjango({"hay_datos": True, "n": 500}))
+        self.assertEqual(
+            sorted(declarados - vistos_con_datos), [],
+            "con la rama tomada, el sitio ya se pinta y no debía quedar población perdida",
+        )
+
+    def test_la_excepcion_de_la_pieza_de_ui_sin_usar_sigue_siendo_exacta(self):
+        """El trinquete de la única excepción del control de población (misma forma que R8 y que
+        `_es_el_hueco_h18_fuera_de_ficheros`): lo que se comprueba NO es "ese sitio sigue sin
+        pintarse" —eso sería generoso— sino que **la pieza sigue sin usarla nadie**, y que la
+        excepción sigue cubriendo un sitio de `.cifra` de verdad (si `_ui.html` dejara de tener
+        ninguno ahí, la excepción sobraría y hay que borrarla)."""
+        self.assertFalse(
+            _alguna_plantilla_incluye_la_pieza_de_ui(_LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE),
+            f"alguna plantilla ya incluye `_ui.html#{_LA_PIEZA_DE_UI_QUE_NO_INCLUYE_NADIE}`: "
+            f"borra la excepción del control de población, su sitio de `.cifra` ya es alcanzable",
+        )
+        self.assertTrue(
+            _sitios_de_cifra_de_la_pieza_de_ui_sin_usar(),
+            f"la pieza `_ui.html#{_LA_PIEZA_INTERNA_QUE_SOLO_ESA_USA}` ya no tiene ningún "
+            f"`class=\"cifra\"`: la excepción del control de población no exime nada — bórrala",
+        )
+        # Y el control de que la excepción no se ha ensanchado: exime UN sitio, no una plantilla
+        # entera ni un fichero.
+        self.assertEqual(
+            len(_sitios_de_cifra_de_la_pieza_de_ui_sin_usar()), 1,
+            "la excepción del control de población ha crecido: solo puede encoger",
+        )
+
+    def test_la_poblacion_declarada_no_sale_de_un_grep_sino_del_arbol_compilado(self):
+        """Guarda de rojo mudo del propio control: si `_sitios_de_cifra_declarados` dejara de
+        encontrar nada (un cambio en los cargadores, un filtro de más), la comparación de arriba
+        compararía el vacío contra el vacío y colaría en verde para siempre — exactamente la
+        familia de fallo que H21 es. Se exige que la población declarada traiga sitios de VARIAS
+        plantillas distintas, sin nombrar ninguna."""
+        declarados = _sitios_de_cifra_declarados()
+        self.assertGreater(
+            len(declarados), 20,
+            f"la población declarada de `.cifra` se ha quedado en {len(declarados)} sitios: el "
+            f"control de H21 estaría comparando casi nada contra casi nada",
+        )
+        plantillas = {sitio.rsplit(":", 1)[0] for sitio in declarados}
+        self.assertGreater(
+            len(plantillas), 5,
+            f"la población declarada solo cubre {sorted(plantillas)}: no está saliendo del árbol",
         )
 
     @staticmethod
