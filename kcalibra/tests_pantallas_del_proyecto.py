@@ -3946,3 +3946,26 @@ class R7_LaAlcanzabilidadSeImportaNuncaSeCopiaTests(SimpleTestCase):
                     "paginas/pruebas/tests_copia.py": ["nada_lo_tapa"],
                 },
             )
+
+    def test_mutacion_el_modulo_compartido_no_se_cuenta_a_si_mismo_como_redefinicion(self):
+        """H37-S (vuelta 20 de la 059, MEDIO, encontrado en la 4ª ronda de barrido) —
+        `_ficheros_de_test_que_redefinen_piezas` excluye explícitamente `modulo_compartido`
+        del barrido, para el caso en que el propio módulo compartido (donde las ocho piezas SÍ
+        se definen de verdad) coincidiera con el patrón `test*.py` — hoy no ocurre
+        (`kcalibra/ayuda_de_alcanzabilidad.py` no empieza por «test»), así que ninguno de los
+        dos tests de arriba, que pasan ese parámetro con su nombre real, llega a ejercitar esta
+        línea: medido por mí, mismo método del revisor, quitarla deja los 205 tests de
+        `kcalibra` en verde. Aquí se construye el caso que sí la ejercita: un módulo compartido
+        de usar y tirar cuyo NOMBRE empieza por «test», definiendo sus propias piezas — sin la
+        exclusión, se contaría a sí mismo como una redefinición."""
+        with TemporaryDirectory() as tmp:
+            modulo_compartido_de_prueba = Path(tmp) / "tests_de_alcanzabilidad_h37s.py"
+            modulo_compartido_de_prueba.write_text(
+                "def nada_lo_tapa(caso, contenido, coincide, nombre):\n    pass\n"
+            )
+            con_copia = _ficheros_de_test_que_redefinen_piezas(tmp, modulo_compartido_de_prueba)
+            self.assertEqual(
+                con_copia, {},
+                "el propio módulo compartido (cuyo nombre empieza por «test») se contó a sí "
+                "mismo como una redefinición: la exclusión de `modulo_compartido` se ha perdido",
+            )
