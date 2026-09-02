@@ -781,15 +781,18 @@ class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
         """H39 (revisión 17 de la 059, BLOQUEANTE) — la SEGUNDA puerta del trinquete de arriba:
         hasta la vuelta anterior, `_CIERRAN_UN_PARRAFO_DE_HTML` entraba en la propia unión que
         construye `_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR`, así que borrar un miembro de la
-        constante lo sacaba TAMBIÉN del universo por el mismo movimiento: el navegador dejaba de
-        examinarlo y el trinquete de arriba se quedaba mudo, porque los dos lados del `<=`
-        encogían a la vez. Medido por el revisor: 24 de las 41 etiquetas —«address» y «summary»
-        entre ellas— se podían borrar de la constante con los 221 tests en verde. Esta es la
-        mitad ESTRUCTURAL del arreglo, sin Playwright: una constante mutada, con «address» y
-        «summary» borrados, deja esas dos etiquetas DENTRO del universo — huérfanas, no
-        desaparecidas — porque el universo ya no depende de la constante que audita; la mitad
-        que sí necesita el navegador la cierra
-        `LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`, abajo."""
+        constante lo sacaba TAMBIÉN del universo por el mismo movimiento. Medido por el revisor:
+        24 de las 41 etiquetas —«address» y «summary» entre ellas— se podían borrar de la
+        constante con los 221 tests en verde.
+
+        Este test acredita la ARITMÉTICA del arreglo, no la fórmula real: recompone el universo
+        con las mismas cuatro listas más `_ETIQUETAS_QUE_CIERRAN_UN_PARRAFO_SIN_OTRA_
+        CLASIFICACION`, y comprueba que una constante mutada deja «address» y «summary» DENTRO —
+        huérfanas, no desaparecidas. Que la fórmula REAL sea ésa y no otra lo vigila
+        `test_el_universo_de_la_sonda_no_nombra_la_constante_que_audita` (abajo, H40 de la
+        revisión 18: sin él, revertir la línea 706 dejaba los 223 en verde). Y la mitad que
+        necesita el navegador la cierra
+        `LaConstanteCierranUnParrafoDeHtmlCoincideConElNavegadorTests`."""
         constante_mutada = _CIERRAN_UN_PARRAFO_DE_HTML - {"address", "summary"}
         universo_con_la_constante_mutada = frozenset(
             (_ETIQUETAS_INLINE | _ETIQUETAS_DE_BLOQUE | _VACIAS_DE_HTML | _CIERRE_OPCIONAL_DE_HTML
@@ -807,6 +810,31 @@ class LaSondaNoDescartaNingunaEtiquetaDeLaConstantePropiaTests(SimpleTestCase):
             "summary", universo_con_la_constante_mutada,
             "«summary» desapareció del universo de la sonda al borrarse de la constante: la "
             "segunda puerta de H39 sigue abierta",
+        )
+
+    def test_el_universo_de_la_sonda_no_nombra_la_constante_que_audita(self):
+        """H40 (revisión 18) — el test de arriba recompone la fórmula del universo A MANO, así
+        que no puede notar que la fórmula REAL vuelva a colgar de la constante que audita: medido,
+        revertir la línea 706 a `| _CIERRAN_UN_PARRAFO_DE_HTML` deja los 223 en verde y H39 vuelve
+        entero. Esto lo lee del código de verdad, no de una copia."""
+        import ast
+        import inspect
+        import sys
+
+        arbol = ast.parse(inspect.getsource(sys.modules[type(self).__module__]))
+        asignaciones = [
+            n for n in arbol.body
+            if isinstance(n, ast.Assign)
+            and any(getattr(d, "id", None) == "_CANDIDATOS_PARA_LA_SONDA_DEL_NAVEGADOR"
+                    for d in n.targets)
+        ]
+        self.assertEqual(len(asignaciones), 1, "cambió la forma de la asignación del universo")
+        nombrados = {n.id for n in ast.walk(asignaciones[0].value) if isinstance(n, ast.Name)}
+        self.assertNotIn(
+            "_CIERRAN_UN_PARRAFO_DE_HTML", nombrados,
+            "el universo de la sonda ha vuelto a colgar de la constante que acredita: borrar un "
+            "miembro de `_CIERRAN_UN_PARRAFO_DE_HTML` lo sacaría también del examen contra "
+            "Chromium y nadie lo notaría (H39, reabierto)",
         )
 
 
