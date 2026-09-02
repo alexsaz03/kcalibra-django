@@ -93,15 +93,21 @@ PIEZAS_PORTADAS = _piezas_portadas_de_ui_html()
 # tokens de macro/racha en la 050 ("nace con la primera pantalla que la use"): existe, una sola
 # vez, lista para cuando haga falta, pero no está en el barrido de "piezas usadas" de abajo.
 #
-# `PLANTILLAS` (arriba) y `_rutas_de_las_siete_pantallas` (abajo) SIGUEN a mano, y es a
-# propósito, no deuda (E, revisión 8ª vuelta lo preguntaba): `PLANTILLAS` es la lista blanca
-# del ALCANCE de esta unidad — coincide byte a byte con `ficheros:` de la especificación, y
-# derivarla de un glob del árbol tragaría cualquier plantilla nueva de la 054/055 sin que esta
-# unidad lo decidiera (la propia especificación, "Fuera de alcance", prohíbe tocar nada que no
-# sea esto). `_rutas_de_las_siete_pantallas` mapea cada plantilla a su URL real, información de
-# enrutado que no vive en el árbol de ficheros (Django no ofrece "plantilla → ruta" a la
-# inversa sin resolver vistas una a una) — es exactamente el tipo de dato que una fixture de
-# integración tiene que nombrar, como ya hace cualquier `self.client.get(...)` de esta suite.
+# `PLANTILLAS` (arriba) SIGUE a mano, y es a propósito, no deuda (E, revisión 8ª vuelta lo
+# preguntaba): es la lista blanca del ALCANCE de esta unidad — coincide byte a byte con
+# `ficheros:` de la especificación, y derivarla de un glob del árbol tragaría cualquier
+# plantilla nueva de la 054/055 sin que esta unidad lo decidiera (la propia especificación,
+# "Fuera de alcance", prohíbe tocar nada que no sea esto).
+#
+# Unidad 059 — `_rutas_de_las_siete_pantallas` (que vivía aquí) y el barrido de
+# `test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra` que la usaba se SACARON de
+# este fichero: la red permanente de `kcalibra/tests_pantallas_del_proyecto.py` cubre ya ese
+# mismo barrido (R6 de esta unidad, R5 de la 059) sobre las QUINCE pantallas reales de hoy, con
+# un vocabulario más ancho (derivado de las `choices` de `despensa`/`recetas`, no solo
+# `kcal|kg|g|min|%`) y rutas que salen de un recorrido real de la app, no de una lista de siete
+# escrita a mano — mantenerlo aquí también habría sido la misma duplicación que esta unidad
+# existe para cerrar. Los tres tests de `id` concretos y el de las piezas compartidas, más
+# abajo, se quedan: no barren "todo", prueban un caso puntual cada uno.
 #
 # FR-I (revisión, 9ª vuelta): `PIEZAS_USADAS_EN_LAS_PANTALLAS` derivaba de `PIEZAS_PORTADAS` —
 # TODA pieza que _ui.html porte hoy, salvo `barra_macro`. Medido: una pieza nueva añadida a
@@ -157,23 +163,6 @@ _VARIABLE_DE_DJANGO_RE = re.compile(r"\{\{.*?\}\}", re.S)
 # `{% … %}` IMPRIME, y eso es otra lista de literales — justo lo que esta unidad lleva doce
 # vueltas quitando. La 11ª revisión lo dejó explícitamente fuera de lo que hace falta para
 # firmar. Se pasa por escrito a la 054/055.
-
-
-def _rutas_de_las_siete_pantallas(persona, entreno):
-    """Las siete rutas de verdad (las nueve plantillas de esta unidad menos las dos parciales
-    sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que se renderizan igual
-    porque `progreso/ver.html` y `paginas/inicio.html` las incluyen) — factorizada para que R6
-    y R7 (vuelta 9, comparación de firma sobre HTML renderizado) barran exactamente el mismo
-    conjunto sin repetir la lista a mano dos veces."""
-    return [
-        "/",
-        f"/planes/{persona.id}/apuntar/",
-        "/entrenos/",
-        f"/entrenos/{persona.id}/{entreno.id}/corregir/",
-        "/perfiles/peso/",
-        f"/progreso/{persona.id}/",
-        f"/cierres/{persona.id}/",
-    ]
 
 
 def _indices_del_h1_de_titulo(contenido):
@@ -581,7 +570,24 @@ _CLASE_DE_LA_PIEZA_RE = re.compile(r'''class=(["'])(?P<clases>.*?)\1''', re.S)
 # `.cifra`); (b) `%` se ancla con `(?!\\w)` en vez de `\\b`, igual que el resto de unidades
 # (`(?!\\w)` y `\\b` coinciden para las que terminan en letra, y sólo `(?!\\w)` funciona
 # también para `%`, que no es un carácter de palabra).
-_NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
+#
+# H9 (revisión 4 de la 059) — frontera IZQUIERDA: el regex sólo anclaba por la derecha
+# (`(?!\w)`), así que un dígito pegado a una letra a su IZQUIERDA (`...KMN3G`, la cola de un
+# identificador alfanumérico al azar como el código de hogar) casaba igual («3G» ~ «3 gramos»,
+# con `re.I`). `(?<!\w)` exige que el dígito no venga precedido de una letra/dígito/`_`, cerrando
+# esa entrada sin tocar ningún número de dato real (medido: "4 raciones", "500 g", "2 lata",
+# "1800 kcal", "72.5 kg" siguen casando igual con la frontera puesta).
+#
+# H10 (revisión 5 de la 059, BLOQUEANTE) — el `(?<!\w)` de H9 rompía TAMBIÉN dos números de
+# dato REALES: `hallazgos` (más abajo) concatenaba los sub-trozos del documento SIN separador
+# (`"".join(piezas)`), así que `<dt>Altura</dt><dd>...<span>{{ perfil.altura_cm }}</span> cm</dd>`
+# llegaba al regex como `"Altura167 cm"` — la `a` de "Altura" quedaba PEGADA al `1`, y la
+# frontera izquierda mataba una coincidencia real (medido: `perfiles/ver.html:98` y `:101`,
+# con las 893 en VERDE). El arreglo no es del regex: es del PEGADO — refinado en H11 (revisión 6
+# de la 059) para que sólo separe un salto de elemento de BLOQUE, no cualquier `handle_data`
+# distinto. Ver `_SEPARADOR_ENTRE_TROZOS`/`_ETIQUETAS_INLINE`/`_piezas_por_procedencia`/
+# `hallazgos`, abajo.
+_NUMERO_CON_UNIDAD_RE = re.compile(r"(?<!\w)\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.I)
 
 # Vuelta 12 — la 10ª revisión (BLOQUEANTE) midió que la procedencia "por construcción" de la
 # vuelta 11 sólo cubría UNO de los caminos: parcheaba `render_value_in_context`
@@ -649,6 +655,146 @@ _NUMERO_CON_UNIDAD_RE = re.compile(r"\d[\d.,]*\s*(?:kcal|kg|g|min|%)(?!\w)", re.
 _INICIO_VARIABLE = "\x01"
 _FIN_VARIABLE = "\x02"
 _MARCA_DE_PROCEDENCIA_RE = re.compile(f"[{_INICIO_VARIABLE}{_FIN_VARIABLE}]")
+
+# H10 (revisión 5 de la 059) — el separador que `_NumerosDeDatoEnElTexto.hallazgos` mete ENTRE
+# sub-trozos que vienen de un `handle_data` distinto (ver `_piezas_por_procedencia`/`hallazgos`,
+# más abajo). Tiene que ser un espacio DE VERDAD, no un carácter de control como `\x00`: el
+# regex reencuentra un número con su unidad a través de `\s*`, que absorbe un espacio de más
+# sin problema, pero NO absorbe `\x00` — un separador que no fuera espacio rompería el propio
+# caso que este mecanismo existe para arreglar (`<span>{{ v }}</span> kg`, la unidad en un
+# elemento distinto del número).
+_SEPARADOR_ENTRE_TROZOS = " "
+
+# H11 (revisión 6 de la 059, MEDIO) — H10 separaba TODO límite entre `handle_data` distintos,
+# sin mirar QUÉ etiqueta cruzaba ese límite. Eso también despega las mitades de una palabra que
+# una etiqueta parte por dentro (`r<b>a</b>ciones`, `Mili<wbr>litros`, `k<span>g</span>`): cada
+# apertura o cierre dispara un `handle_data` nuevo igual que un salto de bloque de verdad, y el
+# espacio insertado deja "raciones" convertido en "r a ciones" — la unidad ya no casa con ningún
+# vocabulario y la detección desaparece entera (falso VERDE, medido en la Revisión 6, cuatro
+# formas: `k<span>g</span>`, `Mili<wbr>litros`, `kc<br>al`, `<b>Gra</b>mos`).
+#
+# La regla no es "pegar" ni "separar": es lo que VE EL LECTOR. El HTML colapsa los espacios de la
+# fuente, así que dos trozos de texto sin espacio entre etiquetas INLINE se leen como UNA palabra
+# (van PEGADOS); un salto de elemento de BLOQUE se lee como una separación real (va SEPARADO). Un
+# `<span>`/`<b>`/`<wbr>`/etc. dentro de una palabra no cambia lo que un lector ve; un `</dt><dd>`
+# sin espacio en la fuente, sí. `_ETIQUETAS_INLINE` es la lista CERRADA que no separa; cualquier
+# otra etiqueta (las de bloque explícitas, `_ETIQUETAS_DE_BLOQUE` más abajo) SÍ separa.
+#
+# H12 (revisión 7 de la 059, MEDIO) — O13: esta misma sección afirmaba, hasta esta vuelta, que
+# entre "todo lo desconocido pega" y "todo lo desconocido separa" la segunda "sólo arriesga un
+# falso ROJO — deuda —, nunca un falso VERDE — silencio". MEDIDO Y FALSO, por los DOS lados
+# (DIANA 1 de la Revisión 7, `.runtime/rev7/diana1.py`): una etiqueta desconocida que en
+# realidad es de nivel de texto (`<mark>`, `<u>`, `<time>`…) cae del lado "separa" por defecto y
+# PIERDE la detección ENTERA en cuanto parte la palabra de la unidad — 52 de 104 medidas, falso
+# VERDE, no falso rojo —; y una desconocida que en realidad fuera de bloque, si el mecanismo
+# pegara por defecto, también fallaría hacia falso VERDE (es H10). Ninguna de las dos ramas de
+# esa disyuntiva falla hacia rojo: la lista es una ELECCIÓN con riesgo de falso VERDE por los dos
+# lados, y por eso necesita un TRINQUETE (`TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`,
+# `kcalibra/tests_pantallas_del_proyecto.py`), no una frase que prometa una garantía que la red
+# no da — la tercera vez en esta unidad que pasa (R10, O12, y ésta).
+#
+# El trinquete exige que TODA etiqueta que el árbol de plantillas usa de verdad esté nombrada en
+# una de las dos listas de aquí abajo (H14, revisión 8 de la 059: eran tres, hasta que esa
+# tercera familia demostró perder cobertura y se retiró — ver el comentario de
+# `_ETIQUETAS_DE_BLOQUE`) — nunca "lo que no está en `_ETIQUETAS_INLINE` es de bloque por
+# descarte": `_ETIQUETAS_DE_BLOQUE` es explícita, y una etiqueta que no esté en NINGUNA de las
+# dos pone la suite roja nombrándola (H12, Medición C de la Revisión 7: antes de esa vuelta,
+# `_ETIQUETAS_INLINE` no la vigilaba nadie). H13 (revisión 8) — este trinquete sólo mira los
+# `.html` del repositorio, una población DISTINTA de la que `_NumerosDeDatoEnElTexto` recorre de
+# verdad (HTML ya renderizado): `kcalibra/tests_pantallas_del_proyecto.py` añade un segundo
+# trinquete, sobre páginas renderizadas, para que la población deje de ser una lista paralela.
+#
+# Efecto lateral medido (Revisión 6, Medición 3): con H10 (separaba SIEMPRE), dos `<span>`
+# hermanos —los dos inline— también se separaban, y eso le devolvía a un identificador opaco
+# PARTIDO entre ellos (`<span>ABC</span><span>{{v}}</span>`, familia H9) la frontera izquierda
+# que H9 le había quitado (`ABC2G` pegado no casa; `ABC 2G` separado sí). Con la regla de
+# bloque/inline, dos `<span>` seguidos NO separan: ese falso ROJO latente desaparece solo, sin
+# tocar H9.
+#
+# O14 (Revisión 7) — la mitad que el párrafo de arriba NO dice: ese mismo efecto lateral sigue
+# VIVO, igual que en `838f51d`, cuando el identificador opaco se parte entre dos elementos de
+# BLOQUE hermanos (`<div>`/`<div>`, `<p>`/`<p>`, `<dt>`/`<dd>`, `<li>`/`<li>`): el separador de
+# bloque le regala la misma frontera izquierda que H9 le había quitado, y vuelve a casar
+# (medido: `.runtime/rev7/h9-partido.py`, los cuatro casos de bloque dan `[('32G', True)]`, igual
+# que el pegado total de `838f51d`). Hoy no ocurre en ninguna pantalla real —el código de hogar
+# se pinta entero dentro de un único `<p>`, medido vivo— así que es DEUDA, no bloqueo; se deja
+# escrito para que la mitad cerrada no esconda la mitad abierta.
+_ETIQUETAS_INLINE = frozenset({
+    "b", "i", "span", "wbr", "br", "a", "em", "strong", "small", "sup", "sub", "abbr", "code",
+    # H12 (revisión 7 de la 059) — de nivel de texto: el lector las lee SEGUIDAS de lo que las
+    # rodea, igual que un `<span>` (`<label>Peso <span>80</span> kg</label>` se lee corrido).
+    "button", "label", "select", "option",
+    # H13 (revisión 8 de la 059, BLOQUEANTE) — otro control de formulario de nivel de texto, el
+    # mismo papel que `input`/`select`/`button` arriba. O22 (revisión 9): el porqué es el mismo
+    # criterio que el resto de esta lista —lo que VE EL LECTOR, no cómo lo pinta el navegador—:
+    # un `<textarea>` va pegado dentro de una frase corrida igual que un `<span>`
+    # (`Escríbela de corrido <textarea>…</textarea> aquí` se leería seguido si hubiera texto a
+    # los lados). Medido por los dos lados (revisión 9, `.runtime/rev9-revision/d5-textarea.txt`):
+    # pasarla a `_ETIQUETAS_DE_BLOQUE` no pega ni separa nada distinto sobre las 39 rutas reales
+    # de hoy (0 pérdidas, 0 ganancias) — así que hoy da igual, pero el criterio que manda es el
+    # de arriba, no cómo la renderiza CSS. Medido en vivo (sin mutar nada): `<textarea>` la emite
+    # `forms.Textarea` (`recetas/forms.py`, `perfiles/forms.py`, `hogares/forms.py`) en nueve
+    # páginas reales de hoy, en NINGÚN `.html` del repositorio — el trinquete sobre el árbol
+    # (H12) no podía verla nunca; el trinquete sobre páginas renderizadas
+    # (`_etiquetas_sin_clasificar_en_paginas`, `kcalibra/tests_pantallas_del_proyecto.py`) sí.
+    "textarea",
+    # H12 — vacía (`SIN_CIERRE`): nunca lleva texto propio y no rompe la línea que la contiene,
+    # el mismo papel que `<br>`, ya en esta lista.
+    "input",
+    # H12 — sin texto propio: son coordenadas vectoriales de un icono, nunca encierran un
+    # `handle_data` entre su apertura y su cierre — da igual si la etiqueta que las envuelve
+    # (`<svg>`) es INLINE o de BLOQUE (ahora de BLOQUE, H14 más abajo), porque jamás hay texto
+    # que pegar o separar con ellas. Se clasifican aquí sólo para que el trinquete no las señale
+    # como huérfanas. `path` y `circle` están además en `SIN_CIERRE`
+    # (`kcalibra/ayuda_de_alcanzabilidad.py`); `polyline` NO (O21, revisión 9: el comentario
+    # anterior lo afirmaba de los tres y era falso para éste — medido, `polyline INLINE=True
+    # SIN_CIERRE=False`) — en el marcado real siempre llega autocerrada (`<polyline … />`) y
+    # `handle_startendtag` la equilibra igual, así que hoy es inocuo, pero el dato estaba mal.
+    "path", "circle", "polyline",
+})
+
+# H12 (revisión 7 de la 059) — la lista EXPLÍCITA de lo que separa: antes de esta vuelta, "no
+# está en `_ETIQUETAS_INLINE`" bastaba para tratar una etiqueta como de bloque, sin que nadie la
+# nombrara — así es como `_ETIQUETAS_INLINE`, la CUARTA lista escrita a mano de esta unidad,
+# llevaba siete pantallas usando `button`/`label`/`input`/`svg`/`select`/`option`/`path`/
+# `circle`/`template` sin que nadie las clasificara nunca. Cada una de éstas es un elemento de
+# BLOQUE de verdad — el lector las lee como líneas o párrafos aparte, no corridas con el texto
+# que las rodea —, medidas sobre el árbol real de hoy (`kcalibra/tests_pantallas_del_proyecto.py`,
+# `TodaEtiquetaUsadaEnElArbolEstaClasificadaTests`).
+#
+# H14 (revisión 8 de la 059, BLOQUEANTE) — `svg`/`template` viven AQUÍ, no en una tercera lista
+# aparte. La vuelta 8 los sacó de aquí a una `_ETIQUETAS_SIN_TEXTO` propia que dejaba de acumular
+# TODO su interior como texto, con la premisa "dentro de `<svg>` no hay prosa, son coordenadas
+# vectoriales" — verdad de los `<svg>` que había entonces (`templates/_iconos.html`,
+# `progreso/_grafica.html`, los dos sin una sola palabra dentro), FALSA de `<svg>` en general:
+# `<svg><text>` es texto que el navegador PINTA, `<svg><title>` es el NOMBRE ACCESIBLE que un
+# lector de pantalla lee, y `<foreignObject>` lleva HTML de verdad. Medido: de nueve formas
+# realistas, SEIS pasaron de detectarse a NO detectarse (`<svg><text>`, `<svg><foreignObject>`,
+# `<template>` con contenido, un `<svg>` que envuelve algo legible, y un `<svg>`/`<template>` SIN
+# CERRAR) — cobertura perdida, el lado que la 26ª cara prohíbe expresamente ("cuando el mecanismo
+# no sabe clasificar, la respuesta segura es vigílalo, no exímelo"). El agravante: un `<svg>` o
+# `<template>` sin cerrar dejaba el contador de esa tercera familia atascado por encima de cero
+# PARA SIEMPRE, apagando R5/R6 para el resto de la página entera en silencio — la misma familia
+# que el `max(0, …)` de la 11ª revisión de la 054 cerró del lado de la procedencia, reabierta aquí
+# del lado de "sin texto". Tratarlos como BLOQUE (lo que eran antes de la vuelta 8) cierra las dos
+# cosas de una vez: el contenido de un `<template>` vuelve a contar como texto de verdad —
+# precisamente lo que JS clona al DOM (`recetas/_fila_ingrediente.html` vive dentro de uno) —, y
+# no queda ningún contador que un desbalance pueda dejar descuadrado. Ninguna plantilla real de
+# hoy tiene texto DENTRO de un `<svg>` (los iconos y la gráfica sólo llevan `<path>`/`<circle>`/
+# `<polyline>`, vacíos), así que este cambio no abre ningún falso rojo sobre el árbol de hoy
+# (barrido de las 39 rutas, cero diferencias contra antes de esta vuelta — hallazgos.md).
+_ETIQUETAS_DE_BLOQUE = frozenset({
+    "body", "dd", "div", "dl", "dt", "form", "h1", "h2", "h3", "head", "header", "html",
+    # H28 (vuelta 18 de la 059, revisión 14) — `<hr>` es una regla horizontal: separa el texto de
+    # un lado del otro para el lector igual que cualquier otra etiqueta de esta lista (no va
+    # "pegada" a la frase, al contrario que `<br>`/`<input>`, que sí están en `_ETIQUETAS_INLINE`
+    # porque no cortan la lectura). Esta clasificación es del trinquete H12 (qué etiqueta usa el
+    # árbol); no es de aquí de donde sale si `<hr>` cierra un `<p>` — eso lo decide, aparte,
+    # `_CIERRAN_UN_PARRAFO_DE_HTML` en `kcalibra/tests_pantallas_del_proyecto.py`.
+    "hr",
+    "li", "link", "main", "meta", "nav", "p", "script", "section", "svg", "template", "title",
+    "ul",
+})
 
 
 @contextmanager
@@ -725,12 +871,34 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
 
     FALSO VERDE 2, mitad "ancla" (revisión, 8ª vuelta, y sigue igual): la cadena de ANCESTROS
     que se usa para mirar `.cifra` sigue siendo la del sub-trozo que trae el PRIMER DÍGITO —
-    eso no cambia; lo que cambia es sólo la decisión de "de_variable", arriba."""
+    eso no cambia; lo que cambia es sólo la decisión de "de_variable", arriba.
+
+    H11 (revisión 6 de la 059, MEDIO) — un tercer dato por sub-trozo, `separa_del_anterior`
+    (`_piezas_por_procedencia`/`hallazgos`, abajo): si el `handle_data` que lo trajo queda al
+    otro lado de un límite de BLOQUE (`_ETIQUETAS_INLINE`) del `handle_data` anterior. Se
+    calcula aquí, en `handle_starttag`/`handle_endtag`, porque sólo aquí se ve QUÉ etiqueta cruzó
+    ese límite — `_piezas_por_procedencia` sólo ve el resultado ya trazado.
+
+    H12 (revisión 7 de la 059, MEDIO) introdujo un contador, `_profundidad_sin_texto`, que
+    dejaba de acumular texto en absoluto dentro de `<template>`/`<svg>`. H14 (revisión 8,
+    BLOQUEANTE) lo retiró: medido en vivo, esa exención perdía seis de nueve formas de texto que
+    un usuario SÍ lee o SÍ escucha (`<svg><text>`, `<svg><title>`, `<foreignObject>`, el
+    contenido de un `<template>` que JS clona al DOM…), y un `<svg>`/`<template>` sin cerrar
+    dejaba el contador atascado por encima de cero para siempre, apagando R5/R6 para el resto
+    del documento en silencio. `<svg>`/`<template>` son ahora etiquetas de BLOQUE normales
+    (`_ETIQUETAS_DE_BLOQUE`, arriba): su contenido cuenta como texto igual que el de cualquier
+    otro elemento, y `_cruza_bloque_pendiente` (abajo) es lo único que decide si un salto de
+    etiqueta pega o separa."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.pila = []
-        self._trozos = []  # (texto, cadena_de_ancestros), en orden del documento
+        self._trozos = []  # (texto, cadena_de_ancestros, separa_del_anterior), en orden
+        # H11 — `True` mientras, desde el último `handle_data`, se haya abierto o cerrado
+        # ALGUNA etiqueta que no sea inline (`_ETIQUETAS_INLINE`); se consume (y se resetea a
+        # `False`) en el PRÓXIMO `handle_data`, así que "al menos una fue de bloque" sobrevive
+        # aunque entre medias también se cruce alguna inline.
+        self._cruza_bloque_pendiente = False
 
     def handle_starttag(self, etiqueta, atributos_crudos):
         # Vuelta 12b: el centinela marca la PROCEDENCIA DEL TEXTO (`handle_data`, abajo) — pero
@@ -748,27 +916,33 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
             for nombre, valor in atributos_crudos
         ]
         attrs = atributos(atributos_crudos)
+        if etiqueta not in _ETIQUETAS_INLINE:
+            self._cruza_bloque_pendiente = True
         if etiqueta not in SIN_CIERRE:
             self.pila.append((etiqueta, attrs))
 
     def handle_data(self, datos):
         if datos:
-            self._trozos.append((datos, list(self.pila)))
+            self._trozos.append((datos, list(self.pila), self._cruza_bloque_pendiente))
+            self._cruza_bloque_pendiente = False
 
     def handle_endtag(self, etiqueta):
         etiqueta = _MARCA_DE_PROCEDENCIA_RE.sub("", etiqueta)
+        if etiqueta not in _ETIQUETAS_INLINE:
+            self._cruza_bloque_pendiente = True
         for k in range(len(self.pila) - 1, -1, -1):
             if self.pila[k][0] == etiqueta:
                 del self.pila[k:]
                 return
 
     def _piezas_por_procedencia(self):
-        """`(subtexto, cadena_de_ancestros, de_variable)` de cada sub-trozo del documento
-        entero, en orden, con el contador de profundidad cruzando los `handle_data`: abre con
-        `_INICIO_VARIABLE` (profundidad += 1), cierra con `_FIN_VARIABLE` (profundidad -= 1,
-        ACOTADA en 0), y todo lo que cae con profundidad > 0 es "de variable". Las dos marcas
-        se BORRAN del texto (no forman parte de ningún sub-trozo), así que un número y su
-        unidad separados sólo por el centinela de cierre quedan pegados otra vez.
+        """`(subtexto, cadena_de_ancestros, de_variable, separa_del_anterior)` de cada sub-trozo
+        del documento entero, en orden, con el contador de profundidad cruzando los
+        `handle_data`: abre con `_INICIO_VARIABLE` (profundidad += 1), cierra con
+        `_FIN_VARIABLE` (profundidad -= 1, ACOTADA en 0), y todo lo que cae con profundidad > 0
+        es "de variable". Las dos marcas se BORRAN del texto (no forman parte de ningún
+        sub-trozo), así que un número y su unidad separados sólo por el centinela de cierre
+        quedan pegados otra vez.
 
         La cota en 0 (11ª revisión, BLOQUEANTE): un `_FIN_VARIABLE` que se cuela dentro de una
         etiqueta (fuera de `handle_data`, ver `handle_starttag`/`handle_endtag` arriba) mientras
@@ -776,29 +950,68 @@ class _NumerosDeDatoEnElTexto(HTMLParser):
         cae a -1 y a partir de ahí un `{{ … }}` de verdad sólo lo sube a 0: `de_variable = False`
         para TODO lo que quede de página, apagando R6 en silencio de punta a punta. Con la cota,
         un centinela descompensado sólo hace perder profundidad de más (falso ROJO, el lado
-        seguro) en vez de apagar el resto del documento."""
+        seguro) en vez de apagar el resto del documento.
+
+        `separa_del_anterior` (H11, revisión 6 de la 059): `True` sólo para el PRIMER sub-trozo
+        de un `handle_data` cuyo límite con el anterior cruzó una etiqueta de BLOQUE
+        (`self._cruza_bloque_pendiente`, calculado en `handle_starttag`/`handle_endtag`);
+        `False` para cualquier sub-trozo que salga de PARTIR ese mismo `handle_data` por el
+        centinela de procedencia (nunca hay una etiqueta real entre ellos, así que nunca
+        separan) y para el primer sub-trozo de un `handle_data` cuyo límite sólo cruzó
+        etiquetas INLINE. `hallazgos`, abajo, sólo separa con un espacio los `True`."""
         piezas = []
         profundidad = 0
-        for texto, cadena in self._trozos:
+        for texto, cadena, cruza_bloque in self._trozos:
             cursor = 0
+            primer_subtrozo = True
             for marca in _MARCA_DE_PROCEDENCIA_RE.finditer(texto):
                 if marca.start() > cursor:
-                    piezas.append((texto[cursor:marca.start()], cadena, profundidad > 0))
+                    piezas.append((
+                        texto[cursor:marca.start()], cadena, profundidad > 0,
+                        primer_subtrozo and cruza_bloque,
+                    ))
+                    primer_subtrozo = False
                 if marca.group() == _INICIO_VARIABLE:
                     profundidad += 1
                 else:
                     profundidad = max(0, profundidad - 1)
                 cursor = marca.end()
             if cursor < len(texto):
-                piezas.append((texto[cursor:], cadena, profundidad > 0))
+                piezas.append((
+                    texto[cursor:], cadena, profundidad > 0, primer_subtrozo and cruza_bloque,
+                ))
         return piezas
 
     @property
     def hallazgos(self):
+        """H10 (revisión 5 de la 059, BLOQUEANTE) — `texto_completo` ya NO es la concatenación
+        a pelo de todos los sub-trozos (`"".join(piezas)`): eso pegaba también el texto de
+        ELEMENTOS DISTINTOS que en la fuente no llevan ni un espacio entre sí
+        (`<dt>Altura</dt><dd>...` → `"Altura167 cm"`), y la frontera izquierda de H9 (`(?<!\\w)`)
+        confundía la `a` de "Altura" con el dígito de un número de dato real y lo eximía.
+
+        H11 (revisión 6 de la 059, MEDIO) — separar TODO límite entre `handle_data` (el arreglo
+        de H10) también despegaba las mitades de una palabra que una etiqueta INLINE parte por
+        dentro (`r<b>a</b>ciones`, `Mili<wbr>litros`): la unidad dejaba de casar con su
+        vocabulario y la detección desaparecía entera. La regla ya no es "handle_data nuevo":
+        es **lo que separa un salto de elemento de BLOQUE** (`separa_del_anterior`, arriba) —
+        dos trozos que sólo cruzan etiquetas INLINE (o que vienen del mismo `handle_data`,
+        partido sólo por el centinela de procedencia) se quedan pegados a pelo, como los leería
+        un lector: `\\s*` en `_NUMERO_CON_UNIDAD_RE` sigue absorbiendo sin esfuerzo el espacio
+        que SÍ se añade en un salto de bloque, y si el literal que sigue YA traía el suyo
+        (`" cm"`), el resultado son dos espacios seguidos, que `\\s*` también absorbe. Con esto,
+        las cadenas que cambian de comportamiento frente al pegado total de `6dc5924` son las
+        que cruzan un salto de BLOQUE sin espacio en la fuente (`Altura167 cm`, el caso de H10,
+        y sus hermanas) — no "la única", como afirmaba una versión anterior de este docstring,
+        medible y falsa: la Medición 3 de la Revisión 6 midió once formas que cambian de
+        comportamiento con el separador puesto (`hallazgos.md`, "Vuelta de revisión 6")."""
         limites = []  # (inicio, fin, cadena_de_ancestros, de_variable) de cada sub-trozo
         piezas = []
         cursor = 0
-        for subtexto, cadena, de_variable in self._piezas_por_procedencia():
+        for subtexto, cadena, de_variable, separa_del_anterior in self._piezas_por_procedencia():
+            if piezas and separa_del_anterior:
+                piezas.append(_SEPARADOR_ENTRE_TROZOS)
+                cursor += len(_SEPARADOR_ENTRE_TROZOS)
             piezas.append(subtexto)
             limites.append((cursor, cursor + len(subtexto), cadena, de_variable))
             cursor += len(subtexto)
@@ -923,56 +1136,14 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
                     tokens.update(coincidencia.group("clases").split())
                 self.assertIn("cifra", tokens, f"{pieza} perdió `.cifra`")
 
-    def test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra(self):
-        """FALSO VERDE 1, BLOQUEANTE (revisión, 6ª vuelta): un barrido de verdad, no una
-        muestra escrita a mano — los tres tests de arriba fijan tres `id` y el de las piezas
-        compartidas fija tres piezas; ninguno mira los números que cada pantalla escribe en
-        línea, que son la mayoría. Es la tercera vez que la misma lección asoma en esta
-        unidad (Hueco 2 de la revisión 3ª vuelta, ya sobre R6): *cada vez que un criterio
-        dice "TODO" o "CADA", la red lo había comprobado sobre una muestra*.
-
-        El revisor lo midió sobre HTML renderizado, imprimiendo la cadena de ancestros de
-        `(19% de tu objetivo de 2677 kcal)` en `planes/apuntar.html:65`: ningún ancestro
-        llevaba `.cifra`, y ese número vive dentro de `#plan-de-hoy` (l.29), la diana de HTMX
-        (`hx-target="#plan-de-hoy"`, `hx-swap="outerHTML"`, l.76-77) que se repinta cada vez
-        que apuntas una comida — el escenario exacto por el que R6 existe, con `kcal`
-        enumerado en su criterio con todas las letras. Antes de añadirle `.cifra` a esa `<p>`,
-        este mismo test caía en rojo con ese mensaje exacto; con el token puesto, en verde (la
-        mutación y su control están en hallazgos.md, "Vuelta 8").
-
-        Se recorren las siete pantallas de verdad (las nueve plantillas de esta unidad menos
-        las dos parciales sin ruta propia, `_grafica.html` y `_pregunta_pendiente.html`, que
-        se renderizan igual porque `progreso/ver.html` y `paginas/inicio.html` las incluyen)
-        con datos reales — la fixture de esta clase ya trae un plan, un entreno y dos
-        pesadas, así que todos los números de dato de las nueve plantillas tienen algo que
-        mostrar.
-
-        Vuelta 11 — la exención ya no compara VALORES (ver `_con_procedencia_marcada`, arriba):
-        se renderiza con el motor parcheado y cada coincidencia se exime sólo si NINGÚN
-        sub-trozo que la compone viene de una variable — prosa fija de verdad, esté donde esté
-        escrita, en lugar de un valor que coincida con lo que sea que escriban a mano los diez
-        ficheros.
-
-        Vuelta 12 — el parche deja de perseguir `render_value_in_context` (que otros dos
-        módulos de Django importan por nombre y que `{% now %}`/`{% widthratio %}`/todo
-        `{% simple_tag %}` nunca llaman) y pasa a envolver por NODO lo que no es `TextNode`:
-        el punto de enganche cambia, la letra de este test no."""
-        sin_cifra = []
-        with _con_procedencia_marcada():
-            for ruta in _rutas_de_las_siete_pantallas(self.alejandro, self.entreno):
-                respuesta = self.client.get(ruta)
-                self.assertEqual(respuesta.status_code, 200, ruta)
-                lector = _NumerosDeDatoEnElTexto()
-                lector.feed(respuesta.content.decode())
-                for numero, cadena, de_variable in lector.hallazgos:
-                    if not de_variable:
-                        continue  # prosa fija de verdad: no puede "bailar", R6 no la exige
-                    if _algun_elemento_de_la_cadena_lleva_cifra(cadena):
-                        continue
-                    sin_cifra.append(f"{ruta}: «{numero}» dentro de {[e for e, _ in cadena]}")
-        self.assertEqual(
-            sin_cifra, [], f"números de dato sin `.cifra`, ni propio ni heredado: {sin_cifra}"
-        )
+    # Unidad 059 — `test_ningun_numero_de_dato_escrito_en_linea_se_queda_sin_cifra` (el barrido
+    # sobre HTML renderizado que vivía aquí, FALSO VERDE 1 BLOQUEANTE de la revisión 6ª vuelta)
+    # se SACÓ de este fichero: `kcalibra/tests_pantallas_del_proyecto.py` corre ya el mismo
+    # barrido — mismo mecanismo (`_con_procedencia_marcada`/`_NumerosDeDatoEnElTexto`,
+    # importados de aquí, no copiados) — sobre las QUINCE pantallas reales de hoy (no solo las
+    # siete de esta unidad) y con un vocabulario más ancho, derivado de las `choices` de
+    # `despensa`/`recetas` en vez de fijo a `kcal|kg|g|min|%`. Mantenerlo aquí también habría
+    # sido exactamente la duplicación que la 059 existe para cerrar.
 
 
 # ------------------------------------------------------------------------------------------ #
@@ -992,6 +1163,18 @@ class R6_CifraEnLosNumerosDeDatoTests(_ConAlejandroYSusDatos):
 _CLASE_CON_ETIQUETA_RE = re.compile(
     r'''<(?P<etiqueta>[a-zA-Z][\w-]*)[^<>]*?\sclass=(["'])(?P<clases>.*?)\2''', re.S
 )
+
+# Unidad 059, vuelta de revisión 2 (H6) — las ocho clases del `<a>` clicable que comparten
+# `boton_redondo`/`boton_redondo_menu` en `_ui.html`, usadas TANTO por la firma de copia de R4
+# (más abajo, candidata de `boton_redondo`) COMO por `_es_boton_o_menu_redondo` de
+# `kcalibra.tests_pantallas_del_proyecto` (R7) — se define aquí, una sola vez, y las dos redes la
+# IMPORTAN: hasta esta vuelta sólo la usaba R7, y la firma de copia de R4 seguía mirando las
+# clases del `<div>` ENVOLTORIO (`pointer-events-none fixed inset-x-0 z-40`), así que pegar a
+# mano sólo el `<a>` clicable no disparaba ninguna de las quince firmas.
+_CLASES_DEL_BOTON_REDONDO = {
+    "pointer-events-auto", "h-14", "w-14", "rounded-pastilla", "bg-tinta", "text-white",
+    "shadow-lg", "active:scale-95",
+}
 
 
 class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
@@ -1136,7 +1319,27 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
                 "minimo": 4,
             },
         ],
-        "pildora_macro": [{"fija": {"rounded-pastilla", "px-3", "py-1.5"}}],
+        # Unidad 059 — el falso ROJO que lo motivó era real (se veía al barrer las QUINCE
+        # pantallas reales del proyecto entero, algo que ningún sweep de la 053 podía ver
+        # porque solo mira sus siete): con solo `rounded-pastilla`+`px-3`+`py-1.5`, la firma
+        # también disparaba sobre botones de "Guardar"/"Quitar" corrientes (`rounded-pastilla
+        # … px-3 py-1.5 text-[13px] font-semibold`, el mismo tamaño de pastilla pequeña) en
+        # `despensa/ver.html`, `hogares/mi_hogar.html` y `recetas/detalle.html` — código
+        # correcto, sin ninguna copia.
+        #
+        # La 1ª vuelta de esta unidad lo cerró AÑADIENDO tres tokens (`inline-flex`,
+        # `items-center`, `gap-1.5`) a `fija` — y eso es AFLOJAR, no apretar: exigir MÁS
+        # tokens para dar por copiada una pieza es detectar MENOS copias (soltar cualquiera de
+        # los tres deja escapar una copia real, medido por la revisión). El arreglo que sí
+        # aprieta es el idiom que este mismo diccionario ya usa para `aviso`: `_pildora_macro_interna`
+        # es un `<span>`; los botones de "Guardar"/"Quitar" que la motivaron son `<button>`/`<a>` —
+        # lo que la distingue de ellos no es más forma, es la ETIQUETA.
+        "pildora_macro": [
+            {
+                "fija": {"rounded-pastilla", "px-3", "py-1.5"},
+                "etiquetas_prohibidas": {"button", "a"},
+            }
+        ],
         "barra_macro": [{"fija": {"h-2", "overflow-hidden", "rounded-pastilla", "bg-lienzo"}}],
         "anillo_abre": [{"fija": {"shrink-0", "rounded-full", "relative"}}],
         "boton": [{"fija": {"px-6", "py-3.5", "transition-opacity", "disabled:opacity-40"}}],
@@ -1167,7 +1370,18 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # `rounded-pastilla`+`px-2.5`+`py-1` ya no digan sobre la forma de la pieza —
         # verificado que este trío tampoco colisiona con nada de las nueve plantillas.
         "distintivo": [{"fija": {"rounded-pastilla", "px-2.5", "py-1"}}],
-        "boton_redondo": [{"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}}],
+        # Dos candidatas independientes, por la FORMA de la pieza: (a) el `<div>` ENVOLTORIO
+        # que posiciona el botón — sigue cazando la copia completa de siempre; (b) el `<a>`
+        # clicable en sí, con `_CLASES_DEL_BOTON_REDONDO` (arriba) y `etiquetas={"a"}` para no
+        # colisionar con el `<button>` disparador de `boton_redondo_menu` (mismas ocho clases,
+        # etiqueta distinta). Sin (b), quien pega a mano SÓLO el `<a>` — lo único que hace
+        # falta para tener el botón, sin su `<div>` envoltorio — no disparaba ninguna de las
+        # quince firmas (H6, vuelta de revisión 2, medido: `¿el <a> suelto dispara …? -> NO`
+        # en las cuatro firmas candidatas).
+        "boton_redondo": [
+            {"fija": {"pointer-events-none", "fixed", "inset-x-0", "z-40"}},
+            {"fija": _CLASES_DEL_BOTON_REDONDO, "etiquetas": {"a"}},
+        ],
         "boton_redondo_menu": [{"fija": {"bottom-16", "right-0", "w-56"}}],
         # Unidad 057, R1/R7 — `segmentado` (Planificador/Recetas), incluida por
         # `planes/apuntar.html`, una de las nueve plantillas de esta unidad (053): esta pieza
@@ -1177,6 +1391,46 @@ class R7_PiezasCompartidasUnaSolaVezTests(SimpleTestCase):
         # para no colisionar, pero se deja el trío completo del contenedor para que la firma
         # describa la FORMA de la pieza, no un accidente de una sola clase.
         "segmentado": [{"fija": {"mb-4", "gap-1", "rounded-pastilla", "bg-lienzo"}}],
+        # Unidad 059 (R4/R10) — las tres piezas que la 054 dejó sin firma portante
+        # (hallazgos.md de la 054, revisión, sección "Lo que sí quedó demostrado"): se contaban
+        # en `PIEZAS_PORTADAS` pero nadie vigilaba si alguna pantalla las copiaba a mano en vez
+        # de incluirlas. Apretar, no aflojar (misma disciplina que ya aplicó la 057 con FR-I).
+        #
+        # `boton_enlace` (`_ui.html`) es la hermana de `boton` sobre un `<a>` — MISMA lección de
+        # la 27ª cara (docs/conocimiento/tests-que-no-fallan-cuando-deben.md): el token
+        # discriminante no puede ser uno que el defecto real (copiar el aspecto de `boton` sobre
+        # un `<a>`, que no entiende `:disabled`) se lleve por delante. `disabled:opacity-40` de
+        # la firma de `boton` YA no sirve aquí a propósito: es justo el token que un `<a>` no
+        # necesita, así que la firma de `boton_enlace` no depende de él.
+        #
+        # La 1ª vuelta de esta unidad añadió `text-[15px]`/`font-semibold` a la firma que la 054
+        # ya había endurecido en tres vueltas — y esos dos son justo TAMAÑO y GROSOR de letra,
+        # lo primero que se ajusta al adaptar un botón pegado a mano: la revisión midió que una
+        # copia real sin `font-semibold` escapaba con esos seis tokens y ya no con estos cuatro.
+        # Se reutiliza, letra por letra, la firma que la 054 dejó — no se re-deriva — y
+        # `etiquetas={"a"}` sigue evitando colisionar con el propio `<button>` de `boton` (que
+        # comparte casi los mismos tokens de espaciado, pero nunca es un `<a>`).
+        "boton_enlace": [
+            {
+                "fija": {"rounded-pastilla", "px-6", "py-3.5", "active:opacity-80"},
+                "etiquetas": {"a"},
+            }
+        ],
+        # `fila_lista_abre` es sólo un `<li>` con su relleno — `etiquetas={"li"}` más los dos
+        # tokens de espaciado que la definen; ninguna de las pantallas reales de hoy tiene otro
+        # `<li>` con exactamente ese par (verificado con el barrido de esta misma unidad).
+        "fila_lista_abre": [{"fija": {"px-4", "py-3"}, "etiquetas": {"li"}}],
+        # `chip` no tiene ningún `{% if %}` en su `class`: toda su firma sobrevive a cualquier
+        # copia completa. El par `has-[:checked]:…` es lo que de verdad la distingue de
+        # cualquier otro `<label>` con `rounded-pastilla` (la forma de "casilla disfrazada de
+        # pastilla" que ningún otro control de esta app repite) — sin depender de `bg-lienzo`
+        # ni de `px-4 py-2`, que sí podrían coincidir con otro elemento por accidente.
+        "chip": [
+            {
+                "fija": {"rounded-pastilla", "has-[:checked]:bg-tinta", "has-[:checked]:text-white"},
+                "etiquetas": {"label"},
+            }
+        ],
     }
 
     @staticmethod

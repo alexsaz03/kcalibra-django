@@ -43,14 +43,14 @@
         {% endif %}
       </div>
 
-      <div>
+      <div role="group" aria-describedby="{{ form.comidas.auto_id }}_helptext">
         <span class="mb-2 block text-[13px] font-semibold text-tinta-media">{{ form.comidas.label }}</span>
         <div class="flex flex-wrap gap-2">
           {% for casilla in form.comidas %}
             {% include "_ui.html#chip" with casilla=casilla %}
           {% endfor %}
         </div>
-        <p class="mt-1 text-[12px] text-tinta-suave">{{ form.comidas.help_text }}</p>
+        <p id="{{ form.comidas.auto_id }}_helptext" class="mt-1 text-[12px] text-tinta-suave">{{ form.comidas.help_text }}</p>
       </div>
 
       {# ------------------------------------------------------------------------------------ #}
@@ -92,7 +92,7 @@
           {{ form.preparacion.label }}
         </label>
         {{ form.preparacion }}
-        <p class="mt-1 text-[12px] text-tinta-suave">{{ form.preparacion.help_text }}</p>
+        <p id="{{ form.preparacion.auto_id }}_helptext" class="mt-1 text-[12px] text-tinta-suave">{{ form.preparacion.help_text }}</p>
       </div>
 
       {% if modo == "editar" %}

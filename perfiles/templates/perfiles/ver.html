@@ -49,7 +49,7 @@
               </label>
               {{ field }}
               {% if field.help_text %}
-                <p class="mt-1 text-[12px] text-tinta-suave">{{ field.help_text }}</p>
+                <p id="{{ field.auto_id }}_helptext" class="mt-1 text-[12px] text-tinta-suave">{{ field.help_text }}</p>
               {% endif %}
               {% if field.errors %}
                 <p class="mt-1 text-[13px] text-racha">{{ field.errors.0 }}</p>

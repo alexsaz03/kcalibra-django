@@ -32,8 +32,12 @@ R1 — veredicto por ruta, medido renderizando cada una (no leyendo), con `djang
 Las cinco EXPUESTAS son exactamente las que "Diseño conversado" de la especificación mide como
 las que pintan campos en bucle genérico. R2 pone red sobre las tres cosas que decide la
 librería en cada una de esas cinco: qué campos, con qué etiqueta, y si su `help_text` sale o
-no. R4 (el `aria-describedby` huérfano) se prueba aparte, sobre las dos pantallas donde vivía
-el resto invisible que dejó la 046: `login` y `password_change`.
+no. R4 (el `aria-describedby` huérfano) se prueba aparte — R10 de la 059 corrige aquí el
+número, que se había quedado en dos: desde la 052 (`PantallaDePonerContrasenaNuevaTests`, que
+empezó a pintar el `help_text` de `password1` en `account_reset_password_from_key`) son
+CUATRO pantallas, no dos, cada una con su propio
+`test_ningun_aria_describedby_apunta_a_un_id_que_no_existe`: `login`, `signup`,
+`password_change` y `password_reset_from_key`.
 """
 
 import re
