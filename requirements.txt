@@ -8,4 +8,4 @@ django-template-partials==25.3
 # límite de intentos fallidos — decidido por el curso (docs/01-constitucion/bias.md, regla 1a),
 # no por preferencia propia. Sin el extra [socialaccount]: entrar con Google/Apple es la
 # unidad R-21, fuera de alcance de esta.
-django-allauth==65.19.1
+django-allauth==65.19.2
