@@ -2,7 +2,7 @@
 # Unidad 002 (esqueleto): Django, el conector de PostgreSQL (psycopg, con su rueda binaria) y
 # django-template-partials.
 Django==5.2.17
-psycopg[binary]==3.3.4
+psycopg[binary]==3.3.5
 django-template-partials==25.3
 # Unidad 003 (cuentas y hogares): django-allauth resuelve el alta, la entrada, la salida y el
 # límite de intentos fallidos — decidido por el curso (docs/01-constitucion/bias.md, regla 1a),
